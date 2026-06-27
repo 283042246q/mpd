@@ -8,11 +8,9 @@ from functools import partial
 from dotmap import DotMap
 
 import gc
-import json
 import os
 from pathlib import Path
 from pprint import pprint
-import subprocess
 
 import numpy as np
 import torch
@@ -22,15 +20,13 @@ from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd.inference.inference import EvaluationSamplesGenerator, GenerativeOptimizationPlanner, render_results
 from mpd.metrics.metrics import PlanningMetricsCalculator
 from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml, save_to_yaml
+from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
 from torch_robotics.robots import RobotPanda
 from torch_robotics.torch_kinematics_tree.utils.files import get_robot_path
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 
 allow_ops_in_compiled_graph()
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_isaac_lab):
@@ -83,70 +79,19 @@ def _run_isaaclab_evaluator(
     }
     torch.save(payload, trajectories_path)
 
-    isaaclab_sh = Path(os.path.expandvars(isaaclab_root)).expanduser() / "isaaclab.sh"
-    if not isaaclab_sh.exists():
-        raise FileNotFoundError(f"IsaacLab launcher not found: {isaaclab_sh}")
-
-    evaluator_script = REPO_ROOT / "scripts" / "isaaclab" / "evaluate_mpd_trajectories.py"
-    cmd = [
-        "conda",
-        "run",
-        "--no-capture-output",
-        "-n",
-        isaaclab_conda_env,
-        str(isaaclab_sh),
-        "-p",
-        str(evaluator_script),
-        "--input",
-        str(trajectories_path),
-        "--output",
-        str(statistics_path),
-        "--device",
-        isaaclab_device,
-        "--action_repeat",
-        str(isaaclab_action_repeat),
-    ]
-    if isaaclab_headless:
-        cmd.append("--headless")
-    if make_video:
-        cmd.extend(["--make_video", "--video_path", str(video_path)])
-
-    try:
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=isaaclab_timeout_s,
-        )
-        log_path.write_text(completed.stdout or "", encoding="utf-8")
-    except subprocess.TimeoutExpired as exc:
-        log_output = exc.stdout or ""
-        if isinstance(log_output, bytes):
-            log_output = log_output.decode(errors="replace")
-        log_path.write_text(log_output, encoding="utf-8")
-        if statistics_path.exists():
-            statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
-            statistics["subprocess_timeout_s"] = int(isaaclab_timeout_s)
-            statistics["subprocess_log_path"] = str(log_path)
-            statistics["subprocess_warning"] = "IsaacLab subprocess timed out after writing statistics."
-            return statistics
-        raise RuntimeError(f"IsaacLab evaluator timed out after {isaaclab_timeout_s}s. Log: {log_path}") from exc
-
-    if completed.returncode != 0:
-        if statistics_path.exists():
-            statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
-            statistics["subprocess_returncode"] = int(completed.returncode)
-            statistics["subprocess_log_path"] = str(log_path)
-            statistics["subprocess_warning"] = "IsaacLab subprocess exited non-zero after writing statistics."
-            return statistics
-        raise RuntimeError(f"IsaacLab evaluator failed with return code {completed.returncode}. Log: {log_path}")
-
-    statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
-    statistics["subprocess_returncode"] = int(completed.returncode)
-    statistics["subprocess_log_path"] = str(log_path)
-    return statistics
+    return run_isaaclab_evaluator_subprocess(
+        trajectories_path=trajectories_path,
+        statistics_path=statistics_path,
+        log_path=log_path,
+        isaaclab_root=isaaclab_root,
+        isaaclab_conda_env=isaaclab_conda_env,
+        isaaclab_device=isaaclab_device,
+        isaaclab_headless=isaaclab_headless,
+        isaaclab_action_repeat=isaaclab_action_repeat,
+        isaaclab_timeout_s=isaaclab_timeout_s,
+        make_video=make_video,
+        video_path=video_path,
+    )
 
 
 @single_experiment_yaml

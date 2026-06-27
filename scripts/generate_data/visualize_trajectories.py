@@ -1,8 +1,10 @@
+from mpd.utils.patches import numpy_monkey_patch
+
+numpy_monkey_patch()
+
 from pathlib import Path
 
 import click
-
-import isaacgym
 
 from pprint import pprint
 
@@ -12,15 +14,12 @@ import seaborn
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
 from mpd.paths import DATASET_BASE_DIR
 from pb_ompl.pb_ompl import fit_bspline_to_path
-from torch_robotics.isaac_gym_envs.motion_planning_envs import (
-    MotionPlanningIsaacGymEnv,
-    MotionPlanningControllerIsaacGym,
-)
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL
+from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
 
 import matplotlib.pyplot as plt
 
-import os.path
+import os
 
 import numpy as np
 import torch
@@ -41,12 +40,30 @@ from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
     type=click.Path(exists=True),
     default=Path(DATASET_BASE_DIR) / "EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect",
 )
-def visualize(data_dir):
+@click.option(
+    "--sim-backend",
+    type=click.Choice(["none", "isaacgym", "isaaclab"]),
+    default="none",
+    show_default=True,
+    help="Optional physics replay backend.",
+)
+@click.option("--isaaclab-root", default="/home/eric/IsaacLab_ori", show_default=True)
+@click.option("--isaaclab-conda-env", default="env_isaaclab_ori", show_default=True)
+@click.option("--isaaclab-device", default="cuda:0", show_default=True)
+@click.option("--isaaclab-timeout-s", default=900, show_default=True, type=int)
+@click.option("--isaaclab-action-repeat", default=4, show_default=True, type=int)
+def visualize(
+    data_dir,
+    sim_backend,
+    isaaclab_root,
+    isaaclab_conda_env,
+    isaaclab_device,
+    isaaclab_timeout_s,
+    isaaclab_action_repeat,
+):
     os.makedirs(os.path.join(data_dir, "figures"), exist_ok=True)
 
     fix_random_seed(3)
-
-    isaac_gym_render_all_trajectories = False
 
     tensor_args = DEFAULT_TENSOR_ARGS
     tensor_args["device"] = "cpu"
@@ -192,6 +209,9 @@ def visualize(data_dir):
     path = to_numpy(q_trajs_pos[0])  # select only the first trajectory (pybullet does not allow parallelization)
     generate_data.pbompl_interface.execute(path, sleep_time=5.0 / len(path))
 
+    if sim_backend == "none":
+        return
+
     ########################
     # Visualize in Isaac Gym
     # POSITION CONTROL
@@ -199,51 +219,80 @@ def visualize(data_dir):
     n_pre_steps = 10
     n_post_steps = 10
 
-    if isaac_gym_render_all_trajectories:
-        assert q_trajs_pos.shape[1] == 1
-        q_pos_trajs_isaac = q_trajs_pos.squeeze()
-    else:
-        q_pos_trajs_isaac = q_trajs_pos
+    q_pos_trajs_sim = q_trajs_pos.movedim(1, 0)
+    if sim_backend == "isaacgym":
+        from torch_robotics.isaac_gym_envs.motion_planning_envs import (
+            MotionPlanningControllerIsaacGym,
+            MotionPlanningIsaacGymEnv,
+        )
 
-    q_pos_trajs_isaac = q_pos_trajs_isaac.movedim(1, 0)
+        motion_planning_isaac_env = MotionPlanningIsaacGymEnv(
+            env,
+            robot,
+            asset_root=get_robot_path().as_posix(),
+            robot_asset_file=robot.robot_urdf_file.replace(get_robot_path().as_posix() + "/", ""),
+            num_envs=q_pos_trajs_sim.shape[1],
+            all_robots_in_one_env=True,
+            show_viewer=True,
+            sync_viewer_with_real_time=False,
+            viewer_time_between_steps=parametric_trajectory.phase_time.trajectory_duration / q_pos_trajs_sim.shape[0],
+            render_camera_global=True,
+            render_camera_global_append_to_recorder=True,
+            color_robots=False,
+            # draw_goal_configuration=True if not args['sample_joint_position_goals_with_same_ee_pose'] else False,
+            draw_goal_configuration=False,
+            draw_collision_spheres=False,
+            draw_contact_forces=False,
+            draw_end_effector_frame=False,
+            draw_end_effector_path=True,
+            draw_ee_pose_goal=None,
+            camera_global_from_top=True if env.dim == 2 else False,
+            # add_ground_plane=False if env.dim == 2 else True,
+            add_ground_plane=False,
+        )
 
-    motion_planning_isaac_env = MotionPlanningIsaacGymEnv(
-        env,
-        robot,
-        asset_root=get_robot_path().as_posix(),
-        robot_asset_file=robot.robot_urdf_file.replace(get_robot_path().as_posix() + "/", ""),
-        num_envs=q_pos_trajs_isaac.shape[1],
-        all_robots_in_one_env=True,
-        show_viewer=True,
-        sync_viewer_with_real_time=False,
-        viewer_time_between_steps=parametric_trajectory.phase_time.trajectory_duration / q_pos_trajs_isaac.shape[0],
-        render_camera_global=True,
-        render_camera_global_append_to_recorder=True,
-        color_robots=False,
-        # draw_goal_configuration=True if not args['sample_joint_position_goals_with_same_ee_pose'] else False,
-        draw_goal_configuration=False,
-        draw_collision_spheres=False,
-        draw_contact_forces=False,
-        draw_end_effector_frame=False,
-        draw_end_effector_path=True,
-        draw_ee_pose_goal=None,
-        camera_global_from_top=True if env.dim == 2 else False,
-        # add_ground_plane=False if env.dim == 2 else True,
-        add_ground_plane=False,
-    )
+        motion_planning_controller = MotionPlanningControllerIsaacGym(motion_planning_isaac_env)
+        isaac_statistics = motion_planning_controller.execute_trajectories(
+            q_pos_trajs_sim,
+            q_pos_starts=q_pos_trajs_sim[0],
+            q_pos_goal=q_pos_trajs_sim[-1][0],
+            n_pre_steps=n_pre_steps,
+            n_post_steps=n_post_steps,
+            make_video=True,
+            video_path=os.path.join(data_dir, "figures/isaac-planning.mp4"),
+            make_gif=False,
+            save_step_images=True,
+        )
+    elif sim_backend == "isaaclab":
+        if robot.__class__.__name__ != "RobotPanda":
+            raise click.ClickException("IsaacLab visualization currently supports RobotPanda datasets only.")
 
-    motion_planning_controller = MotionPlanningControllerIsaacGym(motion_planning_isaac_env)
-    isaac_statistics = motion_planning_controller.execute_trajectories(
-        q_pos_trajs_isaac,
-        q_pos_starts=q_pos_trajs_isaac[0],
-        q_pos_goal=q_pos_trajs_isaac[-1][0],
-        n_pre_steps=n_pre_steps,
-        n_post_steps=n_post_steps,
-        make_video=True,
-        video_path=os.path.join(data_dir, f"figures/isaac-planning.mp4"),
-        make_gif=False,
-        save_step_images=True,
-    )
+        trajectories_path = Path(data_dir) / "figures" / "isaaclab-visualize-trajectories.pt"
+        statistics_path = Path(data_dir) / "figures" / "isaaclab-visualize-statistics.json"
+        log_path = Path(data_dir) / "figures" / "isaaclab-visualize.log"
+        torch.save(
+            {
+                "q_trajs_pos": q_pos_trajs_sim.detach().cpu(),
+                "q_pos_starts": q_pos_trajs_sim[0].detach().cpu(),
+                "q_pos_goal": q_pos_trajs_sim[-1][0].detach().cpu(),
+                "robot_name": "panda",
+                "env_name": getattr(env, "name", type(env).__name__),
+                "dt": float(parametric_trajectory.dt),
+            },
+            trajectories_path,
+        )
+        isaac_statistics = run_isaaclab_evaluator_subprocess(
+            trajectories_path=trajectories_path,
+            statistics_path=statistics_path,
+            log_path=log_path,
+            isaaclab_root=isaaclab_root,
+            isaaclab_conda_env=isaaclab_conda_env,
+            isaaclab_device=isaaclab_device,
+            isaaclab_action_repeat=isaaclab_action_repeat,
+            isaaclab_timeout_s=isaaclab_timeout_s,
+            make_video=True,
+            video_path=Path(data_dir) / "figures" / "isaaclab-planning.mp4",
+        )
 
     print("-----------------")
     print(f"isaac_statistics:")

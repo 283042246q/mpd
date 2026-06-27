@@ -83,3 +83,35 @@ Push 版本：
 
 Push 版本：
 - `isaaclab-migration-stage-c`。
+
+## 阶段 D：可视化和批量实验支持
+
+状态：已完成并已 push。
+
+完成步骤：
+- 新增 `scripts/isaaclab/subprocess_utils.py`，把调用 IsaacLab evaluator 的 subprocess 逻辑抽成纯 Python helper；该 helper 不 import IsaacLab，可在旧 MPD 环境中安全导入。
+- 新增 `scripts/isaaclab/__init__.py`。
+- `scripts/inference/inference.py` 改为复用公共 subprocess helper，保持阶段 C 行为不变。
+- `scripts/generate_data/visualize_trajectories.py` 新增 `--sim-backend none|isaacgym|isaaclab`，默认 `none`，避免默认启动旧 IsaacGym。
+- `visualize_trajectories.py` 中旧 IsaacGym 环境改为显式 `--sim-backend isaacgym` 时 lazy import。
+- `visualize_trajectories.py` 中新增 `--sim-backend isaaclab` 路径：保存可视化轨迹 payload，并调用 IsaacLab evaluator 输出统计 JSON/log。
+- `mpd/motion_planning_baselines/examples/panda_isaac_replay.py` 重构为 `main()`/argparse 入口，新增 `--sim_backend none|isaacgym|isaaclab`，默认 `isaaclab`。
+- `panda_isaac_replay.py` 中旧 IsaacGym replay 改为 lazy import，并新增 IsaacLab evaluator replay 路径。
+- `panda_isaac_replay.py` 显式传入 `ParametricTrajectoryWaypoints`，避免当前 `PlanningTask` 构造器缺少 parametric trajectory。
+- 两个可视化入口都在项目 import 前调用已有 `numpy_monkey_patch()`，规避新 NumPy 与旧 networkx 的 `np.int` 兼容问题。
+
+改动说明：
+- 可视化和 replay 入口默认不再因为顶层 import 触发 IsaacGym。
+- 批量 inference 在阶段 C 已补齐 IsaacLab 参数；阶段 D 把独立脚本/示例也接到同一 evaluator helper。
+- IsaacLab evaluator 的 `--make_video`/`--video_path` 参数已从调用侧贯通，但实际相机视频采集仍是 evaluator 内的保留功能；当前稳定输出为碰撞统计 JSON 和 subprocess log。
+
+验证：
+- 通过：`conda run -n mpd-splines-public python -m py_compile scripts/isaaclab/subprocess_utils.py scripts/generate_data/visualize_trajectories.py mpd/motion_planning_baselines/examples/panda_isaac_replay.py scripts/inference/inference.py`。
+- 通过：`CUDA_VISIBLE_DEVICES='' ... import scripts.generate_data.visualize_trajectories; import mpd.motion_planning_baselines.examples.panda_isaac_replay; import scripts.inference.inference` 并阻断 `isaacgym` import，输出 `stage_d_import_ok`。
+- 通过：`CUDA_VISIBLE_DEVICES='' conda run -n mpd-splines-public python scripts/generate_data/visualize_trajectories.py --help`。
+- 通过：`CUDA_VISIBLE_DEVICES='' conda run -n mpd-splines-public python mpd/motion_planning_baselines/examples/panda_isaac_replay.py --help`。
+- 通过：`rg -n "^import isaacgym|^from isaacgym|^from torch_robotics\\.isaac_gym_envs" scripts/generate_data/visualize_trajectories.py mpd/motion_planning_baselines/examples/panda_isaac_replay.py scripts/inference/inference.py || true`，无顶层旧 backend import。
+- 通过：`conda run -n mpd-splines-public pre-commit run --files scripts/isaaclab/__init__.py scripts/isaaclab/subprocess_utils.py scripts/generate_data/visualize_trajectories.py mpd/motion_planning_baselines/examples/panda_isaac_replay.py scripts/inference/inference.py ISAACLAB_MIGRATION_PROGRESS.md`。
+
+Push 版本：
+- `isaaclab-migration-stage-d`。
