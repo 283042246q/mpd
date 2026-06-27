@@ -54,3 +54,32 @@ Push 版本：
 
 Push 版本：
 - `isaaclab-migration-stage-b`。
+
+## 阶段 C：接入 inference
+
+状态：已完成并已 push。
+
+完成步骤：
+- 在 `scripts/inference/inference.py` 新增 `sim_backend`，支持 `none`、`isaacgym`、`isaaclab`。
+- 保留旧参数 `run_evaluation_issac_gym`，并新增 `run_evaluation_isaac_lab` 作为兼容开关。
+- 将 IsaacLab evaluation 接入为 subprocess 文件交换：MPD 保存 `isaaclab-trajectories-XXX.pt`，调用 `scripts/isaaclab/evaluate_mpd_trajectories.py`，再读取 `isaaclab-statistics-XXX.json`。
+- 新增 IsaacLab 运行参数：`isaaclab_root`、`isaaclab_conda_env`、`isaaclab_device`、`isaaclab_headless`、`isaaclab_action_repeat`、`isaaclab_timeout_s`、`render_isaaclab_movie`。
+- 继续保留 `results_single_plan.isaacgym_statistics` 兼容旧结果字段，同时新增 `results_single_plan.sim_statistics`。
+- 在 low-memory 保存路径中同时保存 `isaacgym_statistics` 和 `sim_statistics`。
+- 在 `scripts/inference/launch_inference-experiments.py` 中补齐默认 IsaacLab 参数，默认 `sim_backend="none"`，不改变现有批量实验行为。
+
+改动说明：
+- MPD inference 默认不运行任何物理仿真后端。
+- `sim_backend="isaacgym"` 时仍走旧 IsaacGym lazy import 路径。
+- `sim_backend="isaaclab"` 时 MPD 主进程不 import IsaacLab，只调用独立 IsaacLab 环境中的 evaluator。
+- IsaacLab subprocess 日志写入 `isaaclab-evaluator-XXX.log`；如果 IsaacLab 在写出 JSON 后超时或非零退出，inference 会保留已生成 statistics 并记录 warning/log path。
+
+验证：
+- 通过：`conda run -n mpd-splines-public python -m py_compile scripts/inference/inference.py scripts/inference/launch_inference-experiments.py`。
+- 通过：`CUDA_VISIBLE_DEVICES='' ... import scripts.inference.inference` 并阻断 `isaacgym` import，输出 `stage_c_import_ok`。
+- 通过：`rg -n "^import isaaclab|^from isaaclab" scripts/inference/inference.py scripts/inference/launch_inference-experiments.py || true`，无直接 IsaacLab import。
+- 通过：`conda run -n mpd-splines-public pre-commit run --files scripts/inference/inference.py scripts/inference/launch_inference-experiments.py ISAACLAB_MIGRATION_PROGRESS.md`。
+- 说明：未跑完整模型 inference；当前旧 MPD 环境直接暴露 RTX 5060 时仍会在 Theseus/PyTorch CUDA import 阶段触发 `sm_120` 不兼容，阶段 C 验证使用 CPU import 路径隔离后端接入逻辑。
+
+Push 版本：
+- `isaaclab-migration-stage-c`。

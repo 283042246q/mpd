@@ -8,8 +8,11 @@ from functools import partial
 from dotmap import DotMap
 
 import gc
+import json
 import os
+from pathlib import Path
 from pprint import pprint
+import subprocess
 
 import numpy as np
 import torch
@@ -25,6 +28,125 @@ from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 
 allow_ops_in_compiled_graph()
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_isaac_lab):
+    if run_evaluation_issac_gym and run_evaluation_isaac_lab:
+        raise ValueError("Only one simulation backend can be enabled at a time.")
+
+    sim_backend = (sim_backend or "none").lower()
+    if run_evaluation_issac_gym:
+        sim_backend = "isaacgym"
+    elif run_evaluation_isaac_lab:
+        sim_backend = "isaaclab"
+
+    valid_backends = {"none", "isaacgym", "isaaclab"}
+    if sim_backend not in valid_backends:
+        raise ValueError(f"Unknown sim_backend={sim_backend!r}. Expected one of {sorted(valid_backends)}.")
+    return sim_backend
+
+
+def _run_isaaclab_evaluator(
+    q_trajs_pos,
+    q_pos_goal,
+    planning_task,
+    idx_sg,
+    results_dir,
+    isaaclab_root,
+    isaaclab_conda_env,
+    isaaclab_device,
+    isaaclab_headless,
+    isaaclab_action_repeat,
+    isaaclab_timeout_s,
+    make_video,
+):
+    if not isinstance(planning_task.robot, RobotPanda):
+        raise NotImplementedError("The IsaacLab evaluator currently supports RobotPanda trajectories only.")
+
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    trajectories_path = results_dir / f"isaaclab-trajectories-{idx_sg:03d}.pt"
+    statistics_path = results_dir / f"isaaclab-statistics-{idx_sg:03d}.json"
+    log_path = results_dir / f"isaaclab-evaluator-{idx_sg:03d}.log"
+    video_path = results_dir / f"isaaclab-{idx_sg:03d}.mp4"
+
+    payload = {
+        "q_trajs_pos": q_trajs_pos.detach().cpu(),
+        "q_pos_starts": q_trajs_pos[0].detach().cpu(),
+        "q_pos_goal": q_pos_goal.detach().cpu(),
+        "robot_name": "panda",
+        "env_name": getattr(planning_task.env, "name", type(planning_task.env).__name__),
+        "dt": float(planning_task.parametric_trajectory.dt),
+    }
+    torch.save(payload, trajectories_path)
+
+    isaaclab_sh = Path(os.path.expandvars(isaaclab_root)).expanduser() / "isaaclab.sh"
+    if not isaaclab_sh.exists():
+        raise FileNotFoundError(f"IsaacLab launcher not found: {isaaclab_sh}")
+
+    evaluator_script = REPO_ROOT / "scripts" / "isaaclab" / "evaluate_mpd_trajectories.py"
+    cmd = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        isaaclab_conda_env,
+        str(isaaclab_sh),
+        "-p",
+        str(evaluator_script),
+        "--input",
+        str(trajectories_path),
+        "--output",
+        str(statistics_path),
+        "--device",
+        isaaclab_device,
+        "--action_repeat",
+        str(isaaclab_action_repeat),
+    ]
+    if isaaclab_headless:
+        cmd.append("--headless")
+    if make_video:
+        cmd.extend(["--make_video", "--video_path", str(video_path)])
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=isaaclab_timeout_s,
+        )
+        log_path.write_text(completed.stdout or "", encoding="utf-8")
+    except subprocess.TimeoutExpired as exc:
+        log_output = exc.stdout or ""
+        if isinstance(log_output, bytes):
+            log_output = log_output.decode(errors="replace")
+        log_path.write_text(log_output, encoding="utf-8")
+        if statistics_path.exists():
+            statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
+            statistics["subprocess_timeout_s"] = int(isaaclab_timeout_s)
+            statistics["subprocess_log_path"] = str(log_path)
+            statistics["subprocess_warning"] = "IsaacLab subprocess timed out after writing statistics."
+            return statistics
+        raise RuntimeError(f"IsaacLab evaluator timed out after {isaaclab_timeout_s}s. Log: {log_path}") from exc
+
+    if completed.returncode != 0:
+        if statistics_path.exists():
+            statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
+            statistics["subprocess_returncode"] = int(completed.returncode)
+            statistics["subprocess_log_path"] = str(log_path)
+            statistics["subprocess_warning"] = "IsaacLab subprocess exited non-zero after writing statistics."
+            return statistics
+        raise RuntimeError(f"IsaacLab evaluator failed with return code {completed.returncode}. Log: {log_path}")
+
+    statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
+    statistics["subprocess_returncode"] = int(completed.returncode)
+    statistics["subprocess_log_path"] = str(log_path)
+    return statistics
 
 
 @single_experiment_yaml
@@ -53,9 +175,18 @@ def experiment(
     render_env_robot_trajectories: bool = False,
     render_pybullet: bool = False,
     draw_collision_spheres: bool = False,
+    sim_backend: str = "none",  # none, isaacgym, isaaclab
     run_evaluation_issac_gym: bool = False,
+    run_evaluation_isaac_lab: bool = False,
     render_isaacgym_viewer: bool = False,
     render_isaacgym_movie: bool = False,
+    render_isaaclab_movie: bool = False,
+    isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab_ori"),
+    isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab_ori"),
+    isaaclab_device: str = "cuda:0",
+    isaaclab_headless: bool = True,
+    isaaclab_action_repeat: int = 4,
+    isaaclab_timeout_s: int = 900,
     ########################################################################
     device: str = "cuda:0",  # cpu, cuda
     debug: bool = False,
@@ -67,6 +198,8 @@ def experiment(
     ########################################################################
     **kwargs,
 ):
+    sim_backend = _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_isaac_lab)
+
     # Set random seed for reproducibility
     fix_random_seed(seed)
 
@@ -148,7 +281,7 @@ def experiment(
     ################################################################################################################
     # IsaacGym environment and motion planning controller
     motion_planning_isaac_env = None
-    if run_evaluation_issac_gym:
+    if sim_backend == "isaacgym":
         from torch_robotics.isaac_gym_envs.motion_planning_envs import (
             MotionPlanningControllerIsaacGym,
             MotionPlanningIsaacGymEnv,
@@ -238,30 +371,48 @@ def experiment(
             )
 
         ############################################################################################################
-        # Evaluate and show in IsaacGym
-        isaacgym_statistics = None
-        if run_evaluation_issac_gym and results_single_plan.q_trajs_pos_valid is not None:
-            ########################
-            motion_planning_isaac_env.ee_pose_goal = planning_task.robot.get_EE_pose(
-                to_torch(q_pos_goal.unsqueeze(0), device), flatten_pos_quat=True, quat_xyzw=True
-            ).squeeze(0)
-
-            # Execute all valid trajectories
+        # Evaluate with the selected simulator backend
+        simulation_statistics = None
+        results_single_plan.isaacgym_statistics = None
+        results_single_plan.sim_statistics = None
+        if sim_backend != "none" and results_single_plan.q_trajs_pos_valid is not None:
             if results_single_plan.q_trajs_pos_valid.shape[0] > 0:
                 q_trajs_pos = results_single_plan.q_trajs_pos_valid.movedim(1, 0)  # horizon, batch, D
-                isaacgym_statistics = motion_planning_controller_isaac_gym.execute_trajectories(
-                    q_trajs_pos,
-                    q_pos_starts=q_trajs_pos[0],
-                    q_pos_goal=q_trajs_pos[-1][0],  # add steps for better visualization
-                    n_pre_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
-                    n_post_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
-                    stop_robot_if_in_contact=False,
-                    make_video=render_isaacgym_movie,
-                    video_duration=args_inference.trajectory_duration,
-                    video_path=os.path.join(results_dir, f"isaacgym-{idx_sg:03d}.mp4"),
-                    make_gif=False,
-                )
-            results_single_plan.isaacgym_statistics = isaacgym_statistics
+                if sim_backend == "isaacgym":
+                    ########################
+                    motion_planning_isaac_env.ee_pose_goal = planning_task.robot.get_EE_pose(
+                        to_torch(q_pos_goal.unsqueeze(0), device), flatten_pos_quat=True, quat_xyzw=True
+                    ).squeeze(0)
+
+                    simulation_statistics = motion_planning_controller_isaac_gym.execute_trajectories(
+                        q_trajs_pos,
+                        q_pos_starts=q_trajs_pos[0],
+                        q_pos_goal=q_trajs_pos[-1][0],  # add steps for better visualization
+                        n_pre_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
+                        n_post_steps=5 if render_isaacgym_viewer or render_isaacgym_movie else 0,
+                        stop_robot_if_in_contact=False,
+                        make_video=render_isaacgym_movie,
+                        video_duration=args_inference.trajectory_duration,
+                        video_path=os.path.join(results_dir, f"isaacgym-{idx_sg:03d}.mp4"),
+                        make_gif=False,
+                    )
+                elif sim_backend == "isaaclab":
+                    simulation_statistics = _run_isaaclab_evaluator(
+                        q_trajs_pos=q_trajs_pos,
+                        q_pos_goal=q_pos_goal,
+                        planning_task=planning_task,
+                        idx_sg=idx_sg,
+                        results_dir=results_dir,
+                        isaaclab_root=isaaclab_root,
+                        isaaclab_conda_env=isaaclab_conda_env,
+                        isaaclab_device=isaaclab_device,
+                        isaaclab_headless=isaaclab_headless,
+                        isaaclab_action_repeat=isaaclab_action_repeat,
+                        isaaclab_timeout_s=isaaclab_timeout_s,
+                        make_video=render_isaaclab_movie,
+                    )
+            results_single_plan.isaacgym_statistics = simulation_statistics
+            results_single_plan.sim_statistics = simulation_statistics
 
         ############################################################################################################
         # Compute motion planning metrics
@@ -272,8 +423,8 @@ def experiment(
         print(f"t_generator: {results_single_plan.t_generator:.3f} sec")
         print(f"t_guide: {results_single_plan.t_guide:.3f} sec")
 
-        print(f"isaacgym_statistics:")
-        pprint(results_single_plan.isaacgym_statistics)
+        print(f"sim_statistics:")
+        pprint(results_single_plan.sim_statistics)
 
         print(f"metrics:")
         pprint(results_single_plan.metrics)
@@ -291,6 +442,7 @@ def experiment(
                 control_points_iters=results_single_plan.control_points_iters,
                 metrics=results_single_plan.metrics,
                 isaacgym_statistics=results_single_plan.isaacgym_statistics,
+                sim_statistics=results_single_plan.sim_statistics,
             )
         torch.save(
             results_single_plan_to_save,

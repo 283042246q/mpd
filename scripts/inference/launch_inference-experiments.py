@@ -84,9 +84,18 @@ default_options = OrderedDict(
     render_env_robot_trajectories=False,
     render_pybullet=False,
     draw_collision_spheres=False,
+    sim_backend="none",
     run_evaluation_issac_gym=False,
+    run_evaluation_isaac_lab=False,
     render_isaacgym_viewer=False,
     render_isaacgym_movie=False,
+    render_isaaclab_movie=False,
+    isaaclab_root="/home/eric/IsaacLab_ori",
+    isaaclab_conda_env="env_isaaclab_ori",
+    isaaclab_device="cuda:0",
+    isaaclab_headless=True,
+    isaaclab_action_repeat=4,
+    isaaclab_timeout_s=900,
 )
 
 # remove and create a new tmp
