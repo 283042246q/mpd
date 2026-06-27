@@ -1,4 +1,5 @@
 data_public/
+ISAACGYM_TO_ISAACLAB_MIGRATION.md
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
