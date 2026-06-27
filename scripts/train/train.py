@@ -1,4 +1,6 @@
-import isaacgym
+from mpd.utils.patches import numpy_monkey_patch
+
+numpy_monkey_patch()
 
 import os
 

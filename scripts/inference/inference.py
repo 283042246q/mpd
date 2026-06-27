@@ -1,11 +1,9 @@
 from mpd.utils.patches import numpy_monkey_patch
+
 numpy_monkey_patch()
 
 import time
 from functools import partial
-
-import isaacgym
-
 
 from dotmap import DotMap
 
@@ -21,10 +19,6 @@ from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd.inference.inference import EvaluationSamplesGenerator, GenerativeOptimizationPlanner, render_results
 from mpd.metrics.metrics import PlanningMetricsCalculator
 from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml, save_to_yaml
-from torch_robotics.isaac_gym_envs.motion_planning_envs import (
-    MotionPlanningIsaacGymEnv,
-    MotionPlanningControllerIsaacGym,
-)
 from torch_robotics.robots import RobotPanda
 from torch_robotics.torch_kinematics_tree.utils.files import get_robot_path
 from torch_robotics.torch_utils.seed import fix_random_seed
@@ -40,7 +34,7 @@ def experiment(
     # cfg_inference_path: str = './cfgs/config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar2Link-RobotPlanar2Link_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar4Link-RobotPlanar4Link_00.yaml',
-    cfg_inference_path: str = './cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml',
+    cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
     # cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
     # cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
     ########################################################################
@@ -155,6 +149,11 @@ def experiment(
     # IsaacGym environment and motion planning controller
     motion_planning_isaac_env = None
     if run_evaluation_issac_gym:
+        from torch_robotics.isaac_gym_envs.motion_planning_envs import (
+            MotionPlanningControllerIsaacGym,
+            MotionPlanningIsaacGymEnv,
+        )
+
         robot_asset_file = planning_task.robot.robot_urdf_file
         if draw_collision_spheres:
             robot_asset_file = planning_task.robot.robot_urdf_collision_spheres_file
