@@ -115,3 +115,25 @@ Push 版本：
 
 Push 版本：
 - `isaaclab-migration-stage-d`。
+
+## 阶段 E：剩余入口清理
+
+状态：已完成并已 push。
+
+完成步骤：
+- 移除 `scripts/generate_data/post_process_generated_dataset.py` 中未使用的顶层 `import isaacgym`。
+- 移除 `mpd/motion_planning_baselines/examples/pointmass_2d_CHOMP.py` 中未使用的顶层 `import isaacgym`。
+- 移除 `mpd/motion_planning_baselines/examples/panda_spheres_CHOMP.py` 中未使用的顶层 `import isaacgym`。
+- 移除 `mpd/motion_planning_baselines/examples/planar_2_link_RRT.py` 中未使用的顶层 `import isaacgym`。
+- 上述入口均补充已有 `numpy_monkey_patch()`，避免新 NumPy 环境中旧 networkx 的 `np.int` import 问题。
+
+改动说明：
+- 该阶段不改变 planner、dataset post-process 或 baseline 示例逻辑，只删除未使用的旧仿真库导入。
+- 最终顶层 IsaacGym import 只保留在旧 backend 文件 `mpd/torch_robotics/torch_robotics/isaac_gym_envs/motion_planning_envs.py` 内，且只有显式选择 IsaacGym backend 时才会进入。
+
+验证：
+- 通过：`rg -n "^import isaacgym|^from isaacgym|^from torch_robotics\\.isaac_gym_envs" scripts mpd`，结果只剩旧 IsaacGym backend 文件本身。
+- 通过：`conda run -n mpd-splines-public python -m py_compile scripts/generate_data/post_process_generated_dataset.py mpd/motion_planning_baselines/examples/pointmass_2d_CHOMP.py mpd/motion_planning_baselines/examples/panda_spheres_CHOMP.py mpd/motion_planning_baselines/examples/planar_2_link_RRT.py`。
+
+Push 版本：
+- `isaaclab-migration-stage-e`。
