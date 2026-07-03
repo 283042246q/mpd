@@ -29,7 +29,12 @@ from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, t
 
 allow_ops_in_compiled_graph()
 
-ISAACLAB_BATCH_SUPPORTED_ENVS = {"EnvSpheres3D", "EnvSpheres3DExtraObjectsV00"}
+ISAACLAB_BATCH_SUPPORTED_ENVS = {
+    "EnvSpheres3D",
+    "EnvSpheres3DExtraObjectsV00",
+    "EnvWarehouse",
+    "EnvWarehouseExtraObjectsV00",
+}
 
 
 def _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_isaac_lab):
@@ -93,6 +98,12 @@ def _run_isaaclab_evaluator(
     log_path = results_dir / f"isaaclab-evaluator-{idx_sg:03d}.log"
     video_path = results_dir / f"isaaclab-{idx_sg:03d}.mp4"
 
+    scene_payload = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
+    if env_name.startswith("EnvWarehouse") and not any(
+        obstacle.get("type") == "box" for obstacle in scene_payload["obstacles"]
+    ):
+        raise RuntimeError(f"IsaacLab Warehouse evaluation requires exported box obstacles. Got scene={scene_payload}.")
+
     payload = {
         "q_trajs_pos": q_trajs_pos.detach().cpu(),
         "q_pos_starts": q_trajs_pos[0].detach().cpu(),
@@ -100,7 +111,7 @@ def _run_isaaclab_evaluator(
         "robot_name": "panda",
         "env_name": env_name,
         "dt": trajectory_dt,
-        "scene": export_isaaclab_scene_payload(planning_task.env, include_boxes=False),
+        "scene": scene_payload,
     }
     torch.save(payload, trajectories_path)
 

@@ -193,6 +193,14 @@ def _spawn_scene_obstacles(scene_payload: dict[str, Any] | None) -> dict[str, An
                 collision_props=sim_utils.CollisionPropertiesCfg(),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.95, 0.58, 0.12), metallic=0.0),
             )
+        elif obstacle_type == "box":
+            obstacle_cfg = sim_utils.CuboidCfg(
+                size=tuple(float(value) for value in obstacle["size"]),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.45, 0.47, 0.50), metallic=0.0),
+            )
         else:
             raise NotImplementedError(f"Unsupported IsaacLab obstacle type for this stage: {obstacle_type!r}")
 

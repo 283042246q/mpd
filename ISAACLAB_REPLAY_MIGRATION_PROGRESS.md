@@ -28,7 +28,8 @@
 ## 阶段 2：EnvSpheres3D obstacle export
 
 - Push 版本：`stage-2-spheres-obstacle-export`
-- 状态：已完成，待 push
+- 状态：已完成并 push
+- Commit：`b299e07`
 - 目标：
   - 将 MPD 的 sphere obstacle payload 写入 `isaaclab-trajectories-XXX.pt`。
   - IsaacLab evaluator 读取 payload 并生成静态 sphere collider。
@@ -47,11 +48,21 @@
 ## 阶段 3：Warehouse box obstacle export
 
 - Push 版本：`stage-3-warehouse-box-export`
-- 状态：未开始
+- 状态：已完成，待 push
 - 目标：
   - 将 Warehouse/Table/Shelf 中的 box obstacle payload 导出到 IsaacLab。
   - IsaacLab evaluator 生成静态 cuboid collider。
   - 解除 Warehouse 的 batch evaluator 保护，但只在 payload 中包含障碍物时允许。
+- 改动：
+  - `scripts/isaaclab/scene_payload.py` 使用 `include_boxes=True` 导出 `MultiBoxField` 为 box payload。
+  - `scripts/inference/inference.py` 将 IsaacLab batch 白名单扩展到 `EnvWarehouse` 和 `EnvWarehouseExtraObjectsV00`。
+  - Warehouse 进入 IsaacLab batch evaluator 前会检查 payload 中是否确实包含 box obstacle。
+  - `scripts/isaaclab/evaluate_mpd_trajectories.py` 支持从 payload 生成静态 cuboid collider。
+- 验证：
+  - `EnvWarehouse` payload 导出轻量测试：12 个 box，0 个 unsupported。
+  - 完整 Warehouse + MPD + IsaacLab headless 验证通过。
+  - 验证输出目录：`scripts/inference/logs/stage3_warehouse_box_export/1783112155`
+  - IsaacLab statistics：`n_obstacles=12`，`obstacle_types=['box']`，`n_unsupported_obstacles=0`。
 
 ## 阶段 4：IsaacLab replay 视频导出
 
