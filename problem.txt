@@ -1,0 +1,9 @@
+config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml
+Warehouse 配置文件环境 + Panda。也属于 Panda，但 IsaacLab 当前验证主要稳定在 Panda joint-space replay，不一定完整映射
+Warehouse 障碍物。
+
+另外：
+--render_isaaclab_movie True
+现在还不能真正录 IsaacLab mp4，代码里 make_video 还是 reserved/currently ignored。你现在看到的 inference-joint_space-time-opt-iters-000.mp4 是 MPD 自己画的关节空间优化过程，不是 IsaacLab 真实物理画面录屏。
+
+isaaclab 开no headless，没有实际画面，最后窗口卡住

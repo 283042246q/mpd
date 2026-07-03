@@ -21,7 +21,7 @@ MEMORY_SINGLE_JOB = 6000
 PARTITION = "gpu" if USE_CUDA else "amd3,amd2,amd"
 GRES = "gpu:1" if USE_CUDA else None
 CONSTRAINT = "rtx3090|a5000" if USE_CUDA else None  # rtx2080|rtx3080|rtx3090|a5000
-CONDA_ENV = "mpd-splines"
+CONDA_ENV = "mpd-splines-public-cu128"
 
 
 EXPERIMENT_NAME = Path(__file__).stem

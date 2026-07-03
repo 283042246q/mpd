@@ -41,7 +41,7 @@ if "logc" in hostname:
 else:
     PARTITION = "gpu" if USE_CUDA else "amd,amd2"
 GRES = "gpu:1" if USE_CUDA else None
-CONDA_ENV = "mpd-splines"
+CONDA_ENV = "mpd-splines-public-cu128"
 
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"

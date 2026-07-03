@@ -62,6 +62,10 @@ def _run_isaaclab_evaluator(
     if not isinstance(planning_task.robot, RobotPanda):
         raise NotImplementedError("The IsaacLab evaluator currently supports RobotPanda trajectories only.")
 
+    horizon = int(q_trajs_pos.shape[0])
+    trajectory_duration = float(getattr(planning_task.parametric_trajectory, "trajectory_duration", 0.0))
+    trajectory_dt = trajectory_duration / max(horizon - 1, 1) if trajectory_duration > 0.0 else 0.0
+
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     trajectories_path = results_dir / f"isaaclab-trajectories-{idx_sg:03d}.pt"
@@ -75,7 +79,7 @@ def _run_isaaclab_evaluator(
         "q_pos_goal": q_pos_goal.detach().cpu(),
         "robot_name": "panda",
         "env_name": getattr(planning_task.env, "name", type(planning_task.env).__name__),
-        "dt": float(planning_task.parametric_trajectory.dt),
+        "dt": trajectory_dt,
     }
     torch.save(payload, trajectories_path)
 
@@ -137,8 +141,8 @@ def experiment(
     debug: bool = False,
     ########################################################################
     # MANDATORY
-    # seed: int = int(time.time()),
-    seed: int = 2,
+    seed: int = int(time.time()),
+    # seed: int = 2,
     results_dir: str = "logs",
     ########################################################################
     **kwargs,

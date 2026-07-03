@@ -60,7 +60,7 @@ from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
 
 def _load_payload(path: Path) -> tuple[torch.Tensor, dict[str, Any]]:
-    payload = torch.load(path, map_location="cpu")
+    payload = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(payload, torch.Tensor):
         q_trajs_pos = payload
         metadata: dict[str, Any] = {}

@@ -166,8 +166,8 @@ def get_planning_task_and_dataset(
     if load_indices:
         # load the indices of training and validation sets (for evaluation)
         assert model_dir is not None, "model_dir must be provided when load_indices is True"
-        train_subset_indices = torch.load(os.path.join(model_dir, f"train_subset_indices.pt"))
-        val_subset_indices = torch.load(os.path.join(model_dir, f"val_subset_indices.pt"))
+        train_subset_indices = torch.load(os.path.join(model_dir, f"train_subset_indices.pt"), weights_only=False)
+        val_subset_indices = torch.load(os.path.join(model_dir, f"val_subset_indices.pt"), weights_only=False)
     else:
         # split into train and validation
         # the training and validation sets are split by task id
@@ -217,7 +217,7 @@ def get_model(
 ):
 
     if checkpoint_path is not None:
-        model = torch.load(checkpoint_path)
+        model = torch.load(checkpoint_path, weights_only=False)
         if freeze_loaded_model:
             freeze_torch_model_params(model)
     else:
