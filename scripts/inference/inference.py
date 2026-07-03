@@ -20,6 +20,7 @@ from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd.inference.inference import EvaluationSamplesGenerator, GenerativeOptimizationPlanner, render_results
 from mpd.metrics.metrics import PlanningMetricsCalculator
 from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml, save_to_yaml
+from scripts.isaaclab.scene_payload import export_isaaclab_scene_payload
 from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
 from torch_robotics.robots import RobotPanda
 from torch_robotics.torch_kinematics_tree.utils.files import get_robot_path
@@ -99,6 +100,7 @@ def _run_isaaclab_evaluator(
         "robot_name": "panda",
         "env_name": env_name,
         "dt": trajectory_dt,
+        "scene": export_isaaclab_scene_payload(planning_task.env, include_boxes=False),
     }
     torch.save(payload, trajectories_path)
 

@@ -170,6 +170,44 @@ def _to_jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _spawn_scene_obstacles(scene_payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Spawn static scene obstacles from the MPD payload into every IsaacLab env."""
+
+    scene_payload = scene_payload or {}
+    obstacles = scene_payload.get("obstacles") or []
+    unsupported_obstacles = scene_payload.get("unsupported_obstacles") or []
+    obstacle_types = []
+
+    for obstacle_idx, obstacle in enumerate(obstacles):
+        obstacle_type = obstacle.get("type")
+        obstacle_types.append(str(obstacle_type))
+        prim_path = f"/World/envs/env_.*/MpdObstacle_{obstacle_idx:03d}"
+        position = tuple(float(value) for value in obstacle.get("position", [0.0, 0.0, 0.0]))
+        orientation = tuple(float(value) for value in obstacle.get("orientation", [1.0, 0.0, 0.0, 0.0]))
+
+        if obstacle_type == "sphere":
+            obstacle_cfg = sim_utils.SphereCfg(
+                radius=float(obstacle["radius"]),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.95, 0.58, 0.12), metallic=0.0),
+            )
+        else:
+            raise NotImplementedError(f"Unsupported IsaacLab obstacle type for this stage: {obstacle_type!r}")
+
+        obstacle_cfg.func(prim_path, obstacle_cfg, translation=position, orientation=orientation)
+
+    return {
+        "scene_schema": scene_payload.get("schema"),
+        "scene_schema_version": scene_payload.get("schema_version"),
+        "n_obstacles": len(obstacles),
+        "obstacle_types": sorted(set(obstacle_types)),
+        "n_unsupported_obstacles": len(unsupported_obstacles),
+        "unsupported_obstacles": unsupported_obstacles,
+    }
+
+
 def run_evaluation() -> dict[str, Any]:
     q_trajs_pos_cpu, metadata = _load_payload(args_cli.input)
     horizon, batch, dof = q_trajs_pos_cpu.shape
@@ -192,6 +230,7 @@ def run_evaluation() -> dict[str, Any]:
 
     scene_cfg = MpdTrajectorySceneCfg(num_envs=num_envs, env_spacing=2.5)
     scene = InteractiveScene(scene_cfg)
+    obstacle_summary = _spawn_scene_obstacles(metadata.get("scene"))
     sim.reset()
 
     robot = scene["robot"]
@@ -252,6 +291,7 @@ def run_evaluation() -> dict[str, Any]:
         "device": str(args_cli.device),
         "video_path": args_cli.video_path.as_posix() if args_cli.make_video and args_cli.video_path else None,
         "video_note": "video capture is reserved for a later migration stage" if args_cli.make_video else None,
+        **obstacle_summary,
     }
 
     joint_names = getattr(robot.data, "joint_names", None)

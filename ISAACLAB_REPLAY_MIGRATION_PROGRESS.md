@@ -12,7 +12,8 @@
 ## 阶段 1：headless evaluator 边界保护
 
 - Push 版本：`stage-1-headless-evaluator-guard`
-- 状态：已完成，待 push
+- 状态：已完成并 push
+- Commit：`22860db`
 - 目标：
   - 保持当前 `EnvSpheres3D + RobotPanda` headless IsaacLab batch evaluator 的稳定路径。
   - 在 Warehouse 障碍物导出完成前，阻止 `sim_backend=isaaclab` 对未支持环境给出误导性统计。
@@ -27,11 +28,21 @@
 ## 阶段 2：EnvSpheres3D obstacle export
 
 - Push 版本：`stage-2-spheres-obstacle-export`
-- 状态：未开始
+- 状态：已完成，待 push
 - 目标：
   - 将 MPD 的 sphere obstacle payload 写入 `isaaclab-trajectories-XXX.pt`。
   - IsaacLab evaluator 读取 payload 并生成静态 sphere collider。
   - 对需要视觉确认的仿真输出保存截图。
+- 改动：
+  - 新增 `scripts/isaaclab/scene_payload.py`，将 MPD `MultiSphereField` 导出为 IsaacLab scene payload。
+  - `scripts/inference/inference.py` 在 `isaaclab-trajectories-XXX.pt` 中写入 `scene` 字段。
+  - `scripts/isaaclab/evaluate_mpd_trajectories.py` 读取 `scene.obstacles` 并在每个 IsaacLab env 下生成静态 sphere collider。
+  - IsaacLab statistics 增加 `n_obstacles`、`obstacle_types`、`n_unsupported_obstacles`、`scene_schema` 等字段。
+- 验证：
+  - `EnvSpheres3D` payload 导出轻量测试：10 个 sphere，0 个 unsupported。
+  - 完整 MPD + IsaacLab headless 验证通过。
+  - 验证输出目录：`scripts/inference/logs/stage2_spheres_export/1783111874`
+  - IsaacLab statistics：`n_obstacles=10`，`obstacle_types=['sphere']`，`n_unsupported_obstacles=0`。
 
 ## 阶段 3：Warehouse box obstacle export
 
