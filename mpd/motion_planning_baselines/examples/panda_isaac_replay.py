@@ -11,7 +11,8 @@ from pprint import pprint
 import torch
 
 from mpd.parametric_trajectory.trajectory_waypoints import ParametricTrajectoryWaypoints
-from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
+from scripts.isaaclab.scene_payload import export_isaaclab_scene_payload
+from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess, run_isaaclab_replay_subprocess
 from torch_robotics.environments import EnvSpheres3D, GraspedObjectBox
 from torch_robotics.robots.robot_panda import RobotPanda
 from torch_robotics.tasks.tasks import PlanningTask
@@ -102,13 +103,15 @@ def run_isaacgym_replay(env, robot, trajs_pos, base_file_name):
     )
 
 
-def run_isaaclab_replay(trajs_pos, args):
+def run_isaaclab_replay(env, trajs_pos, args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     trajectories_path = output_dir / f"{args.base_file_name}-isaaclab-trajectories.pt"
     statistics_path = output_dir / f"{args.base_file_name}-isaaclab-statistics.json"
     log_path = output_dir / f"{args.base_file_name}-isaaclab.log"
+    replay_log_path = output_dir / f"{args.base_file_name}-isaaclab-replay.log"
     video_path = output_dir / f"{args.base_file_name}-isaaclab-controller-position.mp4"
+    screenshot_path = output_dir / f"{args.base_file_name}-isaaclab-controller-position.png"
 
     torch.save(
         {
@@ -118,10 +121,11 @@ def run_isaaclab_replay(trajs_pos, args):
             "robot_name": "panda",
             "env_name": "EnvSpheres3D",
             "dt": 0.1,
+            "scene": export_isaaclab_scene_payload(env, include_boxes=True),
         },
         trajectories_path,
     )
-    return run_isaaclab_evaluator_subprocess(
+    isaac_statistics = run_isaaclab_evaluator_subprocess(
         trajectories_path=trajectories_path,
         statistics_path=statistics_path,
         log_path=log_path,
@@ -130,9 +134,19 @@ def run_isaaclab_replay(trajs_pos, args):
         isaaclab_device=args.isaaclab_device,
         isaaclab_action_repeat=args.isaaclab_action_repeat,
         isaaclab_timeout_s=args.isaaclab_timeout_s,
-        make_video=True,
-        video_path=video_path,
     )
+    isaac_statistics["replay"] = run_isaaclab_replay_subprocess(
+        trajectories_path=trajectories_path,
+        log_path=replay_log_path,
+        video_path=video_path,
+        screenshot_path=screenshot_path,
+        isaaclab_root=args.isaaclab_root,
+        isaaclab_conda_env=args.isaaclab_conda_env,
+        isaaclab_device=args.isaaclab_device,
+        isaaclab_action_repeat=args.isaaclab_action_repeat,
+        isaaclab_timeout_s=args.isaaclab_timeout_s,
+    )
+    return isaac_statistics
 
 
 def main():
@@ -153,7 +167,7 @@ def main():
     if args.sim_backend == "isaacgym":
         isaac_statistics = run_isaacgym_replay(env, robot, trajs_pos, args.base_file_name)
     else:
-        isaac_statistics = run_isaaclab_replay(trajs_pos, args)
+        isaac_statistics = run_isaaclab_replay(env, trajs_pos, args)
 
     print("-----------------")
     print("isaac_statistics:")

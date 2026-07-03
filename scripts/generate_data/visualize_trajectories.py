@@ -15,7 +15,8 @@ from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBsp
 from mpd.paths import DATASET_BASE_DIR
 from pb_ompl.pb_ompl import fit_bspline_to_path
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL
-from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
+from scripts.isaaclab.scene_payload import export_isaaclab_scene_payload
+from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess, run_isaaclab_replay_subprocess
 
 import matplotlib.pyplot as plt
 
@@ -270,6 +271,9 @@ def visualize(
         trajectories_path = Path(data_dir) / "figures" / "isaaclab-visualize-trajectories.pt"
         statistics_path = Path(data_dir) / "figures" / "isaaclab-visualize-statistics.json"
         log_path = Path(data_dir) / "figures" / "isaaclab-visualize.log"
+        replay_log_path = Path(data_dir) / "figures" / "isaaclab-replay.log"
+        replay_video_path = Path(data_dir) / "figures" / "isaaclab-planning.mp4"
+        replay_screenshot_path = Path(data_dir) / "figures" / "isaaclab-planning.png"
         torch.save(
             {
                 "q_trajs_pos": q_pos_trajs_sim.detach().cpu(),
@@ -278,6 +282,7 @@ def visualize(
                 "robot_name": "panda",
                 "env_name": getattr(env, "name", type(env).__name__),
                 "dt": float(parametric_trajectory.dt),
+                "scene": export_isaaclab_scene_payload(env, include_boxes=True),
             },
             trajectories_path,
         )
@@ -290,8 +295,17 @@ def visualize(
             isaaclab_device=isaaclab_device,
             isaaclab_action_repeat=isaaclab_action_repeat,
             isaaclab_timeout_s=isaaclab_timeout_s,
-            make_video=True,
-            video_path=Path(data_dir) / "figures" / "isaaclab-planning.mp4",
+        )
+        isaac_statistics["replay"] = run_isaaclab_replay_subprocess(
+            trajectories_path=trajectories_path,
+            log_path=replay_log_path,
+            video_path=replay_video_path,
+            screenshot_path=replay_screenshot_path,
+            isaaclab_root=isaaclab_root,
+            isaaclab_conda_env=isaaclab_conda_env,
+            isaaclab_device=isaaclab_device,
+            isaaclab_action_repeat=isaaclab_action_repeat,
+            isaaclab_timeout_s=isaaclab_timeout_s,
         )
 
     print("-----------------")

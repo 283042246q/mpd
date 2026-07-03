@@ -30,8 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--action_repeat", type=int, default=4, help="Physics steps per MPD trajectory waypoint.")
     parser.add_argument("--contact_force_threshold", type=float, default=1.0, help="Contact force norm threshold.")
     parser.add_argument("--stop_robot_if_in_contact", action="store_true", help="Hold collided envs at current state.")
-    parser.add_argument("--make_video", action="store_true", help="Reserved for the video stage; currently ignored.")
-    parser.add_argument("--video_path", type=Path, default=None, help="Reserved video output path.")
+    parser.add_argument(
+        "--make_video",
+        action="store_true",
+        help="Deprecated compatibility flag. Use replay_mpd_trajectory.py for IsaacLab videos.",
+    )
+    parser.add_argument("--video_path", type=Path, default=None, help="Deprecated compatibility video path.")
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     if args.input is None:
@@ -298,7 +302,7 @@ def run_evaluation() -> dict[str, Any]:
         "action_repeat": int(args_cli.action_repeat),
         "device": str(args_cli.device),
         "video_path": args_cli.video_path.as_posix() if args_cli.make_video and args_cli.video_path else None,
-        "video_note": "video capture is reserved for a later migration stage" if args_cli.make_video else None,
+        "video_note": "Use replay_mpd_trajectory.py for IsaacLab video export." if args_cli.make_video else None,
         **obstacle_summary,
     }
 

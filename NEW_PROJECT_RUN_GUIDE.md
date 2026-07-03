@@ -662,6 +662,24 @@ python mpd/motion_planning_baselines/examples/panda_isaac_replay.py --sim_backen
 python mpd/motion_planning_baselines/examples/panda_isaac_replay.py --sim_backend isaacgym
 ```
 
+IsaacLab 视觉 replay 和视频导出：
+
+```bash
+/home/eric/IsaacLab_ori/isaaclab.sh -p scripts/isaaclab/replay_mpd_trajectory.py \
+  --input scripts/inference/logs/<RUN_ID>/isaaclab-trajectories-000.pt \
+  --trajectory_index 0 \
+  --output_video scripts/inference/logs/<RUN_ID>/isaaclab-replay-000.mp4 \
+  --screenshot_path scripts/inference/logs/<RUN_ID>/isaaclab-replay-000.png \
+  --output_json scripts/inference/logs/<RUN_ID>/isaaclab-replay-000.json \
+  --device cuda:0 \
+  --headless \
+  --enable_cameras
+```
+
+`inference.py` 的 IsaacLab batch evaluator 只负责碰撞统计，不再提供 `--render_isaaclab_movie`。需要视觉确认或 mp4 时，先用 inference 生成 `isaaclab-trajectories-XXX.pt`，再运行上面的 replay 脚本。
+
+replay 脚本默认在视频、截图和 JSON 全部写完后快速退出进程，避免 Isaac Sim 5.1 在 `SimulationApp.close()` 阶段卡住。调试 Isaac Sim 资源清理时可以额外加 `--graceful_shutdown`，但正常导出视频不需要。
+
 ## Baseline 示例
 
 示例脚本位于：
@@ -689,6 +707,6 @@ mpd/torch_robotics/torch_robotics/isaac_gym_envs/motion_planning_envs.py
 ## 当前限制
 
 - IsaacLab evaluator 第一版只稳定支持 Panda joint-space trajectory replay。
-- MPD 障碍物到 IsaacLab scene 的完整映射仍未完全展开；当前 IsaacLab statistics 主要用于 Panda 轨迹执行接触验证。
-- `--make_video` / `--video_path` 参数已从调用侧贯通，但 evaluator 内实际视频采集仍是保留功能。
+- MPD 障碍物到 IsaacLab scene 目前支持 sphere 和 box primitive；更复杂 mesh/非 primitive 障碍物仍未迁移。
+- IsaacLab evaluator 负责批量 headless 统计；IsaacLab 视频和截图由 `scripts/isaaclab/replay_mpd_trajectory.py` 负责。
 - 旧 `mpd-splines-public` 环境直接暴露 RTX 5060 时，可能在 Theseus/PyTorch CUDA import 阶段报 `sm_120` 不兼容；需要 CPU 路径验证时使用 `CUDA_VISIBLE_DEVICES=''`。

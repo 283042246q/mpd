@@ -81,7 +81,6 @@ def _run_isaaclab_evaluator(
     isaaclab_headless,
     isaaclab_action_repeat,
     isaaclab_timeout_s,
-    make_video,
 ):
     if not isinstance(planning_task.robot, RobotPanda):
         raise NotImplementedError("The IsaacLab evaluator currently supports RobotPanda trajectories only.")
@@ -96,7 +95,6 @@ def _run_isaaclab_evaluator(
     trajectories_path = results_dir / f"isaaclab-trajectories-{idx_sg:03d}.pt"
     statistics_path = results_dir / f"isaaclab-statistics-{idx_sg:03d}.json"
     log_path = results_dir / f"isaaclab-evaluator-{idx_sg:03d}.log"
-    video_path = results_dir / f"isaaclab-{idx_sg:03d}.mp4"
 
     scene_payload = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
     if env_name.startswith("EnvWarehouse") and not any(
@@ -125,8 +123,6 @@ def _run_isaaclab_evaluator(
         isaaclab_headless=isaaclab_headless,
         isaaclab_action_repeat=isaaclab_action_repeat,
         isaaclab_timeout_s=isaaclab_timeout_s,
-        make_video=make_video,
-        video_path=video_path,
     )
 
 
@@ -161,7 +157,6 @@ def experiment(
     run_evaluation_isaac_lab: bool = False,
     render_isaacgym_viewer: bool = False,
     render_isaacgym_movie: bool = False,
-    render_isaaclab_movie: bool = False,
     isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab_ori"),
     isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab_ori"),
     isaaclab_device: str = "cuda:0",
@@ -390,7 +385,6 @@ def experiment(
                         isaaclab_headless=isaaclab_headless,
                         isaaclab_action_repeat=isaaclab_action_repeat,
                         isaaclab_timeout_s=isaaclab_timeout_s,
-                        make_video=render_isaaclab_movie,
                     )
             results_single_plan.isaacgym_statistics = simulation_statistics
             results_single_plan.sim_statistics = simulation_statistics

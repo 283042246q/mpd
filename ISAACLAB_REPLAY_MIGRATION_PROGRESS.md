@@ -48,7 +48,8 @@
 ## 阶段 3：Warehouse box obstacle export
 
 - Push 版本：`stage-3-warehouse-box-export`
-- 状态：已完成，待 push
+- 状态：已完成并 push
+- Commit：`d5aaf34`
 - 目标：
   - 将 Warehouse/Table/Shelf 中的 box obstacle payload 导出到 IsaacLab。
   - IsaacLab evaluator 生成静态 cuboid collider。
@@ -67,8 +68,26 @@
 ## 阶段 4：IsaacLab replay 视频导出
 
 - Push 版本：`stage-4-replay-video-export`
-- 状态：未开始
+- 状态：已完成并 push
 - 目标：
   - 新增专用 `scripts/isaaclab/replay_mpd_trajectory.py`。
   - replay 脚本负责单条/少量轨迹的视觉验证、截图和 mp4 导出。
   - 从 inference 主流程移除 `--render_isaaclab_movie`，避免误以为 batch evaluator 会录视频。
+- 改动：
+  - 新增 `scripts/isaaclab/replay_mpd_trajectory.py`，读取 `isaaclab-trajectories-XXX.pt`，按 `--trajectory_index` 选择单条 Panda joint-space 轨迹 replay。
+  - replay 脚本在 IsaacLab scene 中加载 `scene.obstacles`，支持 sphere 和 box 障碍物，并通过相机导出 `--output_video`、`--screenshot_path`、`--output_json`。
+  - replay 默认在写完文件后 fast process exit，避免 Isaac Sim 5.1 在 `SimulationApp.close()` 阶段卡住；调试完整清理时可显式加 `--graceful_shutdown`。
+  - 从 `scripts/inference/inference.py` 和 `scripts/inference/launch_inference-experiments.py` 移除 `render_isaaclab_movie` 参数和 evaluator 视频调用。
+  - `scripts/isaaclab/evaluate_mpd_trajectories.py` 保留 `--make_video` 兼容参数，但标记为 deprecated，并提示改用 replay 脚本。
+  - `scripts/generate_data/visualize_trajectories.py` 和 `mpd/motion_planning_baselines/examples/panda_isaac_replay.py` 的 IsaacLab 可视化路径改为先跑 evaluator 统计，再调用 replay 脚本导出 mp4/png。
+  - `NEW_PROJECT_RUN_GUIDE.md` 增加 IsaacLab 视觉 replay 命令和输入输出说明。
+- 验证：
+  - Python 编译检查通过。
+  - 使用 Stage 3 的 Warehouse payload 完成 headless replay：
+    - 输入：`scripts/inference/logs/stage3_warehouse_box_export/1783112155/isaaclab-trajectories-000.pt`
+    - 截图：`scripts/inference/logs/stage3_warehouse_box_export/1783112155/replay-stage4-fast-000.png`
+    - 视频：`scripts/inference/logs/stage3_warehouse_box_export/1783112155/replay-stage4-fast-000.mp4`
+    - 元数据：`scripts/inference/logs/stage3_warehouse_box_export/1783112155/replay-stage4-fast-000.json`
+  - replay 命令正常返回，未停在 Isaac Sim 关闭阶段。
+  - OpenCV 检查：截图 shape `(360, 640, 3)`，视频 129 帧，JSON `n_frames=129`，`n_obstacles=12`，`obstacle_types=['box']`。
+  - 已打开截图进行视觉确认：画面包含 Panda 机械臂和 Warehouse shelf/box 场景。

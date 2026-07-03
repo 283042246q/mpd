@@ -89,7 +89,6 @@ default_options = OrderedDict(
     run_evaluation_isaac_lab=False,
     render_isaacgym_viewer=False,
     render_isaacgym_movie=False,
-    render_isaaclab_movie=False,
     isaaclab_root="/home/eric/IsaacLab_ori",
     isaaclab_conda_env="env_isaaclab_ori",
     isaaclab_device="cuda:0",
