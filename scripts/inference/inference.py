@@ -28,6 +28,8 @@ from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, t
 
 allow_ops_in_compiled_graph()
 
+ISAACLAB_BATCH_SUPPORTED_ENVS = {"EnvSpheres3D", "EnvSpheres3DExtraObjectsV00"}
+
 
 def _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_isaac_lab):
     if run_evaluation_issac_gym and run_evaluation_isaac_lab:
@@ -43,6 +45,22 @@ def _resolve_sim_backend(sim_backend, run_evaluation_issac_gym, run_evaluation_i
     if sim_backend not in valid_backends:
         raise ValueError(f"Unknown sim_backend={sim_backend!r}. Expected one of {sorted(valid_backends)}.")
     return sim_backend
+
+
+def _planning_env_name(planning_task):
+    return getattr(planning_task.env, "name", type(planning_task.env).__name__)
+
+
+def _require_isaaclab_batch_support(planning_task):
+    env_name = _planning_env_name(planning_task)
+    if env_name not in ISAACLAB_BATCH_SUPPORTED_ENVS:
+        raise NotImplementedError(
+            "IsaacLab batch evaluation currently supports only "
+            f"{sorted(ISAACLAB_BATCH_SUPPORTED_ENVS)}. Got env_name={env_name!r}. "
+            "Run with --sim_backend none for MPD-only inference, or use the dedicated IsaacLab replay/export path "
+            "after obstacle export support is enabled for this environment."
+        )
+    return env_name
 
 
 def _run_isaaclab_evaluator(
@@ -61,6 +79,7 @@ def _run_isaaclab_evaluator(
 ):
     if not isinstance(planning_task.robot, RobotPanda):
         raise NotImplementedError("The IsaacLab evaluator currently supports RobotPanda trajectories only.")
+    env_name = _require_isaaclab_batch_support(planning_task)
 
     horizon = int(q_trajs_pos.shape[0])
     trajectory_duration = float(getattr(planning_task.parametric_trajectory, "trajectory_duration", 0.0))
@@ -78,7 +97,7 @@ def _run_isaaclab_evaluator(
         "q_pos_starts": q_trajs_pos[0].detach().cpu(),
         "q_pos_goal": q_pos_goal.detach().cpu(),
         "robot_name": "panda",
-        "env_name": getattr(planning_task.env, "name", type(planning_task.env).__name__),
+        "env_name": env_name,
         "dt": trajectory_dt,
     }
     torch.save(payload, trajectories_path)
