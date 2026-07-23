@@ -45,7 +45,9 @@ costs:
     weight: 1.0
   CostJointSpaceJointLimits:
     weight: 1.0
-  CostTaskSpaceEEGoalPose:
+  CostTaskSpaceEEGoalPosition:
+    weight: 1.0
+  CostTaskSpaceEEGoalOrientation:
     weight: 1.0
   CostJointSpaceVelocity:
     weight: 0.01
@@ -55,7 +57,7 @@ costs:
 
 n_trajectory_samples: 100  # batch size for sampling
 
-best_trajectory_selection: 'shortest_path_length'
+best_trajectory_selection: weighted_metrics
 
 #######################################################################################################################
 # Planner options

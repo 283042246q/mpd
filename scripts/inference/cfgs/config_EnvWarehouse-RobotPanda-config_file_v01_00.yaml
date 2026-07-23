@@ -1,5 +1,7 @@
 model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
 
+#model_dir_ddpm_bspline: '/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/train/logs/ware_simp/1726484688'
+
 model_dir_cvae_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_cvae_models-v04_2024-09-18_08-14-47/generative_model_class___CVAEModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
 
 model_dir_ddpm_waypoints: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_diffusion_models-v04_2024-11-11_10-27-59/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryWaypoints/0'
@@ -12,17 +14,29 @@ model_selection: 'bspline'  # 'bspline', 'waypoints'
 
 min_distance_q_pos_start_goal: 3.5  # minimum distance between start and goal configurations np.sqrt(7*2*(np.pi/2)**2)=5.88
 
-env_id_replace: null
-#env_id_replace: 'EnvWarehouseExtraObjectsV00'
+# Start/goal source: dataset, regions, states_file, or auto.
+# regions samples EE poses from the YAML below, solves IK, and rejects colliding states.
+start_goal_source: states_file   # auto, dataset, states_file, regions
+selection_start_goal: /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/logs/contrast/1784615210/start-goal-states.yaml #training or validation for dataset, path for states_file
+start_goal_regions_path: start_goal_regions/EnvWarehouse-RobotPanda-regions.yaml
+start_goal_max_sampling_attempts: 100
+
+
+#env_id_replace: null
+env_id_replace: 'EnvWarehouseExtraObjectsV00' #额外障碍物
 
 grasped_object: null
+#name: GraspedObjectBox
+#    attached_to_frame: panda_hand
+#    object_collision_margin: 0.02
+
 
 # env kwargs
-rotation_z_axis_deg: 0.0  # rotation around the z-axis in degrees
+rotation_z_axis_deg: 0  # 障碍物绕世界原点旋转；regions 模式下起终点区域也应用相同旋转
 
 # collision avoidance/checking options
 # extra margin for object collision cost (sdf is clamped if it is greater than this value)
-# 0.02 for 2D tasks, 0.05 for panda tasks
+# 0.02 for 2D tasks, 0.05 for panda tasks  障碍物的额外安全距离
 obstacle_cutoff_margin_extra: 0.05
 # Points whose distance to the objects is less than this margin are considered in collision
 margin_for_dense_collision_checking:  0.0
@@ -46,17 +60,35 @@ costs:
     weight: 1.0
   CostJointSpaceJointLimits:
     weight: 1.0
-  CostTaskSpaceEEGoalPose:
+  CostTaskSpaceEEGoalPosition:
+    weight: 1.0
+  CostTaskSpaceEEGoalOrientation:
     weight: 1.0
   CostJointSpaceVelocity:
-    weight: 0.01
+    weight: 0.02 #0.1 #0.01
   CostJointSpaceAcceleration:
-    weight: 0.001
+    weight: 0.005 #0.05 #0.001
+  CostJointSpacePathLength:
+    weight: 0
 
 
 n_trajectory_samples: 100  # batch size for sampling
 
-best_trajectory_selection: 'shortest_path_length'
+best_trajectory_selection: weighted_metrics
+best_trajectory_weights:
+  ee_position: 0.35
+  ee_orientation: 0.20
+  path_length: 0.15
+  smoothness: 0.15
+  velocity_limit_utilization: 0.075
+  acceleration_limit_utilization: 0.075
+best_trajectory_metric_scales:
+  ee_position: 0.015
+  ee_orientation: 1.5
+  path_length: null
+  smoothness: null
+  velocity_limit_utilization: 0.3
+  acceleration_limit_utilization: 0.15
 
 #######################################################################################################################
 # Planner options
@@ -73,16 +105,23 @@ extra_mp_steps: 0  # number of extra motion planning gradient steps
 
 # ddim options
 ddim:
-  t_start_guide_steps_fraction: 0.2
-  ddim_sampling_timesteps: 15
-  ddim_eta: 0.5  # 0.0 for ddim, 1.0 for ddpm
-  ddim_skip_type: 'quadratic'  # 'uniform', 'quadratic', 'exponential'
-  ddim_scale_grad_prior: 0.25
-  n_guide_steps: 4
-  guide_lr: 1.0
-  max_perturb_x: 0.15  # maximum perturbation from the diffusion mean during guide steps
-  clip_grad: true
-  clip_grad_rule: 'value'  # 'norm', 'value'
+  t_start_guide_steps_fraction: 0.333 #开始启用cost guide的步数/总推理步数
+  ddim_sampling_timesteps: 15 #ddim的总共推理步数 15
+  ddim_eta: 0.5  # 0.0 for ddim, 1.0 for ddpm 采样随机性 0最稳定
+  ddim_skip_type: 'quadratic'  # 'uniform', 'quadratic', 'exponential' ddim跳步方式：均匀 二次 指数
+  ee_goal_position_weight_start: 1.0
+  ee_goal_position_weight_end: 3.0
+  ee_goal_orientation_weight_start: 1.0
+  ee_goal_orientation_weight_end: 3.0
+  ddim_scale_grad_prior: 0.5 #0.25 #越大越相信先验，越小越受guide和cost影响
+  #ddim_scale_grad_prior_end: 0.5
+  n_guide_steps: 6 # 每个启用 guide 的 DDIM step 内做几次梯度引导。
+  #越大：避障/目标优化更强，但更慢，也更可能不平滑。调试 2，正式 4，困难场景可试 6。
+  guide_lr: 1.0 #guide 梯度步长。
+  # 越大：cost 修正更激进。如果碰撞多，可以试 1.0 ~ 1.5；如果轨迹发抖、跳变、偏离太大，降到 0.3 ~ 0.7。
+  max_perturb_x: 0.15  # maximum perturbation from the diffusion mean during guide steps，guide后允许的最大偏离幅度
+  clip_grad: true #梯度裁剪，防止 cost guide 梯度过大。
+  clip_grad_rule: 'value'  # 'norm', 'value' norm：按整体norm裁减到允许范围  value：逐元素
   max_grad_norm: 1.  # clip the norm of the control point gradients
   max_grad_value: 1.  # clip the control point gradients
 

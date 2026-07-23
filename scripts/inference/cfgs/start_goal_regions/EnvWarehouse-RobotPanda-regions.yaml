@@ -1,0 +1,42 @@
+# Regions are defined in the unrotated EnvWarehouse robot-base frame.
+# When true, inference applies the current rotation_z_axis_deg to both the
+# sampled EE position and orientation before IK and collision validation.
+env_id: EnvWarehouse
+robot_id: RobotPanda
+rotate_with_environment: true #true 表示区域按未旋转环境定义；推理时对位置和朝向应用与障碍物相同的 Z 轴旋转
+max_sampling_attempts: 100
+
+start_regions:
+  region_00:  # top of the table
+    translation:
+      x: [[0.25, 0.4]] #[[0.30, 0.80]]
+      y: [[-0.10, 0.25]] #[[-0.25, 0.25]]
+      z: [[0.15, 0.25]] #[[0.15, 0.25]]
+    rotation:
+      base: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+      x: [[-15.0, 15.0]]
+      y: [[-15.0, 15.0]]
+      z: [[-90.0, 90.0]]
+
+goal_regions:
+  region_00:  # top of the table
+    translation:
+      x: [[0.65, 0.9]] #[[0.30, 0.80]]
+      y: [[-0.10, 0.25]] #[[-0.25, 0.25]]
+      z: [[0.15, 0.25]] #[[0.15, 0.25]]
+    rotation:
+      base: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+      x: [[-15.0, 15.0]]
+      y: [[-15.0, 15.0]]
+      z: [[-90.0, 90.0]]
+#goal_regions:
+#  region_01:  # big shelf
+#    translation:
+#      x: [[0.15, 0.60]]
+#      y: [[0.45, 0.60]] #[[0.45, 0.60]]
+#      z: [[0.30, 0.40], [0.57, 0.70]]  #[0.10, 0.15],
+#    rotation:
+#      base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
+#      x: [[-15.0, 15.0]]
+#      y: [[-15.0, 15.0]]
+#      z: [[-15.0, 15.0]]

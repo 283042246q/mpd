@@ -3,7 +3,7 @@ from mpd.utils.patches import numpy_monkey_patch
 numpy_monkey_patch()
 
 import time
-from functools import partial
+from functools import partial, wraps
 
 from dotmap import DotMap
 
@@ -17,17 +17,33 @@ import torch
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 
 from experiment_launcher import single_experiment_yaml, run_experiment
+from experiment_launcher.utils import create_results_dir
 from mpd.inference.inference import EvaluationSamplesGenerator, GenerativeOptimizationPlanner, render_results
 from mpd.metrics.metrics import PlanningMetricsCalculator
 from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml, save_to_yaml
 from scripts.isaaclab.scene_payload import export_isaaclab_scene_payload
-from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess
+from scripts.isaaclab.subprocess_utils import run_isaaclab_evaluator_subprocess, run_isaaclab_replay_subprocess
 from torch_robotics.robots import RobotPanda
+from torch_robotics.trajectory.metrics import compute_path_length
 from torch_robotics.torch_kinematics_tree.utils.files import get_robot_path
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 
 allow_ops_in_compiled_graph()
+
+
+def single_experiment_yaml_optional_artifacts(experiment_function):
+    launcher_experiment = single_experiment_yaml(experiment_function)
+
+    @wraps(experiment_function)
+    def wrapper(*args, **kwargs):
+        if not kwargs.get("lightweight_output", False):
+            return launcher_experiment(*args, **kwargs)
+        create_results_dir(kwargs, make_dirs_with_seed=True)
+        return experiment_function(*args, **kwargs)
+
+    return wrapper
+
 
 ISAACLAB_BATCH_SUPPORTED_ENVS = {
     "EnvSpheres3D",
@@ -69,8 +85,317 @@ def _require_isaaclab_batch_support(planning_task):
     return env_name
 
 
+def _release_torch_memory():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+
+def _to_float(value):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return None
+        value = value.detach().cpu().reshape(-1)[0].item()
+    elif isinstance(value, np.ndarray):
+        if value.size == 0:
+            return None
+        value = value.reshape(-1)[0].item()
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_float(value, precision=6):
+    value_float = _to_float(value)
+    if value_float is None or not np.isfinite(value_float):
+        return "N/A"
+    return f"{value_float:.{precision}f}"
+
+
+def _mapping_get(mapping, key, default=None):
+    if mapping is None:
+        return default
+    if isinstance(mapping, dict):
+        return mapping.get(key, default)
+    return getattr(mapping, key, default)
+
+
+def _first_collision_summary(first_collision_steps, timesteps=None):
+    if first_collision_steps is None:
+        return None
+    first_collision_steps = torch.as_tensor(first_collision_steps).detach().cpu().long().reshape(-1)
+    collided_steps = first_collision_steps[first_collision_steps >= 0]
+    if collided_steps.numel() == 0:
+        return {
+            "steps": first_collision_steps.tolist(),
+            "min": None,
+            "mean": None,
+            "median": None,
+            "max": None,
+            "time_min": None,
+            "time_mean": None,
+            "time_median": None,
+            "time_max": None,
+        }
+
+    collided_steps_float = collided_steps.float()
+    summary = {
+        "steps": first_collision_steps.tolist(),
+        "min": int(collided_steps.min().item()),
+        "mean": float(collided_steps_float.mean().item()),
+        "median": float(collided_steps_float.median().item()),
+        "max": int(collided_steps.max().item()),
+        "time_min": None,
+        "time_mean": None,
+        "time_median": None,
+        "time_max": None,
+    }
+    if timesteps is not None:
+        timesteps = torch.as_tensor(timesteps).detach().cpu().reshape(-1)
+        collision_times = timesteps[collided_steps]
+        summary.update(
+            time_min=float(collision_times.min().item()),
+            time_mean=float(collision_times.float().mean().item()),
+            time_median=float(collision_times.float().median().item()),
+            time_max=float(collision_times.max().item()),
+        )
+    return summary
+
+
+def _write_inference_text_report(
+    results_single_plan,
+    planning_task,
+    args_inference,
+    sim_backend,
+    idx_sg,
+    results_dir,
+):
+    q_trajs_pos_all = results_single_plan.q_trajs_pos_iter_0
+    n_generated = int(q_trajs_pos_all.shape[0])
+    n_total = int(args_inference.n_trajectory_samples)
+    denominator = max(n_total, 1)
+    horizon = int(q_trajs_pos_all.shape[1])
+
+    q_trajs_pos_valid = results_single_plan.q_trajs_pos_valid
+    n_valid = 0 if q_trajs_pos_valid is None else int(q_trajs_pos_valid.shape[0])
+    collision_trajectory_mask = results_single_plan.collision_trajectory_mask.detach().cpu().bool()
+    collision_waypoint_mask = results_single_plan.collision_waypoint_mask.detach().cpu().bool()
+    n_collision = int(collision_trajectory_mask.sum().item())
+    n_collision_waypoints = int(collision_waypoint_mask.sum().item())
+
+    joint_position_violation_mask = results_single_plan.joint_position_violation_mask.detach().cpu().bool()
+    joint_velocity_violation_mask = results_single_plan.joint_velocity_violation_mask.detach().cpu().bool()
+    joint_acceleration_violation_mask = results_single_plan.joint_acceleration_violation_mask.detach().cpu().bool()
+
+    path_lengths_all = compute_path_length(q_trajs_pos_all, planning_task.robot).detach().cpu()
+    path_lengths_valid = None
+    if n_valid > 0:
+        path_lengths_valid = compute_path_length(q_trajs_pos_valid, planning_task.robot).detach().cpu()
+
+    first_collision = _first_collision_summary(
+        results_single_plan.first_collision_steps,
+        results_single_plan.timesteps,
+    )
+
+    metrics = results_single_plan.metrics.toDict() if hasattr(results_single_plan.metrics, "toDict") else {}
+    metrics_all = metrics.get("trajs_all", {})
+    metrics_valid = metrics.get("trajs_valid", {})
+    guidance_schedule = _mapping_get(results_single_plan, "ddim_guidance_schedule", [])
+    ee_goal_position_weight_schedule = [
+        _mapping_get(
+            step,
+            "ee_goal_position_weight",
+            _mapping_get(step, "ee_pose_goal_weight"),
+        )
+        for step in guidance_schedule
+    ]
+    ee_goal_orientation_weight_schedule = [
+        _mapping_get(
+            step,
+            "ee_goal_orientation_weight",
+            _mapping_get(step, "ee_pose_goal_weight"),
+        )
+        for step in guidance_schedule
+    ]
+    prior_weight_schedule = [_mapping_get(step, "prior_weight") for step in guidance_schedule]
+    best_selection_details = _mapping_get(results_single_plan, "best_trajectory_selection_details")
+    best_selection_lines = ["[BEST TRAJECTORY SELECTION]"]
+    if best_selection_details is None:
+        best_selection_lines.extend(
+            [
+                "method: N/A",
+                "selected_valid_index: N/A",
+                "score: N/A",
+            ]
+        )
+    else:
+        best_selection_lines.extend(
+            [
+                f"method: {_mapping_get(best_selection_details, 'method', 'N/A')}",
+                f"selected_valid_index: {_mapping_get(best_selection_details, 'selected_valid_index', 'N/A')}",
+                f"score: {_format_float(_mapping_get(best_selection_details, 'score'))}",
+            ]
+        )
+        components = _mapping_get(best_selection_details, "components", {})
+        for component_name, component in components.items():
+            best_selection_lines.append(
+                f"{component_name}: value={_format_float(_mapping_get(component, 'value'))}, "
+                f"scale={_format_float(_mapping_get(component, 'scale'))}, "
+                f"weight={_format_float(_mapping_get(component, 'weight'))}, "
+                f"normalized={_format_float(_mapping_get(component, 'normalized_value'))}, "
+                f"weighted_term={_format_float(_mapping_get(component, 'weighted_term'))}"
+            )
+    best_selection_lines.append("")
+
+    start_goal_metadata = _mapping_get(results_single_plan, "start_goal_metadata", {})
+    simulation_statistics = results_single_plan.sim_statistics
+    if n_valid == 0:
+        status = "failed_no_valid_trajectory"
+        simulation_status = "skipped_no_valid_trajectory" if sim_backend != "none" else "not_requested"
+    elif sim_backend == "isaaclab" and simulation_statistics is not None:
+        status = "isaaclab_evaluated"
+        simulation_status = "completed"
+    else:
+        status = "mpd_valid"
+        simulation_status = "completed" if simulation_statistics is not None else "not_requested"
+
+    lines = [
+        "MPD INFERENCE REPORT",
+        "====================",
+        f"plan_index: {idx_sg}",
+        f"status: {status}",
+        f"environment: {_planning_env_name(planning_task)}",
+        f"sim_backend: {sim_backend}",
+        f"simulation_status: {simulation_status}",
+        f"configured_total_trajectories: {n_total}",
+        f"generated_total_trajectories: {n_generated}",
+        f"all_trajectory_rate_denominator: n_trajectory_samples={n_total}",
+        f"trajectory_horizon: {horizon}",
+        "",
+        "[START/GOAL]",
+        f"source: {_mapping_get(start_goal_metadata, 'source', 'unknown')}",
+        f"selection: {_mapping_get(start_goal_metadata, 'selection', 'N/A')}",
+        f"sample_index: {_mapping_get(start_goal_metadata, 'sample_index', 'N/A')}",
+        f"sampling_attempt: {_mapping_get(start_goal_metadata, 'sampling_attempt', 'N/A')}",
+        f"start_region_id: {_mapping_get(start_goal_metadata, 'start_region_id', 'N/A')}",
+        f"goal_region_id: {_mapping_get(start_goal_metadata, 'goal_region_id', 'N/A')}",
+        f"rotation_z_axis_deg: {_mapping_get(start_goal_metadata, 'rotation_z_axis_deg', 'N/A')}",
+        f"rotate_with_environment: {_mapping_get(start_goal_metadata, 'rotate_with_environment', 'N/A')}",
+        "",
+        "[MPD VALIDITY]",
+        f"valid_trajectories: {n_valid}",
+        f"valid_rate: {n_valid / denominator:.6f} ({n_valid}/{n_total})",
+        f"colliding_trajectories: {n_collision}",
+        f"collision_rate: {n_collision / denominator:.6f} ({n_collision}/{n_total})",
+        f"collision_waypoints: {n_collision_waypoints}",
+        f"collision_waypoint_fraction: {n_collision_waypoints / max(n_generated * horizon, 1):.6f} "
+        f"({n_collision_waypoints}/{n_generated * horizon})",
+        f"joint_position_violation_trajectories: {int(joint_position_violation_mask.sum().item())}",
+        f"joint_position_violation_rate: {joint_position_violation_mask.sum().item() / denominator:.6f}",
+        f"joint_velocity_violation_trajectories: {int(joint_velocity_violation_mask.sum().item())}",
+        f"joint_velocity_violation_rate: {joint_velocity_violation_mask.sum().item() / denominator:.6f}",
+        f"joint_acceleration_violation_trajectories: {int(joint_acceleration_violation_mask.sum().item())}",
+        f"joint_acceleration_violation_rate: {joint_acceleration_violation_mask.sum().item() / denominator:.6f}",
+        "",
+        "[FIRST COLLISION - MPD WAYPOINT INDEX]",
+        f"first_collision_step_min: {_format_float(first_collision['min'], precision=3)}",
+        f"first_collision_step_mean: {_format_float(first_collision['mean'], precision=3)}",
+        f"first_collision_step_median: {_format_float(first_collision['median'], precision=3)}",
+        f"first_collision_step_max: {_format_float(first_collision['max'], precision=3)}",
+        f"first_collision_time_sec_min: {_format_float(first_collision['time_min'])}",
+        f"first_collision_time_sec_mean: {_format_float(first_collision['time_mean'])}",
+        f"first_collision_time_sec_median: {_format_float(first_collision['time_median'])}",
+        f"first_collision_time_sec_max: {_format_float(first_collision['time_max'])}",
+        f"first_collision_steps_by_trajectory: {first_collision['steps']}",
+        "",
+        "[PATH LENGTH - JOINT SPACE]",
+        f"all_trajectories_path_length_mean: {_format_float(path_lengths_all.mean())}",
+        f"all_trajectories_path_length_std: {_format_float(path_lengths_all.std())}",
+        f"valid_trajectories_path_length_mean: "
+        f"{_format_float(path_lengths_valid.mean() if path_lengths_valid is not None else None)}",
+        f"valid_trajectories_path_length_std: "
+        f"{_format_float(path_lengths_valid.std() if path_lengths_valid is not None else None)}",
+        "",
+        "[END-EFFECTOR GOAL ERROR - ALL TRAJECTORIES]",
+        "position_error_mean_m: " f"{_format_float(metrics_all.get('ee_pose_goal_error_position_norm_mean'))}",
+        "orientation_error_mean_deg: " f"{_format_float(metrics_all.get('ee_pose_goal_error_orientation_norm_mean'))}",
+        "",
+        "[END-EFFECTOR GOAL ERROR - VALID TRAJECTORIES]",
+        "position_error_mean_m: " f"{_format_float(metrics_valid.get('ee_pose_goal_error_position_norm_mean'))}",
+        "orientation_error_mean_deg: "
+        f"{_format_float(metrics_valid.get('ee_pose_goal_error_orientation_norm_mean'))}",
+        "",
+        "[VALID TRAJECTORY METRICS - MEDIAN]",
+        "ee_position_error_median_m: " f"{_format_float(metrics_valid.get('ee_pose_goal_error_position_norm_median'))}",
+        "ee_orientation_error_median_deg: "
+        f"{_format_float(metrics_valid.get('ee_pose_goal_error_orientation_norm_median'))}",
+        f"path_length_median: {_format_float(metrics_valid.get('path_length_median'))}",
+        f"smoothness_median: {_format_float(metrics_valid.get('smoothness_median'))}",
+        "velocity_limit_utilization_median: "
+        f"{_format_float(metrics_valid.get('velocity_limit_utilization_median'))}",
+        "acceleration_limit_utilization_median: "
+        f"{_format_float(metrics_valid.get('acceleration_limit_utilization_median'))}",
+        "",
+        *best_selection_lines,
+        "[DDIM GUIDANCE SCHEDULE]",
+        f"active_steps: {len(guidance_schedule)}",
+        "ee_goal_position_weights: "
+        f"[{', '.join(_format_float(value) for value in ee_goal_position_weight_schedule)}]",
+        "ee_goal_orientation_weights: "
+        f"[{', '.join(_format_float(value) for value in ee_goal_orientation_weight_schedule)}]",
+        f"prior_weights: [{', '.join(_format_float(value) for value in prior_weight_schedule)}]",
+        "",
+        "[TIMING]",
+        f"inference_total_sec: {_format_float(results_single_plan.t_inference_total)}",
+        f"generator_sec: {_format_float(results_single_plan.t_generator)}",
+        f"guide_sec: {_format_float(results_single_plan.t_guide)}",
+        "",
+        "[ISAAC LAB]",
+    ]
+
+    if sim_backend == "isaaclab" and simulation_statistics is not None:
+        n_simulated = int(_mapping_get(simulation_statistics, "n_trajectories", 0))
+        n_sim_collision = int(_mapping_get(simulation_statistics, "n_trajectories_collision", 0))
+        n_sim_free = int(_mapping_get(simulation_statistics, "n_trajectories_free", 0))
+        isaaclab_first_collision = _first_collision_summary(
+            _mapping_get(simulation_statistics, "first_collision_step"),
+            results_single_plan.timesteps,
+        )
+        lines.extend(
+            [
+                "status: completed",
+                f"evaluated_trajectories: {n_simulated}",
+                f"evaluated_rate_over_total_samples: {n_simulated / denominator:.6f} ({n_simulated}/{n_total})",
+                f"collision_trajectories: {n_sim_collision}",
+                f"collision_rate_over_total_samples: "
+                f"{n_sim_collision / denominator:.6f} ({n_sim_collision}/{n_total})",
+                f"free_trajectories: {n_sim_free}",
+                f"free_rate_over_total_samples: {n_sim_free / denominator:.6f} ({n_sim_free}/{n_total})",
+                f"first_collision_step_min: {_format_float(isaaclab_first_collision['min'], precision=3)}",
+                f"first_collision_step_mean: {_format_float(isaaclab_first_collision['mean'], precision=3)}",
+                f"first_collision_step_median: {_format_float(isaaclab_first_collision['median'], precision=3)}",
+                f"first_collision_step_max: {_format_float(isaaclab_first_collision['max'], precision=3)}",
+                f"first_collision_steps_by_trajectory: {isaaclab_first_collision['steps']}",
+                f"contact_force_threshold: "
+                f"{_format_float(_mapping_get(simulation_statistics, 'contact_force_threshold'))}",
+            ]
+        )
+    else:
+        isaaclab_status = simulation_status if sim_backend == "isaaclab" else "not_requested"
+        lines.append(f"status: {isaaclab_status}")
+
+    report_path = Path(results_dir) / f"inference-report-{idx_sg:03d}.txt"
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
+
+
 def _run_isaaclab_evaluator(
     q_trajs_pos,
+    q_trajs_pos_best,
     q_pos_goal,
     planning_task,
     idx_sg,
@@ -81,6 +406,11 @@ def _run_isaaclab_evaluator(
     isaaclab_headless,
     isaaclab_action_repeat,
     isaaclab_timeout_s,
+    isaaclab_replay,
+    isaaclab_replay_trajectory_index,
+    isaaclab_replay_video_fps,
+    isaaclab_replay_width,
+    isaaclab_replay_height,
 ):
     if not isinstance(planning_task.robot, RobotPanda):
         raise NotImplementedError("The IsaacLab evaluator currently supports RobotPanda trajectories only.")
@@ -95,6 +425,10 @@ def _run_isaaclab_evaluator(
     trajectories_path = results_dir / f"isaaclab-trajectories-{idx_sg:03d}.pt"
     statistics_path = results_dir / f"isaaclab-statistics-{idx_sg:03d}.json"
     log_path = results_dir / f"isaaclab-evaluator-{idx_sg:03d}.log"
+    replay_log_path = results_dir / f"isaaclab-replay-{idx_sg:03d}.log"
+    replay_video_path = results_dir / f"isaaclab-replay-{idx_sg:03d}.mp4"
+    replay_screenshot_path = results_dir / f"isaaclab-replay-{idx_sg:03d}.png"
+    replay_json_path = results_dir / f"isaaclab-replay-{idx_sg:03d}.json"
 
     scene_payload = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
     if env_name.startswith("EnvWarehouse") and not any(
@@ -111,9 +445,32 @@ def _run_isaaclab_evaluator(
         "dt": trajectory_dt,
         "scene": scene_payload,
     }
+    if q_trajs_pos_best is not None:
+        payload["q_trajs_pos_best"] = q_trajs_pos_best.detach().cpu()
     torch.save(payload, trajectories_path)
 
-    return run_isaaclab_evaluator_subprocess(
+    replay_request = None
+    if isaaclab_replay:
+        replay_request = {
+            "trajectories_path": trajectories_path,
+            "log_path": replay_log_path,
+            "video_path": replay_video_path,
+            "screenshot_path": replay_screenshot_path,
+            "output_json_path": replay_json_path,
+            "trajectory_source": "best",
+            "trajectory_index": isaaclab_replay_trajectory_index,
+            "isaaclab_root": isaaclab_root,
+            "isaaclab_conda_env": isaaclab_conda_env,
+            "isaaclab_device": isaaclab_device,
+            "isaaclab_headless": isaaclab_headless,
+            "isaaclab_action_repeat": isaaclab_action_repeat,
+            "isaaclab_timeout_s": isaaclab_timeout_s,
+            "video_fps": isaaclab_replay_video_fps,
+            "width": isaaclab_replay_width,
+            "height": isaaclab_replay_height,
+        }
+
+    statistics = run_isaaclab_evaluator_subprocess(
         trajectories_path=trajectories_path,
         statistics_path=statistics_path,
         log_path=log_path,
@@ -124,18 +481,35 @@ def _run_isaaclab_evaluator(
         isaaclab_action_repeat=isaaclab_action_repeat,
         isaaclab_timeout_s=isaaclab_timeout_s,
     )
+    statistics["trajectories_path"] = trajectories_path.as_posix()
+    statistics["statistics_path"] = statistics_path.as_posix()
+    statistics["evaluator_log_path"] = log_path.as_posix()
+
+    if replay_request is not None:
+        statistics["replay"] = {
+            "status": "queued_after_inference",
+            "trajectory_source": "best",
+            "trajectory_index": int(isaaclab_replay_trajectory_index),
+            "device": str(isaaclab_device),
+            "log_path": replay_log_path.as_posix(),
+            "video_path": replay_video_path.as_posix(),
+            "screenshot_path": replay_screenshot_path.as_posix(),
+            "output_json_path": replay_json_path.as_posix(),
+        }
+
+    return statistics, replay_request
 
 
-@single_experiment_yaml
+@single_experiment_yaml_optional_artifacts
 def experiment(
     ########################################################################
     # Configuration path defining the model and the inference parameters
     # cfg_inference_path: str = './cfgs/config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar2Link-RobotPlanar2Link_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar4Link-RobotPlanar4Link_00.yaml',
-    cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
+    # cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
     # cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
-    # cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
+    cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
     ########################################################################
     # Select the start and goal from the training or validation/test set.
     selection_start_goal: str = "validation",  # training, validation/test
@@ -143,7 +517,21 @@ def experiment(
     # number of start and goal states to evaluate
     n_start_goal_states: int = 1,
     ########################################################################
+    ee_pose_goal_weight_override: float = -1.0,
+    t_start_guide_steps_fraction_override: float = -1.0,
+    n_guide_steps_override: int = -1,
+    ddim_scale_grad_prior_override: float = -1.0,
+    ee_pose_goal_weight_end_override: float = -1.0,
+    ee_goal_position_weight_override: float = -1.0,
+    ee_goal_position_weight_end_override: float = -1.0,
+    ee_goal_orientation_weight_override: float = -1.0,
+    ee_goal_orientation_weight_end_override: float = -1.0,
+    ddim_scale_grad_prior_end_override: float = -1.0,
+    ########################################################################
+    save_args_inference: bool = True,
+    save_results_single_plan: bool = True,
     save_results_single_plan_low_mem: bool = False,
+    lightweight_output: bool = False,
     ########################################################################
     # Visualization options
     render_joint_space_time_iters: bool = True,
@@ -163,6 +551,11 @@ def experiment(
     isaaclab_headless: bool = True,
     isaaclab_action_repeat: int = 4,
     isaaclab_timeout_s: int = 900,
+    isaaclab_replay: bool = True,
+    isaaclab_replay_trajectory_index: int = 0,
+    isaaclab_replay_video_fps: float = 24.0,
+    isaaclab_replay_width: int = 960,
+    isaaclab_replay_height: int = 540,
     ########################################################################
     device: str = "cuda:0",  # cpu, cuda
     debug: bool = False,
@@ -183,7 +576,49 @@ def experiment(
     tensor_args = {"device": device, "dtype": torch.float32}
 
     # Save and load the inference configuration
-    args_inference = DotMap(load_params_from_yaml(cfg_inference_path))
+    cfg_inference_path_resolved = Path(os.path.expandvars(os.path.expanduser(str(cfg_inference_path))))
+    if not cfg_inference_path_resolved.is_absolute():
+        cfg_inference_path_resolved = (Path.cwd() / cfg_inference_path_resolved).resolve()
+    args_inference = DotMap(load_params_from_yaml(cfg_inference_path_resolved.as_posix()))
+
+    if ee_pose_goal_weight_override >= 0.0:
+        for cost_key in (
+            "CostTaskSpaceEEGoalPosition",
+            "CostTaskSpaceEEGoalOrientation",
+            "CostTaskSpaceEEGoalPose",
+        ):
+            if cost_key in args_inference.costs:
+                args_inference.costs[cost_key].weight = ee_pose_goal_weight_override
+    if ee_goal_position_weight_override >= 0.0:
+        if "CostTaskSpaceEEGoalPosition" in args_inference.costs:
+            args_inference.costs.CostTaskSpaceEEGoalPosition.weight = ee_goal_position_weight_override
+        args_inference.ddim.ee_goal_position_weight_start = ee_goal_position_weight_override
+    if ee_goal_orientation_weight_override >= 0.0:
+        if "CostTaskSpaceEEGoalOrientation" in args_inference.costs:
+            args_inference.costs.CostTaskSpaceEEGoalOrientation.weight = ee_goal_orientation_weight_override
+        args_inference.ddim.ee_goal_orientation_weight_start = ee_goal_orientation_weight_override
+    if t_start_guide_steps_fraction_override >= 0.0:
+        args_inference.ddim.t_start_guide_steps_fraction = t_start_guide_steps_fraction_override
+    if n_guide_steps_override >= 0:
+        args_inference.ddim.n_guide_steps = n_guide_steps_override
+    if ddim_scale_grad_prior_override >= 0.0:
+        args_inference.ddim.ddim_scale_grad_prior = ddim_scale_grad_prior_override
+    if ee_pose_goal_weight_override >= 0.0 and ee_pose_goal_weight_end_override >= 0.0:
+        args_inference.ddim.ee_pose_goal_weight_start = ee_pose_goal_weight_override
+        args_inference.ddim.ee_pose_goal_weight_end = ee_pose_goal_weight_end_override
+    if ee_goal_position_weight_end_override >= 0.0:
+        args_inference.ddim.ee_goal_position_weight_end = ee_goal_position_weight_end_override
+    if ee_goal_orientation_weight_end_override >= 0.0:
+        args_inference.ddim.ee_goal_orientation_weight_end = ee_goal_orientation_weight_end_override
+    if ddim_scale_grad_prior_end_override >= 0.0:
+        args_inference.ddim.ddim_scale_grad_prior_end = ddim_scale_grad_prior_end_override
+
+    start_goal_regions_path = args_inference.get("start_goal_regions_path")
+    if start_goal_regions_path:
+        start_goal_regions_path = Path(os.path.expandvars(os.path.expanduser(str(start_goal_regions_path))))
+        if not start_goal_regions_path.is_absolute():
+            start_goal_regions_path = cfg_inference_path_resolved.parent / start_goal_regions_path
+        args_inference.start_goal_regions_path = start_goal_regions_path.resolve().as_posix()
 
     if "cvae" in args_inference.planner_alg:
         if args_inference.model_selection == "bspline":
@@ -202,10 +637,11 @@ def experiment(
 
     args_inference.model_dir = os.path.expandvars(args_inference.model_dir)
 
-    save_to_yaml(args_inference.toDict(), os.path.join(results_dir, "args_inference.yaml"))
+    if save_args_inference:
+        save_to_yaml(args_inference.toDict(), os.path.join(results_dir, "args_inference.yaml"))
 
     print(f"\n-------------------------------------------------------------------------------------------------")
-    print(f"cfg_inference_path:\n{cfg_inference_path}")
+    print(f"cfg_inference_path:\n{cfg_inference_path_resolved}")
     print(f"Model:\n{args_inference.model_dir}")
     print(f"--------------------------------------------------------------------------------------------------")
 
@@ -225,6 +661,8 @@ def experiment(
 
     ################################################################################################################
     # Generator of evaluation samples
+    evaluation_samples_kwargs = dict(args_inference)
+    selection_start_goal = evaluation_samples_kwargs.pop("selection_start_goal", selection_start_goal)
     evaluation_samples_generator = EvaluationSamplesGenerator(
         planning_task,
         train_subset,
@@ -234,7 +672,7 @@ def experiment(
         tensor_args=tensor_args,
         debug=debug,
         render_pybullet=render_pybullet,
-        **args_inference,
+        **evaluation_samples_kwargs,
     )
 
     ################################################################################################################
@@ -298,10 +736,17 @@ def experiment(
 
     ################################################################################################################
     # Plan for several start and goal states sequentially
-    if selection_start_goal == "training":
-        idx_sample_l = np.random.choice(np.arange(len(train_subset)), n_start_goal_states)
+    start_goal_source = str(args_inference.get("start_goal_source", "auto")).lower()
+    uses_dataset_start_goal = start_goal_source == "dataset" or (
+        start_goal_source == "auto" and selection_start_goal in {"training", "validation"}
+    )
+    if uses_dataset_start_goal:
+        dataset_subset = train_subset if selection_start_goal == "training" else val_subset
+        idx_sample_l = np.random.choice(np.arange(len(dataset_subset)), n_start_goal_states)
     else:
-        idx_sample_l = np.random.choice(np.arange(len(val_subset)), n_start_goal_states)
+        idx_sample_l = np.arange(n_start_goal_states)
+    isaaclab_replay_requests = []
+    reproducible_start_goal_states = []
     for idx_sg, idx_sample in enumerate(idx_sample_l):
         print(f"\n-------------------------------------------------------------------------------------------------")
         print(f"----------------PLANNING {idx_sg+1}/{n_start_goal_states}------------------")
@@ -309,7 +754,15 @@ def experiment(
 
         results_single_plan = DotMap(t_generator=0.0, t_guide=0.0)
 
-        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sample)
+        results_single_plan.start_goal_metadata = dict(evaluation_samples_generator.last_sample_metadata)
+        reproducible_start_goal_states.append(
+            {
+                "q_pos_start": to_numpy(q_pos_start).tolist(),
+                "q_pos_goal": to_numpy(q_pos_goal).tolist(),
+                "ee_pose_goal": to_numpy(ee_pose_goal).reshape(3, 4).tolist(),
+            }
+        )
 
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
@@ -324,7 +777,15 @@ def experiment(
         print(f"\n----------------PLAN TRAJECTORIES----------------")
         print(f"Starting inference...")
         results_single_plan = generative_optimization_planner.plan_trajectory(
-            q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug
+            q_pos_start,
+            q_pos_goal,
+            ee_pose_goal,
+            q_vel_start=torch.zeros_like(q_pos_start),
+            q_vel_goal=torch.zeros_like(q_pos_goal),
+            q_acc_start=torch.zeros_like(q_pos_start),
+            q_acc_goal=torch.zeros_like(q_pos_goal),
+            results_ns=results_single_plan,
+            debug=debug,
         )
         print(f"...inference finished.")
 
@@ -373,8 +834,9 @@ def experiment(
                         make_gif=False,
                     )
                 elif sim_backend == "isaaclab":
-                    simulation_statistics = _run_isaaclab_evaluator(
+                    simulation_statistics, replay_request = _run_isaaclab_evaluator(
                         q_trajs_pos=q_trajs_pos,
+                        q_trajs_pos_best=results_single_plan.q_trajs_pos_best,
                         q_pos_goal=q_pos_goal,
                         planning_task=planning_task,
                         idx_sg=idx_sg,
@@ -385,7 +847,14 @@ def experiment(
                         isaaclab_headless=isaaclab_headless,
                         isaaclab_action_repeat=isaaclab_action_repeat,
                         isaaclab_timeout_s=isaaclab_timeout_s,
+                        isaaclab_replay=isaaclab_replay,
+                        isaaclab_replay_trajectory_index=isaaclab_replay_trajectory_index,
+                        isaaclab_replay_video_fps=isaaclab_replay_video_fps,
+                        isaaclab_replay_width=isaaclab_replay_width,
+                        isaaclab_replay_height=isaaclab_replay_height,
                     )
+                    if replay_request is not None:
+                        isaaclab_replay_requests.append(replay_request)
             results_single_plan.isaacgym_statistics = simulation_statistics
             results_single_plan.sim_statistics = simulation_statistics
 
@@ -404,26 +873,39 @@ def experiment(
         print(f"metrics:")
         pprint(results_single_plan.metrics)
 
-        # Save data
-        results_single_plan_to_save = results_single_plan
-        if save_results_single_plan_low_mem:
-            results_single_plan_to_save = DotMap(
-                t_generator=results_single_plan.t_generator,
-                t_guide=results_single_plan.t_guide,
-                t_inference_total=results_single_plan.t_inference_total,
-                q_pos_start=q_pos_start,
-                q_pos_goal=q_pos_goal,
-                ee_pose_goal=ee_pose_goal,
-                control_points_iters=results_single_plan.control_points_iters,
-                metrics=results_single_plan.metrics,
-                isaacgym_statistics=results_single_plan.isaacgym_statistics,
-                sim_statistics=results_single_plan.sim_statistics,
-            )
-        torch.save(
-            results_single_plan_to_save,
-            os.path.join(results_dir, f"results_single_plan-{idx_sg:03d}.pt"),
-            _use_new_zipfile_serialization=True,
+        report_path = _write_inference_text_report(
+            results_single_plan=results_single_plan,
+            planning_task=planning_task,
+            args_inference=args_inference,
+            sim_backend=sim_backend,
+            idx_sg=idx_sg,
+            results_dir=results_dir,
         )
+        results_single_plan.inference_report_path = report_path.as_posix()
+        print(f"inference_report: {report_path}")
+
+        if save_results_single_plan:
+            results_single_plan_to_save = results_single_plan
+            if save_results_single_plan_low_mem:
+                results_single_plan_to_save = DotMap(
+                    t_generator=results_single_plan.t_generator,
+                    t_guide=results_single_plan.t_guide,
+                    t_inference_total=results_single_plan.t_inference_total,
+                    q_pos_start=q_pos_start,
+                    q_pos_goal=q_pos_goal,
+                    ee_pose_goal=ee_pose_goal,
+                    start_goal_metadata=results_single_plan.start_goal_metadata,
+                    control_points_iters=results_single_plan.control_points_iters,
+                    metrics=results_single_plan.metrics,
+                    best_trajectory_selection_details=results_single_plan.best_trajectory_selection_details,
+                    isaacgym_statistics=results_single_plan.isaacgym_statistics,
+                    sim_statistics=results_single_plan.sim_statistics,
+                )
+            torch.save(
+                results_single_plan_to_save,
+                os.path.join(results_dir, f"results_single_plan-{idx_sg:03d}.pt"),
+                _use_new_zipfile_serialization=True,
+            )
 
         ############################################################################################################
         # Render sampling results
@@ -445,18 +927,36 @@ def experiment(
         ############################################################################################################
         # empty memory
         del results_single_plan
-        gc.collect()
-        torch.cuda.empty_cache()
+        _release_torch_memory()
+
+    reproducible_states_path = Path(results_dir) / "start-goal-states.yaml"
+    save_to_yaml(reproducible_start_goal_states, reproducible_states_path)
+    print(f"reproducible_start_goal_states: {reproducible_states_path}")
 
     ################################################################################################################
-    # clean up
+    # clean up inference resources before launching replay processes
     evaluation_samples_generator.generate_data_ompl_worker.terminate()
     if motion_planning_isaac_env is not None:
         motion_planning_isaac_env.clean_up()
         del motion_planning_isaac_env
         del motion_planning_controller_isaac_gym
-    gc.collect()
-    torch.cuda.empty_cache()
+    del generative_optimization_planner
+    del planning_metrics_calculator
+    del evaluation_samples_generator
+    del planning_task
+    del train_subset
+    del val_subset
+    _release_torch_memory()
+
+    ################################################################################################################
+    # Run queued visual replays only after all inference/evaluator files are saved and MPD CUDA memory is released.
+    if isaaclab_replay_requests:
+        print("\n----------------ISAACLAB REPLAY----------------")
+        for replay_request in isaaclab_replay_requests:
+            print(f"Replaying {replay_request['trajectories_path']} ...")
+            replay_statistics = run_isaaclab_replay_subprocess(**replay_request)
+            pprint(replay_statistics)
+            _release_torch_memory()
 
 
 if __name__ == "__main__":

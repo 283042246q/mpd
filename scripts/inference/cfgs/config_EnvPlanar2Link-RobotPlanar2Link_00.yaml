@@ -49,7 +49,7 @@ costs:
 
 n_trajectory_samples: 100  # batch size for sampling
 
-best_trajectory_selection: 'shortest_path_length'
+best_trajectory_selection: weighted_metrics
 
 #######################################################################################################################
 # Planner options

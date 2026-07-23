@@ -1,0 +1,68 @@
+MPD INFERENCE REPORT
+====================
+plan_index: 0
+status: mpd_valid
+environment: EnvWarehouse
+sim_backend: none
+simulation_status: not_requested
+configured_total_trajectories: 100
+generated_total_trajectories: 100
+all_trajectory_rate_denominator: n_trajectory_samples=100
+trajectory_horizon: 128
+
+[START/GOAL]
+source: dataset
+selection: validation
+sample_index: 1974
+sampling_attempt: 2
+start_region_id: N/A
+goal_region_id: N/A
+rotation_z_axis_deg: N/A
+rotate_with_environment: N/A
+
+[MPD VALIDITY]
+valid_trajectories: 94
+valid_rate: 0.940000 (94/100)
+colliding_trajectories: 0
+collision_rate: 0.000000 (0/100)
+collision_waypoints: 0
+collision_waypoint_fraction: 0.000000 (0/12800)
+joint_position_violation_trajectories: 6
+joint_position_violation_rate: 0.060000
+joint_velocity_violation_trajectories: 0
+joint_velocity_violation_rate: 0.000000
+joint_acceleration_violation_trajectories: 0
+joint_acceleration_violation_rate: 0.000000
+
+[FIRST COLLISION - MPD WAYPOINT INDEX]
+first_collision_step_min: N/A
+first_collision_step_mean: N/A
+first_collision_step_median: N/A
+first_collision_step_max: N/A
+first_collision_time_sec_min: N/A
+first_collision_time_sec_mean: N/A
+first_collision_time_sec_median: N/A
+first_collision_time_sec_max: N/A
+first_collision_steps_by_trajectory: [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+
+[PATH LENGTH - JOINT SPACE]
+all_trajectories_path_length_mean: 5.678968
+all_trajectories_path_length_std: 1.158204
+valid_trajectories_path_length_mean: 5.710998
+valid_trajectories_path_length_std: 1.174931
+
+[END-EFFECTOR GOAL ERROR - ALL TRAJECTORIES]
+position_error_mean_m: 0.008186
+orientation_error_mean_deg: 0.624784
+
+[END-EFFECTOR GOAL ERROR - VALID TRAJECTORIES]
+position_error_mean_m: 0.007816
+orientation_error_mean_deg: 0.581325
+
+[TIMING]
+inference_total_sec: 7.613287
+generator_sec: 0.256427
+guide_sec: 7.334131
+
+[ISAAC LAB]
+status: not_requested

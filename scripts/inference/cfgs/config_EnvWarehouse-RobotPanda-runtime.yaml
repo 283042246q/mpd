@@ -1,0 +1,134 @@
+# Dedicated single-request Warehouse configuration for scripts/runtime/infer_once.py.
+# This file never selects dataset/region samples and does not enable a simulator or renderer.
+
+model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
+model_dir_cvae_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_cvae_models-v04_2024-09-18_08-14-47/generative_model_class___CVAEModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0'
+model_dir_ddpm_waypoints: '${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/data_trained_models/launch_train_diffusion_models-v04_2024-11-11_10-27-59/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryWaypoints/0'
+
+model_selection: bspline
+
+runtime:
+  schema_version: 1
+  robot_model: franka_panda
+  planning_frame: panda_link0
+  scene_id: EnvWarehouseExtraObjectsV00
+  joint_names:
+    - panda_joint1
+    - panda_joint2
+    - panda_joint3
+    - panda_joint4
+    - panda_joint5
+    - panda_joint6
+    - panda_joint7
+
+#######################################################################################################################
+# Environment and explicit-state input
+
+start_goal_source: states_file
+env_id_replace: EnvWarehouseExtraObjectsV00
+grasped_object: null
+rotation_z_axis_deg: 0.0
+obstacle_cutoff_margin_extra: 0.05
+margin_for_dense_collision_checking: 0.0
+
+#######################################################################################################################
+# Fixed runtime trajectory contract
+
+num_T_pts: 128
+trajectory_duration: 10.0
+phase_time_class: PhaseTimeLinear
+project_gradient_hierarchy: false
+
+costs:
+  CostTaskSpaceCollisionObjects:
+    weight: 10.0
+    use_only_on_extra_objects: false
+  CostTaskSpaceCollisionSelf:
+    weight: 1.0
+  CostJointSpaceJointLimits:
+    weight: 1.0
+  CostTaskSpaceEEGoalPosition:
+    weight: 1.0
+  CostTaskSpaceEEGoalOrientation:
+    weight: 1.0
+  CostJointSpaceVelocity:
+    weight: 0.02 #0.1
+  CostJointSpaceAcceleration:
+    weight: 0.005 #0.05
+  CostJointSpacePathLength:
+    weight: 0.0
+
+n_trajectory_samples: 100
+
+best_trajectory_selection: weighted_metrics
+best_trajectory_weights:
+  ee_position: 0.35
+  ee_orientation: 0.20
+  path_length: 0.15
+  smoothness: 0.15
+  velocity_limit_utilization: 0.075
+  acceleration_limit_utilization: 0.075
+best_trajectory_metric_scales:
+  ee_position: 0.015
+  ee_orientation: 1.5
+  path_length: null
+  smoothness: null
+  velocity_limit_utilization: 0.3
+  acceleration_limit_utilization: 0.15
+
+#######################################################################################################################
+# Planner and DDIM guidance
+
+planner_alg: mpd
+diffusion_sampling_method: ddim
+compute_costs_with_xrecon: false
+n_diffusion_steps_without_noise: 0
+extra_mp_steps: 0
+
+ddim:
+  t_start_guide_steps_fraction: 0.2
+  ddim_sampling_timesteps: 15
+  ddim_eta: 0.5
+  ddim_skip_type: quadratic
+  ee_goal_position_weight_start: 1.0
+  ee_goal_position_weight_end: 3.0
+  ee_goal_orientation_weight_start: 1.0
+  ee_goal_orientation_weight_end: 3.0
+  ddim_scale_grad_prior: 0.5
+  n_guide_steps: 6
+  guide_lr: 1.0
+  max_perturb_x: 0.15
+  clip_grad: true
+  clip_grad_rule: value
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+
+diffusion_prior_then_guide: &post_guide
+  n_guide_steps: 12
+  guide_lr: 0.01
+  max_perturb_x: 0.15
+  clip_grad: true
+  clip_grad_rule: value
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+
+ddpm:
+  t_start_guide_steps_fraction: 0.2
+  prior_weight_with_guide: 0.95
+  noise_std: 0.7
+  n_guide_steps: 2
+  guide_lr: 0.01
+  max_perturb_x: 0.15
+  clip_grad: true
+  clip_grad_rule: value
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+
+gp_prior_then_guide:
+  <<: *post_guide
+knn_prior_then_guide:
+  <<: *post_guide
+cvae_prior_then_guide:
+  <<: *post_guide
+rrtconnect_then_guide:
+  <<: *post_guide
