@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import time
 
@@ -67,6 +68,91 @@ def _read_statistics_if_ready(statistics_path):
         return json.loads(statistics_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def _read_log_tail(log_path, max_chars=4000):
+    try:
+        return Path(log_path).read_text(encoding="utf-8", errors="replace")[-max_chars:]
+    except OSError:
+        return ""
+
+
+def _process_error_message(process_name, returncode, log_path):
+    tail = _read_log_tail(log_path)
+    message = f"{process_name} failed with return code {returncode}. Log: {log_path}"
+    if tail:
+        message = f"{message}\nLast log output:\n{tail}"
+    return message
+
+
+def _process_group_exists(process_group_id):
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(process_group_id, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while _process_group_exists(process_group_id):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _terminate_process(process, terminate_timeout_s=10, kill_timeout_s=10):
+    """Stop the launcher and every IsaacLab/Kit process that it spawned."""
+
+    process_group_id = process.pid
+    if _process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    if process.poll() is None:
+        try:
+            process.wait(timeout=terminate_timeout_s)
+        except subprocess.TimeoutExpired:
+            pass
+
+    if not _wait_for_process_group_exit(process_group_id, terminate_timeout_s):
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        _wait_for_process_group_exit(process_group_id, kill_timeout_s)
+
+    if process.poll() is None:
+        process.wait(timeout=kill_timeout_s)
+    return process.returncode
+
+
+def _read_required_json(output_path, log_path, process_name, returncode):
+    output_path = Path(output_path)
+    log_path = Path(log_path)
+    if not output_path.exists():
+        tail = _read_log_tail(log_path)
+        message = (
+            f"{process_name} exited with return code {returncode} but did not write expected JSON: "
+            f"{output_path}. Log: {log_path}"
+        )
+        if tail:
+            message = f"{message}\nLast log output:\n{tail}"
+        raise RuntimeError(message)
+
+    try:
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        tail = _read_log_tail(log_path)
+        message = f"{process_name} wrote invalid JSON: {output_path}. Log: {log_path}"
+        if tail:
+            message = f"{message}\nLast log output:\n{tail}"
+        raise RuntimeError(message) from exc
 
 
 def run_isaaclab_evaluator_subprocess(
@@ -134,45 +220,41 @@ def run_isaaclab_evaluator_subprocess(
             stderr=subprocess.STDOUT,
             text=True,
             env=_clean_isaaclab_subprocess_env(),
+            start_new_session=True,
         )
-        while True:
-            completed_returncode = process.poll()
-            if completed_returncode is not None:
-                break
+        try:
+            while True:
+                completed_returncode = process.poll()
+                if completed_returncode is not None:
+                    break
 
-            statistics = _read_statistics_if_ready(statistics_path)
-            if statistics is not None:
-                if statistics_ready_time is None:
-                    statistics_ready_time = time.monotonic()
-                elif time.monotonic() - statistics_ready_time > 15:
-                    process.terminate()
-                    try:
-                        completed_returncode = process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        completed_returncode = process.wait()
-                    statistics["subprocess_returncode"] = int(completed_returncode)
-                    statistics["subprocess_log_path"] = str(log_path)
-                    statistics["subprocess_warning"] = "IsaacLab subprocess was terminated after writing statistics."
-                    return statistics
-
-            if time.monotonic() - start_time > isaaclab_timeout_s:
-                process.terminate()
-                try:
-                    completed_returncode = process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    completed_returncode = process.wait()
                 statistics = _read_statistics_if_ready(statistics_path)
                 if statistics is not None:
-                    statistics["subprocess_timeout_s"] = int(isaaclab_timeout_s)
-                    statistics["subprocess_returncode"] = int(completed_returncode)
-                    statistics["subprocess_log_path"] = str(log_path)
-                    statistics["subprocess_warning"] = "IsaacLab subprocess timed out after writing statistics."
-                    return statistics
-                raise RuntimeError(f"IsaacLab evaluator timed out after {isaaclab_timeout_s}s. Log: {log_path}")
+                    if statistics_ready_time is None:
+                        statistics_ready_time = time.monotonic()
+                    elif time.monotonic() - statistics_ready_time > 15:
+                        completed_returncode = _terminate_process(process)
+                        statistics["subprocess_returncode"] = int(completed_returncode)
+                        statistics["subprocess_log_path"] = str(log_path)
+                        statistics["subprocess_warning"] = (
+                            "IsaacLab subprocess was terminated after writing statistics."
+                        )
+                        return statistics
 
-            time.sleep(1)
+                if time.monotonic() - start_time > isaaclab_timeout_s:
+                    completed_returncode = _terminate_process(process)
+                    statistics = _read_statistics_if_ready(statistics_path)
+                    if statistics is not None:
+                        statistics["subprocess_timeout_s"] = int(isaaclab_timeout_s)
+                        statistics["subprocess_returncode"] = int(completed_returncode)
+                        statistics["subprocess_log_path"] = str(log_path)
+                        statistics["subprocess_warning"] = "IsaacLab subprocess timed out after writing statistics."
+                        return statistics
+                    raise RuntimeError(f"IsaacLab evaluator timed out after {isaaclab_timeout_s}s. Log: {log_path}")
+
+                time.sleep(1)
+        finally:
+            _terminate_process(process)
 
     if completed_returncode != 0:
         statistics = _read_statistics_if_ready(statistics_path)
@@ -181,9 +263,14 @@ def run_isaaclab_evaluator_subprocess(
             statistics["subprocess_log_path"] = str(log_path)
             statistics["subprocess_warning"] = "IsaacLab subprocess exited non-zero after writing statistics."
             return statistics
-        raise RuntimeError(f"IsaacLab evaluator failed with return code {completed_returncode}. Log: {log_path}")
+        raise RuntimeError(_process_error_message("IsaacLab evaluator", completed_returncode, log_path))
 
-    statistics = json.loads(statistics_path.read_text(encoding="utf-8"))
+    statistics = _read_required_json(
+        output_path=statistics_path,
+        log_path=log_path,
+        process_name="IsaacLab evaluator",
+        returncode=completed_returncode,
+    )
     statistics["subprocess_returncode"] = int(completed_returncode)
     statistics["subprocess_log_path"] = str(log_path)
     return statistics
@@ -195,6 +282,7 @@ def run_isaaclab_replay_subprocess(
     video_path=None,
     screenshot_path=None,
     output_json_path=None,
+    trajectory_source="best",
     trajectory_index=0,
     isaaclab_root="/home/eric/IsaacLab_ori",
     isaaclab_conda_env="env_isaaclab_ori",
@@ -232,6 +320,8 @@ def run_isaaclab_replay_subprocess(
         str(replay_script),
         "--input",
         str(trajectories_path),
+        "--trajectory_source",
+        str(trajectory_source),
         "--trajectory_index",
         str(trajectory_index),
         "--output_json",
@@ -265,20 +355,30 @@ def run_isaaclab_replay_subprocess(
     cmd = ["bash", "-lc", shell_cmd]
 
     with log_path.open("w", encoding="utf-8") as log_file:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             cmd,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
             env=_clean_isaaclab_subprocess_env(),
-            timeout=isaaclab_timeout_s,
-            check=False,
+            start_new_session=True,
         )
+        try:
+            completed_returncode = process.wait(timeout=isaaclab_timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(_process_error_message("IsaacLab replay timed out", "timeout", log_path)) from exc
+        finally:
+            _terminate_process(process)
 
-    if completed.returncode != 0:
-        raise RuntimeError(f"IsaacLab replay failed with return code {completed.returncode}. Log: {log_path}")
+    if completed_returncode != 0:
+        raise RuntimeError(_process_error_message("IsaacLab replay", completed_returncode, log_path))
 
-    replay_metadata = json.loads(output_json_path.read_text(encoding="utf-8"))
-    replay_metadata["subprocess_returncode"] = int(completed.returncode)
+    replay_metadata = _read_required_json(
+        output_path=output_json_path,
+        log_path=log_path,
+        process_name="IsaacLab replay",
+        returncode=completed_returncode,
+    )
+    replay_metadata["subprocess_returncode"] = int(completed_returncode)
     replay_metadata["subprocess_log_path"] = str(log_path)
     return replay_metadata

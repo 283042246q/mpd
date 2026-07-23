@@ -106,14 +106,95 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
 
         return control_points_augmented
 
-    def preprocess_control_points(self, q_control_points):
-        # ensure b-spline boundary conditions
+    def _boundary_basis(self, endpoint_idx):
+        position_basis = self.bspline.N[0, endpoint_idx]
+        phase_velocity_basis = self.bspline.dN[0, endpoint_idx]
+        phase_acceleration_basis = self.bspline.ddN[0, endpoint_idx]
+        phase_rate = self.phase_time.rs[endpoint_idx]
+        phase_rate_derivative = self.phase_time.dr_ds[endpoint_idx]
+        velocity_basis = phase_velocity_basis * phase_rate
+        acceleration_basis = (
+            phase_acceleration_basis * phase_rate**2 + phase_velocity_basis * phase_rate_derivative * phase_rate
+        )
+        return position_basis, velocity_basis, acceleration_basis
+
+    @staticmethod
+    def _resolve_boundary_value(value, stored_value, reference):
+        value = stored_value if value is None else value
+        if value is None:
+            return torch.zeros_like(reference)
+        return torch.as_tensor(value, dtype=reference.dtype, device=reference.device)
+
+    def _apply_endpoint_boundary_conditions(self, control_points, endpoint, position, velocity, acceleration):
+        basis = self._boundary_basis(0 if endpoint == "start" else -1)
+        targets = [position]
+        basis_rows = [basis[0]]
         if self.zero_vel_at_start_and_goal:
-            q_control_points[..., 1, :] = q_control_points[..., 0, :]
-            q_control_points[..., -2, :] = q_control_points[..., -1, :]
+            targets.append(velocity)
+            basis_rows.append(basis[1])
         if self.zero_acc_at_start_and_goal:
-            q_control_points[..., 2, :] = q_control_points[..., 0, :]
-            q_control_points[..., -3, :] = q_control_points[..., -1, :]
+            targets.append(acceleration)
+            basis_rows.append(basis[2])
+
+        n_constraints = len(targets)
+        if endpoint == "start":
+            fixed_indices = torch.arange(n_constraints, device=control_points.device)
+        else:
+            fixed_indices = torch.arange(
+                control_points.shape[-2] - n_constraints,
+                control_points.shape[-2],
+                device=control_points.device,
+            )
+
+        basis_matrix = torch.stack(basis_rows)
+        fixed_matrix = basis_matrix[:, fixed_indices]
+        current_values = torch.einsum("kn,...nd->...kd", basis_matrix, control_points)
+        current_fixed_values = torch.einsum("kj,...jd->...kd", fixed_matrix, control_points[..., fixed_indices, :])
+        remaining_values = current_values - current_fixed_values
+        target_values = torch.stack(torch.broadcast_tensors(*targets), dim=-2)
+        right_hand_side = target_values - remaining_values
+        solved_values = torch.linalg.solve(fixed_matrix, right_hand_side)
+        control_points[..., fixed_indices, :] = solved_values
+
+    def preprocess_control_points(
+        self,
+        q_control_points,
+        q_pos_start=None,
+        q_pos_goal=None,
+        q_vel_start=None,
+        q_vel_goal=None,
+        q_acc_start=None,
+        q_acc_goal=None,
+        **kwargs,
+    ):
+        q_pos_start, q_pos_goal = self.get_q_pos_start_q_goal(q_pos_start, q_pos_goal)
+        q_vel_start = self._resolve_boundary_value(q_vel_start, self.q_vel_start, q_pos_start)
+        q_vel_goal = self._resolve_boundary_value(q_vel_goal, self.q_vel_goal, q_pos_goal)
+        q_acc_start = self._resolve_boundary_value(q_acc_start, self.q_acc_start, q_pos_start)
+        q_acc_goal = self._resolve_boundary_value(q_acc_goal, self.q_acc_goal, q_pos_goal)
+
+        q_control_points = q_control_points.clone()
+        q_pos_goal_boundary = q_pos_goal
+        if self.keep_last_control_point:
+            q_pos_goal_boundary = torch.einsum(
+                "n,...nd->...d",
+                self.bspline.N[0, -1],
+                q_control_points,
+            )
+        self._apply_endpoint_boundary_conditions(
+            q_control_points,
+            "start",
+            q_pos_start,
+            q_vel_start,
+            q_acc_start,
+        )
+        self._apply_endpoint_boundary_conditions(
+            q_control_points,
+            "goal",
+            q_pos_goal_boundary,
+            q_vel_goal,
+            q_acc_goal,
+        )
         return q_control_points
 
     def get_q_trajectory_in_phase(self, q_control_points: torch.Tensor, get_type: Tuple = ("pos", "vel", "acc")):

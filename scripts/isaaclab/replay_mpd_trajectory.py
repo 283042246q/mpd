@@ -28,6 +28,12 @@ from isaaclab.app import AppLauncher
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Replay one MPD trajectory with IsaacLab camera output.")
     parser.add_argument("--input", type=Path, required=True, help="Torch file written by MPD inference.")
+    parser.add_argument(
+        "--trajectory_source",
+        choices=("best", "batch"),
+        default="best",
+        help="Replay q_trajs_pos_best when available, or replay q_trajs_pos[trajectory_index].",
+    )
     parser.add_argument("--trajectory_index", type=int, default=0, help="Trajectory index inside q_trajs_pos batch.")
     parser.add_argument("--output_video", type=Path, default=None, help="Path to write an mp4 replay.")
     parser.add_argument("--screenshot_path", type=Path, default=None, help="Path to write the final RGB frame.")
@@ -96,6 +102,17 @@ def _metadata_tensor(metadata: dict[str, Any], key: str) -> torch.Tensor | None:
     if not isinstance(value, torch.Tensor):
         value = torch.as_tensor(value)
     return value.float().contiguous()
+
+
+def _normalize_best_trajectory(q_trajs_pos_best: torch.Tensor) -> torch.Tensor:
+    if q_trajs_pos_best.ndim == 2:
+        return q_trajs_pos_best
+    if q_trajs_pos_best.ndim == 3:
+        if q_trajs_pos_best.shape[1] == 1:
+            return q_trajs_pos_best[:, 0]
+        if q_trajs_pos_best.shape[0] == 1:
+            return q_trajs_pos_best[0]
+    raise ValueError(f"q_trajs_pos_best must have shape [H, D], got {tuple(q_trajs_pos_best.shape)}.")
 
 
 PANDA_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
@@ -233,19 +250,35 @@ def run_replay() -> dict[str, Any]:
     _log(f"loading payload: {args_cli.input}")
     q_trajs_pos_cpu, metadata = _load_payload(args_cli.input)
     horizon, batch, dof = q_trajs_pos_cpu.shape
-    if args_cli.trajectory_index < 0 or args_cli.trajectory_index >= batch:
-        raise IndexError(f"--trajectory_index must be in [0, {batch - 1}], got {args_cli.trajectory_index}.")
 
-    q_pos_starts_cpu = _metadata_tensor(metadata, "q_pos_starts")
-    if q_pos_starts_cpu is None:
-        q_pos_start_cpu = q_trajs_pos_cpu[0, args_cli.trajectory_index]
+    q_trajs_pos_best_cpu = _metadata_tensor(metadata, "q_trajs_pos_best")
+    if args_cli.trajectory_source == "best" and q_trajs_pos_best_cpu is not None:
+        q_traj_cpu = _normalize_best_trajectory(q_trajs_pos_best_cpu)
+        q_pos_start_cpu = q_traj_cpu[0]
+        trajectory_source = "best"
+        trajectory_index = None
     else:
-        q_pos_start_cpu = q_pos_starts_cpu[args_cli.trajectory_index]
+        if args_cli.trajectory_source == "best":
+            _log("q_trajs_pos_best not found in payload; falling back to q_trajs_pos batch trajectory")
+        if args_cli.trajectory_index < 0 or args_cli.trajectory_index >= batch:
+            raise IndexError(f"--trajectory_index must be in [0, {batch - 1}], got {args_cli.trajectory_index}.")
 
-    q_traj_cpu = q_trajs_pos_cpu[:, args_cli.trajectory_index]
+        q_pos_starts_cpu = _metadata_tensor(metadata, "q_pos_starts")
+        if q_pos_starts_cpu is None:
+            q_pos_start_cpu = q_trajs_pos_cpu[0, args_cli.trajectory_index]
+        else:
+            q_pos_start_cpu = q_pos_starts_cpu[args_cli.trajectory_index]
+
+        q_traj_cpu = q_trajs_pos_cpu[:, args_cli.trajectory_index]
+        trajectory_source = "batch"
+        trajectory_index = int(args_cli.trajectory_index)
+
+    horizon, dof = q_traj_cpu.shape
     env_name = str(metadata.get("env_name", ""))
 
-    _log(f"creating simulation: env={env_name}, horizon={horizon}, batch={batch}, dof={dof}")
+    _log(
+        f"creating simulation: env={env_name}, source={trajectory_source}, horizon={horizon}, batch={batch}, dof={dof}"
+    )
     sim_cfg = sim_utils.SimulationCfg(dt=float(metadata.get("dt", 0.005)), device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
     sim.set_camera_view([2.4, -2.4, 1.8], [0.2, 0.0, 0.45])
@@ -291,7 +324,8 @@ def run_replay() -> dict[str, Any]:
 
     summary = {
         "input": args_cli.input.as_posix(),
-        "trajectory_index": int(args_cli.trajectory_index),
+        "trajectory_source": trajectory_source,
+        "trajectory_index": trajectory_index,
         "env_name": env_name,
         "trajectory_horizon": int(horizon),
         "trajectory_batch": int(batch),

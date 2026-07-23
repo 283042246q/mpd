@@ -10,6 +10,12 @@ from torch_robotics.trajectory.metrics import (
 )
 
 
+def _tensor_median(values):
+    if values.numel() == 0:
+        return None
+    return to_numpy(torch.quantile(values.float(), 0.5)).squeeze()
+
+
 class PlanningMetricsCalculator:
 
     def __init__(self, planning_task, **kwargs):
@@ -112,12 +118,18 @@ class PlanningMetricsCalculator:
             metrics.trajs_valid.ee_pose_goal_error_position_norm_std = to_numpy(
                 ee_pose_goal_error_position_norm.std()
             ).squeeze()
+            metrics.trajs_valid.ee_pose_goal_error_position_norm_median = _tensor_median(
+                ee_pose_goal_error_position_norm
+            )
             metrics.trajs_valid.ee_pose_goal_error_orientation_norm_mean = to_numpy(
                 ee_pose_goal_error_orientation_norm.mean()
             ).squeeze()
             metrics.trajs_valid.ee_pose_goal_error_orientation_norm_std = to_numpy(
                 ee_pose_goal_error_orientation_norm.std()
             ).squeeze()
+            metrics.trajs_valid.ee_pose_goal_error_orientation_norm_median = _tensor_median(
+                ee_pose_goal_error_orientation_norm
+            )
 
         # EE pose errors on best trajectory
         if q_trajs_pos_best is not None:
@@ -139,6 +151,7 @@ class PlanningMetricsCalculator:
             batch_path_length = compute_path_length(q_trajs_valid, self.planning_task.robot)
             metrics.trajs_valid.path_length_mean = to_numpy(batch_path_length.mean()).squeeze()
             metrics.trajs_valid.path_length_std = to_numpy(batch_path_length.std()).squeeze()
+            metrics.trajs_valid.path_length_median = _tensor_median(batch_path_length)
         # Path length on best trajectory
         if q_trajs_best is not None:
             metrics.trajs_best.path_length = to_numpy(
@@ -150,6 +163,33 @@ class PlanningMetricsCalculator:
             batch_smoothness = compute_smoothness(q_trajs_valid, self.planning_task.robot)
             metrics.trajs_valid.smoothness_mean = to_numpy(batch_smoothness.mean()).squeeze()
             metrics.trajs_valid.smoothness_std = to_numpy(batch_smoothness.std()).squeeze()
+            metrics.trajs_valid.smoothness_median = _tensor_median(batch_smoothness)
+
+            if self.planning_task.robot.dq_max is not None:
+                dq_max = torch.as_tensor(
+                    self.planning_task.robot.dq_max,
+                    dtype=results_single_plan.q_trajs_vel_valid.dtype,
+                    device=results_single_plan.q_trajs_vel_valid.device,
+                )
+                velocity_limit_utilization = torch.amax(
+                    torch.abs(results_single_plan.q_trajs_vel_valid) / dq_max,
+                    dim=(-2, -1),
+                )
+                metrics.trajs_valid.velocity_limit_utilization_median = _tensor_median(velocity_limit_utilization)
+
+            if self.planning_task.robot.ddq_max is not None:
+                ddq_max = torch.as_tensor(
+                    self.planning_task.robot.ddq_max,
+                    dtype=results_single_plan.q_trajs_acc_valid.dtype,
+                    device=results_single_plan.q_trajs_acc_valid.device,
+                )
+                acceleration_limit_utilization = torch.amax(
+                    torch.abs(results_single_plan.q_trajs_acc_valid) / ddq_max,
+                    dim=(-2, -1),
+                )
+                metrics.trajs_valid.acceleration_limit_utilization_median = _tensor_median(
+                    acceleration_limit_utilization
+                )
         # Smoothness on best trajectory
         if q_trajs_best is not None:
             metrics.trajs_best.smoothness = to_numpy(

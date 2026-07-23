@@ -70,6 +70,12 @@ class NoCostException(Exception):
 
 class CostGuideManagerParametricTrajectory:
 
+    EE_GOAL_COST_KEYS = {
+        "CostTaskSpaceEEGoalPose",
+        "CostTaskSpaceEEGoalPosition",
+        "CostTaskSpaceEEGoalOrientation",
+    }
+
     def __init__(self, planning_task, dataset, args_inference, tensor_args=DEFAULT_TENSOR_ARGS, debug=False, **kwargs):
         self.args_inference = args_inference
 
@@ -99,7 +105,7 @@ class CostGuideManagerParametricTrajectory:
 
     def setup_costs(self):
         for cost_key in self.args_inference.costs:
-            if cost_key == "CostTaskSpaceEEGoalPose" and not self.dataset.context_ee_goal_pose:
+            if cost_key in self.EE_GOAL_COST_KEYS and not self.dataset.context_ee_goal_pose:
                 # Skip the cost if the EE goal context is not set. This means the last joint position is fixed, so the
                 # EE pose is determined via FK.
                 continue
@@ -121,7 +127,15 @@ class CostGuideManagerParametricTrajectory:
             self.costs[cost_key].cost.use_only_on_extra_objects = False
 
     @torch.enable_grad()
-    def __call__(self, control_points_normalized, return_cost=False, warmup=False, plot_gradients=False, **kwargs):
+    def __call__(
+        self,
+        control_points_normalized,
+        return_cost=False,
+        warmup=False,
+        plot_gradients=False,
+        cost_weight_overrides=None,
+        **kwargs,
+    ):
         """
         Args:
             control_points_normalized: (batch_size, n_control_points, q_dim)
@@ -193,6 +207,8 @@ class CostGuideManagerParametricTrajectory:
 
                 cost_fn = self.costs[cost_key].cost
                 weight = self.costs[cost_key].weight
+                if cost_weight_overrides and cost_key in cost_weight_overrides:
+                    weight = cost_weight_overrides[cost_key]
 
                 cost_single_in_phase, grad_cost_single_wrt_cp_normalized_in_phase = (
                     self.compute_cost_grad_cp_normalized(
@@ -209,7 +225,7 @@ class CostGuideManagerParametricTrajectory:
                     )
                 )
 
-                if self.dataset.context_ee_goal_pose and cost_key != "CostTaskSpaceEEGoalPose":
+                if self.dataset.context_ee_goal_pose and cost_key not in self.EE_GOAL_COST_KEYS:
                     # If the EE pose goal context is set, the generative model determines the last joint position.
                     # Hence, we zero the gradient of the last control point for all costs except the EE pose goal cost,
                     # to avoid changing the last joint position.
@@ -218,8 +234,8 @@ class CostGuideManagerParametricTrajectory:
                     # is fixed.
                     grad_cost_single_wrt_cp_normalized_in_phase[..., -1, :] = 0.0
 
-                if self.dataset.context_ee_goal_pose and cost_key == "CostTaskSpaceEEGoalPose":
-                    # The CostTaskSpaceEEGoalPose cost is defined only on the last point of the trajectory,
+                if self.dataset.context_ee_goal_pose and cost_key in self.EE_GOAL_COST_KEYS:
+                    # EE goal costs are defined only on the last point of the trajectory,
                     # so we use directly the cost and gradient at the last point, without integration.
                     cost_single = cost_single_in_phase[..., -1]
                     grad_cost_single_wrt_cp_normalized = grad_cost_single_wrt_cp_normalized_in_phase[:, -1, ...]
@@ -432,8 +448,8 @@ class CostJointSpaceJointLimits(CostJointSpace):
         mask_low = torch.less_equal(q_traj_pos_in_phase, q_min_in_phase)
         mask_high = torch.greater_equal(q_traj_pos_in_phase, q_max_in_phase)
 
-        cost_pos_limit_low = 0.5 * torch.linalg.norm((q_min_in_phase - q_traj_pos_in_phase) * mask_low, dim=-1)
-        cost_pos_limit_high = 0.5 * torch.linalg.norm((q_max_in_phase - q_traj_pos_in_phase) * mask_high, dim=-1)
+        cost_pos_limit_low = 0.5 * torch.sum((q_min_in_phase - q_traj_pos_in_phase).square() * mask_low, dim=-1)
+        cost_pos_limit_high = 0.5 * torch.sum((q_max_in_phase - q_traj_pos_in_phase).square() * mask_high, dim=-1)
         cost_pos_limit = cost_pos_limit_low + cost_pos_limit_high
         grad_cost_q_pos_low = mask_low * (q_min_in_phase - q_traj_pos_in_phase) * -1
         grad_cost_q_pos_high = mask_high * (q_max_in_phase - q_traj_pos_in_phase) * -1
@@ -459,11 +475,11 @@ class CostJointSpaceJointLimits(CostJointSpace):
             mask_low = torch.less_equal(q_traj_vel_in_phase, dq_min_in_phase)
             mask_high = torch.greater_equal(q_traj_vel_in_phase, dq_max_in_phase)
 
-            cost_vel_limit_low = 0.5 * torch.linalg.norm((q_min_in_phase - q_traj_vel_in_phase) * mask_low, dim=-1)
-            cost_vel_limit_high = 0.5 * torch.linalg.norm((q_max_in_phase - q_traj_vel_in_phase) * mask_high, dim=-1)
+            cost_vel_limit_low = 0.5 * torch.sum((dq_min_in_phase - q_traj_vel_in_phase).square() * mask_low, dim=-1)
+            cost_vel_limit_high = 0.5 * torch.sum((dq_max_in_phase - q_traj_vel_in_phase).square() * mask_high, dim=-1)
             cost_vel_limit = cost_vel_limit_low + cost_vel_limit_high
-            grad_cost_q_vel_low = mask_low * (q_min_in_phase - q_traj_vel_in_phase) * -1
-            grad_cost_q_vel_high = mask_high * (q_max_in_phase - q_traj_vel_in_phase) * -1
+            grad_cost_q_vel_low = mask_low * (dq_min_in_phase - q_traj_vel_in_phase) * -1
+            grad_cost_q_vel_high = mask_high * (dq_max_in_phase - q_traj_vel_in_phase) * -1
             grad_cost_wrt_q_vel = grad_cost_q_vel_low + grad_cost_q_vel_high
 
             grad_cost_vel_wrt_cp = self.compute_grad_cost_wrt_cp(
@@ -486,8 +502,8 @@ class CostJointSpaceJointLimits(CostJointSpace):
             mask_low = torch.less_equal(q_traj_acc_in_phase, ddq_min_in_phase)
             mask_high = torch.greater_equal(q_traj_acc_in_phase, ddq_max_in_phase)
 
-            cost_acc_limit_low = 0.5 * torch.linalg.norm((ddq_min_in_phase - q_traj_acc_in_phase) * mask_low, dim=-1)
-            cost_acc_limit_high = 0.5 * torch.linalg.norm((ddq_max_in_phase - q_traj_acc_in_phase) * mask_high, dim=-1)
+            cost_acc_limit_low = 0.5 * torch.sum((ddq_min_in_phase - q_traj_acc_in_phase).square() * mask_low, dim=-1)
+            cost_acc_limit_high = 0.5 * torch.sum((ddq_max_in_phase - q_traj_acc_in_phase).square() * mask_high, dim=-1)
             cost_acc_limit = cost_acc_limit_low + cost_acc_limit_high
             grad_cost_q_acc_low = mask_low * (ddq_min_in_phase - q_traj_acc_in_phase) * -1
             grad_cost_q_acc_high = mask_high * (ddq_max_in_phase - q_traj_acc_in_phase) * -1
@@ -537,7 +553,9 @@ class CostJointSpaceVelocity(CostJointSpace):
         self, control_points, q_traj_pos_in_phase, q_traj_vel_in_phase, q_traj_acc_in_phase, *args, **kwargs
     ):
         q_traj_vel_in_phase.requires_grad_(True)
-        cost_vel = 0.5 * torch.linalg.norm(q_traj_vel_in_phase, dim=-1)
+        cost_vel = 0.5 * torch.sum(
+            q_traj_vel_in_phase.square(), dim=-1
+        )  # 0.5 * torch.linalg.norm(q_traj_vel_in_phase, dim=-1)
         grad_cost_wrt_q_vel = torch.autograd.grad(cost_vel.sum(), [q_traj_vel_in_phase], retain_graph=True)[0]
 
         grad_cost_vel_wrt_cp = self.compute_grad_cost_wrt_cp(
@@ -558,7 +576,7 @@ class CostJointSpaceAcceleration(CostJointSpace):
         self, control_points, q_traj_pos_in_phase, q_traj_vel_in_phase, q_traj_acc_in_phase, *args, **kwargs
     ):
         q_traj_acc_in_phase.requires_grad_(True)
-        cost_acc = 0.5 * torch.linalg.norm(q_traj_acc_in_phase, dim=-1)
+        cost_acc = 0.5 * torch.sum(q_traj_acc_in_phase.square(), dim=-1)
         grad_cost_wrt_q_acc = torch.autograd.grad(cost_acc.sum(), [q_traj_acc_in_phase], retain_graph=True)[0]
 
         grad_cost_acc_wrt_cp = self.compute_grad_cost_wrt_cp(
@@ -715,7 +733,9 @@ class CostTaskSpaceCollisionSelf(CostTaskSpace):
         return cost, grad_cost_wrt_cp
 
 
-class CostTaskSpaceEEGoalPose(CostTaskSpace):
+class CostTaskSpaceEEGoalComponent(CostTaskSpace):
+    error_slice = slice(None)
+
     def __init__(self, planning_task, **kwargs):
         super().__init__(planning_task, **kwargs)
 
@@ -745,13 +765,16 @@ class CostTaskSpaceEEGoalPose(CostTaskSpace):
         # torch.set_printoptions(precision=2, sci_mode=False)
         # print(error[..., -1, :])
 
+        error_component = error[..., self.error_slice]
+        jacobian_component = jacs_spatial_th_ee.squeeze(-3)[..., self.error_slice, :]
+
         # C, dC/dx -- Task space error
-        cost = torch.linalg.norm(error, dim=-1)
-        gradient_cost_wrt_x = -1.0 * error  # multiply by -1 because we return the gradient of the cost wrt W_EE_current
+        cost = 0.5 * torch.sum(error_component.square(), dim=-1)  # torch.linalg.norm(error_component, dim=-1)
+        gradient_cost_wrt_x = -1.0 * error_component
 
         # (dx/dq)^T @ dC/dx (jacobian transpose x task space error)
         # sum the gradient and cost over the task space links
-        grad_cost_wrt_q_pos = torch.einsum("...dj,...d->...j", jacs_spatial_th_ee.squeeze(-3), gradient_cost_wrt_x)
+        grad_cost_wrt_q_pos = torch.einsum("...dj,...d->...j", jacobian_component, gradient_cost_wrt_x)
 
         grad_cost_wrt_cp = self.compute_grad_cost_wrt_cp(
             control_points,
@@ -765,3 +788,15 @@ class CostTaskSpaceEEGoalPose(CostTaskSpace):
         cost[..., :-1] = 0.0
 
         return cost, grad_cost_wrt_cp
+
+
+class CostTaskSpaceEEGoalPosition(CostTaskSpaceEEGoalComponent):
+    error_slice = slice(0, 3)
+
+
+class CostTaskSpaceEEGoalOrientation(CostTaskSpaceEEGoalComponent):
+    error_slice = slice(3, 6)
+
+
+class CostTaskSpaceEEGoalPose(CostTaskSpaceEEGoalComponent):
+    pass

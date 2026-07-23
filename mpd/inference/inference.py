@@ -13,7 +13,7 @@ from sklearn.gaussian_process.kernels import RBF
 from mpd.models import GaussianDiffusionModel, guide_gradient_steps, CVAEModel
 from mpd.utils.loaders import load_params_from_yaml
 from pb_ompl.pb_ompl import add_box, fit_bspline_to_path
-from scripts.generate_data.generate_trajectories import GenerateDataOMPL
+from scripts.generate_data.generate_trajectories import GenerateDataOMPL, get_random_pose_from_region
 from mpd.inference.cost_guides import CostGuideManagerParametricTrajectory, NoCostException
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import (
@@ -26,9 +26,45 @@ from torch_robotics.torch_utils.torch_utils import (
 from torch_robotics.trajectory.metrics import compute_smoothness, compute_ee_pose_errors, compute_path_length
 
 
+DEFAULT_BEST_TRAJECTORY_WEIGHTS = {
+    "ee_position": 0.35,
+    "ee_orientation": 0.20,
+    "path_length": 0.15,
+    "smoothness": 0.15,
+    "velocity_limit_utilization": 0.075,
+    "acceleration_limit_utilization": 0.075,
+}
+
+DEFAULT_BEST_TRAJECTORY_METRIC_SCALES = {
+    "ee_position": 0.02,
+    "ee_orientation": 2.0,
+    "path_length": None,
+    "smoothness": None,
+    "velocity_limit_utilization": 1.0,
+    "acceleration_limit_utilization": 1.0,
+}
+
+
+def _config_value(config, key, default=None):
+    if config is None:
+        return default
+    if hasattr(config, "get"):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _normalize_best_trajectory_metric(values, configured_scale=None):
+    if configured_scale is None or float(configured_scale) <= 0.0:
+        scale = values.detach().median()
+    else:
+        scale = torch.as_tensor(configured_scale, dtype=values.dtype, device=values.device)
+    scale = torch.clamp(scale, min=torch.finfo(values.dtype).eps)
+    return values / scale, scale
+
+
 class EvaluationSamplesGenerator:
     """
-    Get start and goal joint positions from the validation set, or randomly using the OMPL parametric_trajectory
+    Get start and goal joint positions from a dataset, an explicit states file, or workspace pose regions.
     """
 
     def __init__(
@@ -37,6 +73,10 @@ class EvaluationSamplesGenerator:
         train_subset,
         val_subset,
         selection_start_goal="training",  # training, validation
+        start_goal_source="auto",  # auto, dataset, states_file, regions
+        start_goal_regions_path=None,
+        start_goal_max_sampling_attempts=100,
+        rotation_z_axis_deg=0.0,
         grasped_object=None,
         tensor_args=DEFAULT_TENSOR_ARGS,
         debug=False,
@@ -45,25 +85,86 @@ class EvaluationSamplesGenerator:
         **kwargs,
     ):
         self.tensor_args = tensor_args
+        self.debug = debug
+        self.planning_task = planning_task
 
         self.selection_start_goal = selection_start_goal
+        self.start_goal_source = str(start_goal_source).lower()
+        if self.start_goal_source == "auto":
+            self.start_goal_source = "dataset" if selection_start_goal in {"training", "validation"} else "states_file"
+        valid_start_goal_sources = {"dataset", "states_file", "regions"}
+        if self.start_goal_source not in valid_start_goal_sources:
+            raise ValueError(
+                f"Unknown start_goal_source={self.start_goal_source!r}. "
+                f"Expected one of {sorted(valid_start_goal_sources)}."
+            )
+
         self.select_start_goal_from_file = None
+        self.start_goal_regions = None
         self.dataset_subset = None
         self.idxs_dataset_subset = None
         self.train_subset = train_subset
         self.val_subset = val_subset
-        if selection_start_goal == "training":
-            self.dataset_subset = train_subset
-            self.idxs_dataset_subset = np.random.permutation(len(train_subset))
-        elif selection_start_goal == "validation":
-            self.dataset_subset = val_subset
-            self.idxs_dataset_subset = np.random.permutation(len(val_subset))
-        else:
+        if self.start_goal_source == "dataset":
+            if selection_start_goal == "training":
+                self.dataset_subset = train_subset
+            elif selection_start_goal == "validation":
+                self.dataset_subset = val_subset
+            else:
+                raise ValueError(
+                    "selection_start_goal must be 'training' or 'validation' when start_goal_source='dataset'."
+                )
+            self.idxs_dataset_subset = np.random.permutation(len(self.dataset_subset))
+        elif self.start_goal_source == "states_file":
             self.select_start_goal_from_file = load_params_from_yaml(selection_start_goal)
+        else:
+            if not start_goal_regions_path:
+                raise ValueError("start_goal_regions_path is required when start_goal_source='regions'.")
+            start_goal_regions_path = os.path.expandvars(os.path.expanduser(str(start_goal_regions_path)))
+            self.start_goal_regions = load_params_from_yaml(start_goal_regions_path)
+            if not self.start_goal_regions.get("start_regions"):
+                raise ValueError(f"No start_regions defined in {start_goal_regions_path}.")
+            if not self.start_goal_regions.get("goal_regions"):
+                raise ValueError(f"No goal_regions defined in {start_goal_regions_path}.")
 
-        self.min_distance_q_pos_start_goal = None
-        if min_distance_q_pos_start_goal is not None:
-            self.min_distance_q_pos_start_goal = min_distance_q_pos_start_goal
+            configured_env_id = self.start_goal_regions.get("env_id")
+            current_env_id = getattr(planning_task.env, "name", type(planning_task.env).__name__)
+            if configured_env_id and not current_env_id.startswith(configured_env_id):
+                raise ValueError(
+                    f"Region config env_id={configured_env_id!r} does not match current environment "
+                    f"{current_env_id!r}."
+                )
+            configured_robot_id = self.start_goal_regions.get("robot_id")
+            current_robot_id = type(planning_task.robot).__name__
+            if configured_robot_id and configured_robot_id != current_robot_id:
+                raise ValueError(
+                    f"Region config robot_id={configured_robot_id!r} does not match current robot "
+                    f"{current_robot_id!r}."
+                )
+
+        self.start_goal_max_sampling_attempts = int(start_goal_max_sampling_attempts)
+        if self.start_goal_regions is not None:
+            self.start_goal_max_sampling_attempts = int(
+                self.start_goal_regions.get("max_sampling_attempts", self.start_goal_max_sampling_attempts)
+            )
+        if self.start_goal_max_sampling_attempts < 1:
+            raise ValueError("start_goal_max_sampling_attempts must be >= 1.")
+
+        self.rotation_z_axis_deg = float(rotation_z_axis_deg)
+        rotation_z_axis_rad = np.deg2rad(self.rotation_z_axis_deg)
+        self.environment_rotation = np.eye(4)
+        self.environment_rotation[:2, :2] = np.array(
+            [
+                [np.cos(rotation_z_axis_rad), -np.sin(rotation_z_axis_rad)],
+                [np.sin(rotation_z_axis_rad), np.cos(rotation_z_axis_rad)],
+            ]
+        )
+        self.rotate_regions_with_environment = True
+        if self.start_goal_regions is not None:
+            self.rotate_regions_with_environment = bool(self.start_goal_regions.get("rotate_with_environment", True))
+
+        self.min_distance_q_pos_start_goal = float(min_distance_q_pos_start_goal or 0.0)
+        self.last_sample_metadata = {}
 
         # OMPL worker to generate random start and goal joint positions
         self.generate_data_ompl_worker = GenerateDataOMPL(
@@ -81,43 +182,145 @@ class EvaluationSamplesGenerator:
 
         self.ee_markers_ids = []
 
+    def _rotate_region_pose(self, ee_pose):
+        if not self.rotate_regions_with_environment:
+            return ee_pose
+        return self.environment_rotation @ ee_pose
+
+    def _solve_region_ik(self, ee_pose, state_name, region_id):
+        try:
+            return self.generate_data_ompl_worker.pbompl_interface.get_state_not_in_collision(
+                ee_pose_target=ee_pose,
+                debug=self.debug,
+            )
+        except RuntimeError as error:
+            target_position = np.round(ee_pose[:3, 3], decimals=4).tolist()
+            raise RuntimeError(f"{state_name} region {region_id} at position {target_position}: {error}") from error
+
+    def _sample_region_candidate(self):
+        start_region_ids = list(self.start_goal_regions["start_regions"].keys())
+        goal_region_ids = list(self.start_goal_regions["goal_regions"].keys())
+        start_region_id = str(np.random.choice(start_region_ids))
+        goal_region_id = str(np.random.choice(goal_region_ids))
+
+        ee_pose_start = get_random_pose_from_region(self.start_goal_regions["start_regions"][start_region_id])
+        ee_pose_goal = get_random_pose_from_region(self.start_goal_regions["goal_regions"][goal_region_id])
+        ee_pose_start = self._rotate_region_pose(ee_pose_start)
+        ee_pose_goal = self._rotate_region_pose(ee_pose_goal)
+
+        q_pos_start = self._solve_region_ik(ee_pose_start, "start", start_region_id)
+        q_pos_goal = self._solve_region_ik(ee_pose_goal, "goal", goal_region_id)
+
+        metadata = {
+            "source": "regions",
+            "start_region_id": start_region_id,
+            "goal_region_id": goal_region_id,
+            "rotation_z_axis_deg": self.rotation_z_axis_deg,
+            "rotate_with_environment": self.rotate_regions_with_environment,
+            "ee_pose_start": ee_pose_start.tolist(),
+            "ee_pose_goal": ee_pose_goal.tolist(),
+        }
+        return q_pos_start, q_pos_goal, ee_pose_goal[:3, :4], metadata
+
+    def _get_candidate(self, idx):
+        if self.start_goal_source == "regions":
+            return self._sample_region_candidate()
+
+        if self.start_goal_source == "states_file":
+            sample_idx = idx % len(self.select_start_goal_from_file)
+            sample = self.select_start_goal_from_file[sample_idx]
+            q_pos_start = sample["q_pos_start"]
+            q_pos_goal = sample["q_pos_goal"]
+            ee_pose_goal = np.asarray(sample["ee_pose_goal"]).reshape(3, 4)
+            return (
+                q_pos_start,
+                q_pos_goal,
+                ee_pose_goal,
+                {
+                    "source": "states_file",
+                    "sample_index": int(sample_idx),
+                },
+            )
+
+        sample_idx = self.idxs_dataset_subset[idx % len(self.idxs_dataset_subset)]
+        input_data_one_sample = self.dataset_subset[sample_idx]
+        q_pos_start = input_data_one_sample[self.dataset_subset.dataset.field_key_q_start]
+        q_pos_goal = input_data_one_sample[self.dataset_subset.dataset.field_key_q_goal]
+        ee_pose_goal = input_data_one_sample[self.dataset_subset.dataset.field_key_context_ee_goal_pose]
+        return (
+            q_pos_start,
+            q_pos_goal,
+            ee_pose_goal,
+            {
+                "source": "dataset",
+                "selection": self.selection_start_goal,
+                "sample_index": int(sample_idx),
+            },
+        )
+
+    def _state_invalid_reason(self, q_pos, state_name):
+        q_pos = to_torch(q_pos, **self.tensor_args)
+        q_pos_np = to_numpy(q_pos)
+        if not self.generate_data_ompl_worker.pbompl_interface.is_state_valid(q_pos_np, check_bounds=True):
+            return f"{state_name} is invalid in PyBullet."
+
+        if torch.any(q_pos < self.planning_task.robot.q_pos_min) or torch.any(
+            q_pos > self.planning_task.robot.q_pos_max
+        ):
+            return f"{state_name} is outside the Torch robot joint limits."
+
+        collision = self.planning_task.compute_collision(
+            q_pos,
+            margin=self.planning_task.margin_for_dense_collision_checking,
+        )
+        if bool(torch.as_tensor(collision).any().item()):
+            return f"{state_name} is in collision in the Torch collision field."
+        return None
+
     def get_data_sample(self, idx, **kwargs):
-        # -----------------------------------------------
-        # Get the start and goal states
-        # If extra objects are used, since they are not part of the original environment,
-        # the start goal states from the training or validation sets might be in collision.
-        # We just reject those samples and get new ones.
-        if self.select_start_goal_from_file:
-            idx = idx % len(self.select_start_goal_from_file)
-            q_pos_start = to_torch(self.select_start_goal_from_file[idx]["q_pos_start"], **self.tensor_args)
-            q_pos_goal = to_torch(self.select_start_goal_from_file[idx]["q_pos_goal"], **self.tensor_args)
-            ee_pose_goal_flat = self.select_start_goal_from_file[idx]["ee_pose_goal"]
-            ee_pose_goal = to_torch(ee_pose_goal_flat, **self.tensor_args).view(3, 4)
-        else:
-            idx = self.idxs_dataset_subset[idx % len(self.idxs_dataset_subset)]
-            input_data_one_sample = self.dataset_subset[idx]
-            q_pos_start = input_data_one_sample[self.dataset_subset.dataset.field_key_q_start]
-            q_pos_goal = input_data_one_sample[self.dataset_subset.dataset.field_key_q_goal]
-            ee_pose_goal = input_data_one_sample[self.dataset_subset.dataset.field_key_context_ee_goal_pose]
+        last_failure = None
+        for attempt in range(self.start_goal_max_sampling_attempts):
+            try:
+                q_pos_start, q_pos_goal, ee_pose_goal, metadata = self._get_candidate(idx + attempt)
+            except Exception as error:
+                last_failure = f"Sampling/IK failed: {error}"
+                print(f"{last_failure} Resampling...")
+                continue
 
-        if not self.generate_data_ompl_worker.pbompl_interface.is_state_valid(to_numpy(q_pos_start)):
-            print("Start state is in collision. Getting new sample...")
-            return self.get_data_sample(idx + 1)
+            q_pos_start = to_torch(q_pos_start, **self.tensor_args)
+            q_pos_goal = to_torch(q_pos_goal, **self.tensor_args)
+            ee_pose_goal = to_torch(ee_pose_goal, **self.tensor_args).view(3, 4)
 
-        if not self.generate_data_ompl_worker.pbompl_interface.is_state_valid(to_numpy(q_pos_goal)):
-            print("Goal state is in collision. Getting new sample...")
-            return self.get_data_sample(idx + 1)
+            last_failure = self._state_invalid_reason(q_pos_start, "Start state")
+            if last_failure is None:
+                last_failure = self._state_invalid_reason(q_pos_goal, "Goal state")
+            if (
+                last_failure is None
+                and torch.linalg.norm(q_pos_goal - q_pos_start) < self.min_distance_q_pos_start_goal
+            ):
+                last_failure = (
+                    f"Start and goal states are closer than "
+                    f"{self.min_distance_q_pos_start_goal:.3f} in joint space."
+                )
 
-        q_pos_start = to_torch(q_pos_start, **self.tensor_args)
-        q_pos_goal = to_torch(q_pos_goal, **self.tensor_args)
+            if last_failure is not None:
+                print(f"{last_failure} Resampling...")
+                continue
 
-        if torch.linalg.norm(q_pos_goal - q_pos_start) < self.min_distance_q_pos_start_goal:
-            print("Start and goal states are too close. Getting new sample...")
-            return self.get_data_sample(idx + 1)
+            metadata["sampling_attempt"] = attempt + 1
+            self.last_sample_metadata = metadata
+            if self.start_goal_source == "regions":
+                print(
+                    f"Sampled start region {metadata['start_region_id']} and goal region "
+                    f"{metadata['goal_region_id']} with rotation_z_axis_deg="
+                    f"{self.rotation_z_axis_deg:.3f}."
+                )
+            return q_pos_start, q_pos_goal, ee_pose_goal
 
-        ee_pose_goal = to_torch(ee_pose_goal, **self.tensor_args)
-
-        return q_pos_start, q_pos_goal, ee_pose_goal
+        raise RuntimeError(
+            f"Could not obtain a valid start-goal sample after "
+            f"{self.start_goal_max_sampling_attempts} attempts. Last failure: {last_failure}"
+        )
 
     def add_start_goal_marker(self, q_pos_start, q_pos_goal=None, ee_pose_goal=None, **kwargs):
         # remove markers first
@@ -180,6 +383,11 @@ def render_results(
         q_vel_traj_best = None
         q_acc_traj_best = None
 
+    q_vel_start = results_single_plan.get("q_vel_start", torch.zeros_like(q_pos_start))
+    q_vel_goal = results_single_plan.get("q_vel_goal", torch.zeros_like(q_pos_goal))
+    q_acc_start = results_single_plan.get("q_acc_start", torch.zeros_like(q_pos_start))
+    q_acc_goal = results_single_plan.get("q_acc_goal", torch.zeros_like(q_pos_goal))
+
     if render_joint_space_time_iters:
         planning_task.animate_opt_iters_joint_space_state(
             q_pos_trajs=results_single_plan.q_trajs_pos_iters,
@@ -187,10 +395,10 @@ def render_results(
             q_acc_trajs=results_single_plan.q_trajs_acc_iters,
             pos_start_state=q_pos_start,
             pos_goal_state=q_pos_goal,
-            vel_start_state=torch.zeros_like(q_pos_start),
-            vel_goal_state=torch.zeros_like(q_pos_goal),
-            acc_start_state=torch.zeros_like(q_pos_start),
-            acc_goal_state=torch.zeros_like(q_pos_goal),
+            vel_start_state=q_vel_start,
+            vel_goal_state=q_vel_goal,
+            acc_start_state=q_acc_start,
+            acc_goal_state=q_acc_goal,
             q_pos_traj_best=q_pos_traj_best,
             q_vel_traj_best=q_vel_traj_best,
             q_acc_traj_best=q_acc_traj_best,
@@ -211,10 +419,10 @@ def render_results(
                 q_acc_trajs=results_single_plan.q_trajs_acc_recon_iters,
                 pos_start_state=q_pos_start,
                 pos_goal_state=q_pos_goal,
-                vel_start_state=torch.zeros_like(q_pos_start),
-                vel_goal_state=torch.zeros_like(q_pos_goal),
-                acc_start_state=torch.zeros_like(q_pos_start),
-                acc_goal_state=torch.zeros_like(q_pos_goal),
+                vel_start_state=q_vel_start,
+                vel_goal_state=q_vel_goal,
+                acc_start_state=q_acc_start,
+                acc_goal_state=q_acc_goal,
                 q_pos_traj_best=None,
                 video_filepath=os.path.join(
                     results_dir, f"{base_file_name}-joint_space-time-opt-iters-recon-{idx:03d}.mp4"
@@ -391,7 +599,11 @@ class GenerativeOptimizationPlanner:
         n_trajectory_samples=None,
         results_ns: DotMap = None,
         debug=False,
-        best_trajectory_selection="shortest_path_length",
+        best_trajectory_selection="weighted_metrics",
+        q_vel_start=None,
+        q_vel_goal=None,
+        q_acc_start=None,
+        q_acc_goal=None,
         **kwargs,
     ):
 
@@ -405,16 +617,36 @@ class GenerativeOptimizationPlanner:
         q_pos_start = to_torch(q_pos_start, **self.tensor_args)
         q_pos_goal = to_torch(q_pos_goal, **self.tensor_args)
         ee_pose_goal = to_torch(EE_pose_goal, **self.tensor_args)
+        q_vel_start = (
+            torch.zeros_like(q_pos_start) if q_vel_start is None else to_torch(q_vel_start, **self.tensor_args)
+        )
+        q_vel_goal = torch.zeros_like(q_pos_goal) if q_vel_goal is None else to_torch(q_vel_goal, **self.tensor_args)
+        q_acc_start = (
+            torch.zeros_like(q_pos_start) if q_acc_start is None else to_torch(q_acc_start, **self.tensor_args)
+        )
+        q_acc_goal = torch.zeros_like(q_pos_goal) if q_acc_goal is None else to_torch(q_acc_goal, **self.tensor_args)
 
         results_ns.update(
             q_pos_start=q_pos_start,
             q_pos_goal=q_pos_goal,
             ee_pose_goal=ee_pose_goal,
+            q_vel_start=q_vel_start,
+            q_vel_goal=q_vel_goal,
+            q_acc_start=q_acc_start,
+            q_acc_goal=q_acc_goal,
         )
 
         # Set the start and goal states
         self.planning_task.set_q_pos_start_goal(q_pos_start, q_pos_goal)
         self.planning_task.set_ee_pose_goal(ee_pose_goal)
+        self.planning_task.parametric_trajectory.set_boundary_conditions(
+            q_pos_start=q_pos_start,
+            q_pos_goal=q_pos_goal,
+            q_vel_start=q_vel_start,
+            q_vel_goal=q_vel_goal,
+            q_acc_start=q_acc_start,
+            q_acc_goal=q_acc_goal,
+        )
 
         # Plan trajectories with the generative optimization planner
         # Get also the reconstructed control points
@@ -592,7 +824,7 @@ class GenerativeOptimizationPlanner:
         q_trajs_vel_iter_0 = q_trajs_vel_iters[-1]
         q_trajs_acc_iter_0 = q_trajs_acc_iters[-1]
         q_trajs_iter_0 = torch.cat([q_trajs_pos_iter_0, q_trajs_vel_iter_0, q_trajs_acc_iter_0], dim=-1)
-        _, _, q_trajs_final_valid, valid_idxs, _ = self.planning_task.get_trajs_unvalid_and_valid(
+        _, _, q_trajs_final_valid, valid_idxs, collision_waypoint_mask = self.planning_task.get_trajs_unvalid_and_valid(
             q_trajs_iter_0,
             return_indices=True,
             filter_joint_limits_vel_acc=True,
@@ -600,12 +832,58 @@ class GenerativeOptimizationPlanner:
         if valid_idxs.ndim == 2:
             valid_idxs = valid_idxs.squeeze(1)
 
+        collision_trajectory_mask = collision_waypoint_mask.any(dim=-1)
+        first_collision_steps = torch.full(
+            (collision_waypoint_mask.shape[0],),
+            -1,
+            dtype=torch.long,
+            device=collision_waypoint_mask.device,
+        )
+        first_collision_steps[collision_trajectory_mask] = torch.argmax(
+            collision_waypoint_mask[collision_trajectory_mask].to(torch.long), dim=-1
+        )
+
+        joint_position_violation_mask = (
+            torch.logical_or(
+                q_trajs_pos_iter_0 < self.planning_task.robot.q_pos_min,
+                q_trajs_pos_iter_0 > self.planning_task.robot.q_pos_max,
+            )
+            .any(dim=-1)
+            .any(dim=-1)
+        )
+        joint_velocity_violation_mask = torch.zeros_like(joint_position_violation_mask)
+        if self.planning_task.robot.dq_max is not None:
+            joint_velocity_violation_mask = (
+                torch.logical_or(
+                    q_trajs_vel_iter_0 < -self.planning_task.robot.dq_max,
+                    q_trajs_vel_iter_0 > self.planning_task.robot.dq_max,
+                )
+                .any(dim=-1)
+                .any(dim=-1)
+            )
+        joint_acceleration_violation_mask = torch.zeros_like(joint_position_violation_mask)
+        if self.planning_task.robot.ddq_max is not None:
+            joint_acceleration_violation_mask = (
+                torch.logical_or(
+                    q_trajs_acc_iter_0 < -self.planning_task.robot.ddq_max,
+                    q_trajs_acc_iter_0 > self.planning_task.robot.ddq_max,
+                )
+                .any(dim=-1)
+                .any(dim=-1)
+            )
+
+        valid_trajectory_mask = torch.zeros_like(collision_trajectory_mask)
+        valid_idxs_flat = valid_idxs.reshape(-1).long()
+        if valid_idxs_flat.numel() > 0:
+            valid_trajectory_mask[valid_idxs_flat] = True
+
         control_points_valid = control_points_iter_0[valid_idxs]
         q_trajs_pos_valid = q_trajs_pos_iter_0[valid_idxs]
         q_trajs_vel_valid = q_trajs_vel_iter_0[valid_idxs]
         q_trajs_acc_valid = q_trajs_acc_iter_0[valid_idxs]
 
         # Get the "best" trajectory from all the valid ones
+        best_trajectory_selection_details = None
         if valid_idxs.numel() == 0:
             control_points_best = None
             q_trajs_pos_best = None
@@ -613,10 +891,12 @@ class GenerativeOptimizationPlanner:
             q_trajs_acc_best = None
         else:
             best_trajectory_selection = self.args_inference.get("best_trajectory_selection", best_trajectory_selection)
-
+            best_trajectory_selection_details = {
+                "method": best_trajectory_selection,
+            }
+            ee_pose_goal_error_position_norm = None
+            ee_pose_goal_error_orientation_norm = None
             if self.dataset.context_ee_goal_pose:
-                # Best = lowest EE pose cost
-                # If the context is the EE pose goal, we the best trajectory is the one that is closest to the goal
                 ee_pose_goal_achieved = self.planning_task.robot.get_EE_pose(q_trajs_pos_valid[..., -1, :])
                 error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
                     ee_pose_goal, ee_pose_goal_achieved
@@ -625,24 +905,134 @@ class GenerativeOptimizationPlanner:
                 ee_pose_goal_error_orientation_norm = torch.rad2deg(
                     torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1)
                 )
-                idx_min_cost = torch.argmin(ee_pose_goal_error_position_norm)
-            else:
-                if best_trajectory_selection == "lowest_weighted_cost":
-                    # Best = lowest weighted cost
-                    costs_valid, *_ = self.cost_guide(control_points_valid, return_cost=True)
-                    idx_min_cost = torch.argmin(costs_valid)
-                elif best_trajectory_selection == "lowest_smoothness_cost":
-                    # Best = lowest smoothness cost
-                    batch_smoothness = compute_smoothness(
-                        q_trajs_pos_valid, self.planning_task.robot, trajs_acc=q_trajs_acc_valid
+
+            if best_trajectory_selection == "weighted_metrics":
+                metric_values = {
+                    "path_length": compute_path_length(q_trajs_pos_valid, self.planning_task.robot),
+                    "smoothness": compute_smoothness(
+                        q_trajs_pos_valid,
+                        self.planning_task.robot,
+                        trajs_acc=q_trajs_acc_valid,
+                    ),
+                }
+                if self.dataset.context_ee_goal_pose:
+                    metric_values.update(
+                        ee_position=ee_pose_goal_error_position_norm,
+                        ee_orientation=ee_pose_goal_error_orientation_norm,
                     )
-                    idx_min_cost = torch.argmin(batch_smoothness)
-                elif best_trajectory_selection == "shortest_path_length":
-                    # Best = lowest path
-                    batch_path_length = compute_path_length(q_trajs_pos_valid, self.planning_task.robot)
-                    idx_min_cost = torch.argmin(batch_path_length)
-                else:
-                    raise NotImplementedError
+                if self.planning_task.robot.dq_max is not None:
+                    dq_max = torch.as_tensor(
+                        self.planning_task.robot.dq_max,
+                        dtype=q_trajs_vel_valid.dtype,
+                        device=q_trajs_vel_valid.device,
+                    )
+                    metric_values["velocity_limit_utilization"] = torch.amax(
+                        torch.abs(q_trajs_vel_valid) / dq_max,
+                        dim=(-2, -1),
+                    )
+                if self.planning_task.robot.ddq_max is not None:
+                    ddq_max = torch.as_tensor(
+                        self.planning_task.robot.ddq_max,
+                        dtype=q_trajs_acc_valid.dtype,
+                        device=q_trajs_acc_valid.device,
+                    )
+                    metric_values["acceleration_limit_utilization"] = torch.amax(
+                        torch.abs(q_trajs_acc_valid) / ddq_max,
+                        dim=(-2, -1),
+                    )
+
+                configured_weights = self.args_inference.get("best_trajectory_weights", {})
+                configured_scales = self.args_inference.get("best_trajectory_metric_scales", {})
+                active_metrics = []
+                active_weight_sum = 0.0
+                for metric_name, values in metric_values.items():
+                    weight = float(
+                        _config_value(
+                            configured_weights,
+                            metric_name,
+                            DEFAULT_BEST_TRAJECTORY_WEIGHTS[metric_name],
+                        )
+                    )
+                    if weight <= 0.0:
+                        continue
+                    configured_scale = _config_value(
+                        configured_scales,
+                        metric_name,
+                        DEFAULT_BEST_TRAJECTORY_METRIC_SCALES[metric_name],
+                    )
+                    normalized_values, scale = _normalize_best_trajectory_metric(values, configured_scale)
+                    active_metrics.append((metric_name, values, normalized_values, scale, weight))
+                    active_weight_sum += weight
+
+                if not active_metrics:
+                    raise ValueError("weighted_metrics requires at least one available metric with a positive weight.")
+
+                weighted_score = torch.zeros_like(active_metrics[0][1])
+                for _, _, normalized_values, _, weight in active_metrics:
+                    normalized_weight = weight / active_weight_sum
+                    weighted_score = weighted_score + normalized_weight * normalized_values.square()
+                idx_min_cost = torch.argmin(weighted_score)
+
+                component_details = {}
+                for metric_name, values, normalized_values, scale, weight in active_metrics:
+                    normalized_weight = weight / active_weight_sum
+                    component_details[metric_name] = {
+                        "value": float(values[idx_min_cost].detach().cpu().item()),
+                        "scale": float(scale.detach().cpu().item()),
+                        "weight": normalized_weight,
+                        "normalized_value": float(normalized_values[idx_min_cost].detach().cpu().item()),
+                        "weighted_term": float(
+                            (normalized_weight * normalized_values[idx_min_cost].square()).detach().cpu().item()
+                        ),
+                    }
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(weighted_score[idx_min_cost].detach().cpu().item()),
+                    components=component_details,
+                )
+            elif best_trajectory_selection == "lowest_ee_position_error":
+                if not self.dataset.context_ee_goal_pose:
+                    raise ValueError("lowest_ee_position_error requires context_ee_goal_pose=True.")
+                idx_min_cost = torch.argmin(ee_pose_goal_error_position_norm)
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(ee_pose_goal_error_position_norm[idx_min_cost].detach().cpu().item()),
+                )
+            elif best_trajectory_selection == "lowest_ee_orientation_error":
+                if not self.dataset.context_ee_goal_pose:
+                    raise ValueError("lowest_ee_orientation_error requires context_ee_goal_pose=True.")
+                idx_min_cost = torch.argmin(ee_pose_goal_error_orientation_norm)
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(ee_pose_goal_error_orientation_norm[idx_min_cost].detach().cpu().item()),
+                )
+            elif best_trajectory_selection == "lowest_weighted_cost":
+                if self.cost_guide is None:
+                    raise ValueError("lowest_weighted_cost requires an active cost guide.")
+                costs_valid, *_ = self.cost_guide(control_points_valid, return_cost=True)
+                idx_min_cost = torch.argmin(costs_valid)
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(costs_valid[idx_min_cost].detach().cpu().item()),
+                )
+            elif best_trajectory_selection == "lowest_smoothness_cost":
+                batch_smoothness = compute_smoothness(
+                    q_trajs_pos_valid, self.planning_task.robot, trajs_acc=q_trajs_acc_valid
+                )
+                idx_min_cost = torch.argmin(batch_smoothness)
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(batch_smoothness[idx_min_cost].detach().cpu().item()),
+                )
+            elif best_trajectory_selection == "shortest_path_length":
+                batch_path_length = compute_path_length(q_trajs_pos_valid, self.planning_task.robot)
+                idx_min_cost = torch.argmin(batch_path_length)
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    score=float(batch_path_length[idx_min_cost].detach().cpu().item()),
+                )
+            else:
+                raise ValueError(f"Unknown best_trajectory_selection={best_trajectory_selection!r}.")
 
             control_points_best = control_points_valid[idx_min_cost]
             q_trajs_pos_best = q_trajs_pos_valid[idx_min_cost]
@@ -665,6 +1055,14 @@ class GenerativeOptimizationPlanner:
             q_trajs_pos_iter_0=q_trajs_pos_iter_0,
             q_trajs_vel_iter_0=q_trajs_vel_iter_0,
             q_trajs_acc_iter_0=q_trajs_acc_iter_0,
+            # final trajectory validity diagnostics
+            collision_waypoint_mask=collision_waypoint_mask,
+            collision_trajectory_mask=collision_trajectory_mask,
+            first_collision_steps=first_collision_steps,
+            joint_position_violation_mask=joint_position_violation_mask,
+            joint_velocity_violation_mask=joint_velocity_violation_mask,
+            joint_acceleration_violation_mask=joint_acceleration_violation_mask,
+            valid_trajectory_mask=valid_trajectory_mask,
             # valid control points and trajectories
             control_points_valid=control_points_valid,
             q_trajs_pos_valid=q_trajs_pos_valid,
@@ -675,6 +1073,7 @@ class GenerativeOptimizationPlanner:
             q_trajs_pos_best=q_trajs_pos_best,
             q_trajs_vel_best=q_trajs_vel_best,
             q_trajs_acc_best=q_trajs_acc_best,
+            best_trajectory_selection_details=best_trajectory_selection_details,
             # trajectory time steps
             timesteps=self.planning_task.parametric_trajectory.get_timesteps(num=q_trajs_pos_iter_0.shape[1]),
         )

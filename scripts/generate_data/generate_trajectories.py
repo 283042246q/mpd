@@ -117,18 +117,18 @@ class GenerateDataOMPL:
             [(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0), (1, 0, 0, 1)],
         ):
             for obj in obj_list:
-                obj_position, obj_orientation = obj.get_position_orientation()
-                obj_orientation = q_convert_to_xyzw(rotation_matrix_to_q(obj_orientation))
+                obj_position, obj_orientation_matrix = obj.get_position_orientation()
+                obj_orientation = q_convert_to_xyzw(rotation_matrix_to_q(obj_orientation_matrix))
                 for single_primitive in obj.get_all_single_primitives():
                     if isinstance(single_primitive, MultiSphereField):
                         center, radius = single_primitive.centers, single_primitive.radii
                         if len(center) == 2:
                             center = torch.cat([center, torch.zeros(1, **self.tensor_args)])
-                        center += obj_position
+                        center_world = obj_orientation_matrix @ center + obj_position
                         self.obstacles.append(
                             add_sphere(
                                 self.pybullet_client,
-                                to_numpy(center),
+                                to_numpy(center_world),
                                 to_numpy(radius),
                                 orientation=to_numpy(obj_orientation),
                                 color=color,
@@ -141,11 +141,11 @@ class GenerateDataOMPL:
                             size = torch.cat(
                                 [size, default_height_2d * torch.ones(1, **self.tensor_args)]
                             )  # default height
-                        center += obj_position
+                        center_world = obj_orientation_matrix @ center + obj_position
                         self.obstacles.append(
                             add_box(
                                 self.pybullet_client,
-                                to_numpy(center),
+                                to_numpy(center_world),
                                 to_numpy(size / 2),
                                 orientation=to_numpy(obj_orientation),
                                 color=color,
@@ -178,7 +178,7 @@ class GenerateDataOMPL:
             ), f"q_pos_goal={q_pos_goal} is NOT valid"
 
         if q_pos_start is not None and q_pos_goal is not None:
-            if np.linalg.norm(q_pos_start - q_pos_goal) < min_distance_q_pos_start_goal:
+            if np.linalg.norm(np.asarray(q_pos_start) - np.asarray(q_pos_goal)) < min_distance_q_pos_start_goal:
                 print(f"q_pos_start={q_pos_start} and q_pos_goal={q_pos_goal} are too close")
                 return [], []
 
@@ -199,7 +199,7 @@ class GenerateDataOMPL:
 
             q_pos_goal_tmp_l = []
             # check if the distance between the start and goal states is greater than min_distance_q_pos_start_goal
-            if np.linalg.norm(q_pos_start_tmp - q_pos_goal_tmp) < min_distance_q_pos_start_goal:
+            if np.linalg.norm(np.asarray(q_pos_start_tmp) - np.asarray(q_pos_goal_tmp)) < min_distance_q_pos_start_goal:
                 print(f"{i}")
                 continue
 

@@ -9,13 +9,24 @@ from torch_robotics.torch_utils.torch_utils import to_numpy, DEFAULT_TENSOR_ARGS
 
 class GraspedObject(ObjectField):
 
-    def __init__(self, primitive_fields, object_collision_margin=0.001, **kwargs):
+    def __init__(
+        self,
+        primitive_fields,
+        object_collision_margin=0.001,
+        allowed_self_collision_links=None,
+        **kwargs,
+    ):
         assert len(primitive_fields) == 1
         super().__init__(primitive_fields, **kwargs)
 
         self.name = self.__class__.__name__
 
         self.object_collision_margin = object_collision_margin
+        if allowed_self_collision_links is None:
+            allowed_self_collision_links = []
+        elif isinstance(allowed_self_collision_links, str):
+            allowed_self_collision_links = [allowed_self_collision_links]
+        self.allowed_self_collision_links = set(allowed_self_collision_links) | {self.reference_frame}
 
         # Geometry URDF
         self.geometry_urdf = self.get_geometry_urdf()

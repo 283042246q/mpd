@@ -29,71 +29,114 @@ DEBUG = True
 def experiment(
     ########################################################################
     # Dataset
+    # 数据集子目录，决定训练使用哪个环境、机器人和先验规划器生成的数据
     dataset_subdir: str = "EnvSimple2D-RobotPointMass2D-joint_joint-one-RRTConnect",
     # dataset_subdir: str = 'EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect',
+    # 合并后的 hdf5 数据文件名，通常使用翻转增强后的 dataset_merged_doubled.hdf5
     dataset_file_merged: str = "dataset_merged_doubled.hdf5",
+    # 是否重新从 hdf5 解析并缓存数据；False 时优先读取已有 reload pickle
     reload_data: bool = False,
+    # 是否预加载数据到训练设备；大数据集/显存紧张时保持 False
     preload_data_to_device: bool = False,
-    n_task_samples: int = -1,  # -1 for all
+    # 只抽取多少个任务用于训练/调试；-1 表示使用全部任务
+    n_task_samples: int = -1,
     ########################################################################
     # Parametric trajectory
+    # 轨迹参数化方式；Bspline 表示学习控制点，Waypoints 表示直接学习路径点
     parametric_trajectory_class: str = "ParametricTrajectoryBspline",
     # parametric_trajectory_class: str = 'ParametricTrajectoryWaypoints',
+    # B-spline 阶数/degree，当前默认 5 阶
     bspline_degree: int = 5,
-    bspline_num_control_points_desired: int = 22,  # adjusted such that trainable control points are a multiple of 8
-    num_T_pts: int = 128,  # number of time steps for trajectory interpolation
+    # 期望的 B-spline 控制点数量；程序会调整，使可学习控制点数量是 8 的倍数
+    bspline_num_control_points_desired: int = 22,
+    # B-spline 展开后的轨迹采样点数，用于碰撞检查、可视化和后续仿真
+    num_T_pts: int = 128,
     ########################################################################
     # Context model
     # condition on joint start and goal
+    # 是否把关节起点/终点或起点作为条件输入模型
     context_qs: bool = True,
+    # 关节条件编码 MLP 层数
     context_qs_n_layers: int = 2,
+    # 关节条件编码输出维度
     context_q_out_dim: int = 128,
+    # 关节条件编码激活函数
     context_qs_act: str = "relu",
     # End-effector pose conditioned model
+    # 是否把末端目标位姿作为条件输入；Panda/Warehouse 通常需要开启
     context_ee_goal_pose: bool = False,
+    # 末端目标位姿条件编码 MLP 层数
     context_ee_goal_pose_n_layers: int = 2,
+    # 末端目标位姿条件编码输出维度
     context_ee_goal_pose_out_dim: int = 128,
+    # 末端目标位姿条件编码激活函数
     context_ee_goal_pose_act: str = "relu",
     # Combined context model
+    # 多个条件编码合并后的输出维度
     context_combined_out_dim: int = 128,
     ########################################################################
     # Generative prior model
+    # 生成模型类型，可选扩散模型或 CVAE
     generative_model_class: str = "GaussianDiffusionModel",  # 'GaussianDiffusionModel', 'CVAEModel'
     # Diffusion Model
+    # 扩散噪声调度方式
     variance_schedule: str = "cosine",
+    # 训练扩散模型的总扩散步数；推理时 DDIM 采样步数可另设
     n_diffusion_steps: int = 100,
+    # True 表示模型预测噪声 epsilon，False 表示模型直接预测 x0
     predict_epsilon: bool = True,
+    # 条件注入 UNet 的方式
     conditioning_type: str = "default",  # 'default', 'concatenate', 'attention'
     # Unet
+    # UNet 基础通道维度
     unet_input_dim: int = 32,
+    # UNet 多尺度通道倍率配置索引，对应 mpd.models.UNET_DIM_MULTS
     unet_dim_mults_option: int = 1,
     # CVAE
+    # CVAE 潜变量维度，仅 generative_model_class='CVAEModel' 时使用
     cvae_latent_dim: int = 32,
+    # CVAE KL loss 权重
     loss_cvae_kl_weight: float = 1e-1,
     ########################################################################
     # Training parameters
+    # 训练 batch size
     batch_size: int = 128,
+    # AdamW 学习率
     lr: float = 3e-4,
+    # 是否裁剪梯度
     clip_grad: bool = False,
+    # 总训练 step 数
     num_train_steps: int = 1_000_000,
+    # 是否维护 EMA 模型；推理通常使用 EMA checkpoint 更稳定
     use_ema: bool = True,
+    # 是否使用自动混合精度训练
     use_amp: bool = False,
     # Summary parameters
+    # 每隔多少 step 写 summary/可视化
     steps_til_summary: int = 5000 if DEBUG else 20000,
+    # summary 回调类型
     summary_class: str = "SummaryTrajectoryGeneration",
+    # 每隔多少 step 保存 checkpoint
     steps_til_ckpt: int = 5000 if DEBUG else 20000,
     ########################################################################
+    # 训练设备，例如 cuda:0 或 cpu
     device: str = "cuda:0",
+    # debug 模式会更频繁输出/可视化
     debug: bool = DEBUG,
     ########################################################################
     # MANDATORY
     # seed: int = int(time.time()),
+    # 随机种子，用于复现实验
     seed: int = 1726484688,
+    # 训练日志、checkpoint、summary 输出目录
     results_dir: str = "logs",
     ########################################################################
     # WandB
-    wandb_mode: str = "disabled" if DEBUG else WANDB_MODE,  # "online", "offline" or "disabled"
+    # WandB 模式："online"、"offline" 或 "disabled"
+    wandb_mode: str = "disabled" if DEBUG else WANDB_MODE,
+    # WandB entity
     wandb_entity: str = WANDB_ENTITY,
+    # WandB project 名称
     wandb_project: str = "test_train_bspline_diffusion",
     **kwargs,
 ):

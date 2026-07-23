@@ -222,7 +222,7 @@ class ParametricTrajectoryWaypoints(ParametricTrajectoryBase):
 
         return control_points_augmented
 
-    def preprocess_control_points(self, q_control_points):
+    def preprocess_control_points(self, q_control_points, **kwargs):
         return q_control_points
 
     def get_q_trajectory_in_phase(self, q_control_points: torch.Tensor, get_type: Tuple = ("pos", "vel", "acc")):

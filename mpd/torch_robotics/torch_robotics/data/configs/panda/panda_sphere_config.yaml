@@ -69,5 +69,7 @@ panda_hand:
 
 
 self_collision:
-  panda_link1: [panda_link5, panda_link6, panda_hand]
-  panda_link2: [panda_link5, panda_link6, panda_hand]
+  panda_link1: [panda_link4, panda_link5, panda_link6, panda_link7, panda_hand]
+  panda_link2: [panda_link5, panda_link6, panda_link7, panda_hand]
+  panda_link3: [panda_link6, panda_link7, panda_hand]
+  panda_link4: [panda_link7, panda_hand]

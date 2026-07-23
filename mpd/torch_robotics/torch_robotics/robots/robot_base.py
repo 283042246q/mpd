@@ -205,14 +205,13 @@ class RobotBase(ABC):
 
         # Modify the urdf to append the link and collision points of the grasped object
         self.grasped_object = grasped_object
+        grasped_object_collision_names = []
         if grasped_object is not None:
-            (self.robot_urdf, self.robot_urdf_with_spheres, link_collision_names) = modify_robot_urdf_grasped_object(
-                self.robot_urdf, self.robot_urdf_with_spheres, grasped_object
-            )
-            self.link_collision_spheres_names.extend(link_collision_names)
-            self.link_collision_spheres_radii.extend(
-                [grasped_object.object_collision_margin] * len(link_collision_names)
-            )
+            (
+                self.robot_urdf,
+                self.robot_urdf_with_spheres,
+                grasped_object_collision_names,
+            ) = modify_robot_urdf_grasped_object(self.robot_urdf, self.robot_urdf_with_spheres, grasped_object)
 
         # Raw version of the original urdf with the grasped object
         self.robot_urdf_raw = deepcopy(self.robot_urdf)
@@ -229,6 +228,37 @@ class RobotBase(ABC):
         )
         self.link_collision_spheres_names.extend(link_collision_names)
         self.link_collision_spheres_radii.extend(link_collision_margins)
+
+        self.n_robot_collision_spheres = len(link_collision_names)
+        self.grasped_object_collision_sphere_indices = []
+        if grasped_object is not None:
+            object_index_start = len(self.link_collision_spheres_names)
+            self.link_collision_spheres_names.extend(grasped_object_collision_names)
+            self.link_collision_spheres_radii.extend(
+                [grasped_object.object_collision_margin] * len(grasped_object_collision_names)
+            )
+            self.grasped_object_collision_sphere_indices = list(
+                range(object_index_start, len(self.link_collision_spheres_names))
+            )
+
+            parent_link_by_child = {joint.child: joint.parent for joint in self.robot_urdf.joints}
+            robot_collision_parent_links = [parent_link_by_child[name] for name in link_collision_names]
+            allowed_links = grasped_object.allowed_self_collision_links
+            for object_idx in self.grasped_object_collision_sphere_indices:
+                for robot_idx, (robot_parent_link, robot_radius) in enumerate(
+                    zip(robot_collision_parent_links, link_collision_margins)
+                ):
+                    if robot_parent_link in allowed_links:
+                        continue
+                    link_self_collision_tuples.append(
+                        (
+                            object_idx,
+                            robot_idx,
+                            grasped_object.object_collision_margin,
+                            robot_radius,
+                        )
+                    )
+
         assert len(self.link_collision_spheres_names) == len(self.link_collision_spheres_radii)
         self.link_collision_spheres_radii = to_torch(self.link_collision_spheres_radii, **tensor_args)
 

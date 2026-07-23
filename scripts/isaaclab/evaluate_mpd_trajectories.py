@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import sys
+import traceback
 from typing import Any
 
 from isaaclab.app import AppLauncher
@@ -36,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         help="Deprecated compatibility flag. Use replay_mpd_trajectory.py for IsaacLab videos.",
     )
     parser.add_argument("--video_path", type=Path, default=None, help="Deprecated compatibility video path.")
+    parser.add_argument(
+        "--graceful_shutdown",
+        action="store_true",
+        help="Close SimulationApp normally instead of exiting immediately after writing results.",
+    )
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     if args.input is None:
@@ -314,13 +322,23 @@ def run_evaluation() -> dict[str, Any]:
 
 
 def main() -> None:
+    exit_code = 0
     try:
         stats = run_evaluation()
         args_cli.output.parent.mkdir(parents=True, exist_ok=True)
         args_cli.output.write_text(json.dumps(stats, indent=2), encoding="utf-8")
-        print(json.dumps(stats, indent=2))
-    finally:
-        simulation_app.close()
+        print(json.dumps(stats, indent=2), flush=True)
+    except BaseException:
+        exit_code = 1
+        traceback.print_exc()
+
+    if args_cli.graceful_shutdown:
+        simulation_app.close(wait_for_replicator=False)
+        raise SystemExit(exit_code)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

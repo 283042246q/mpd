@@ -127,14 +127,14 @@ class EnvWarehouseExtraObjectsV00(EnvWarehouse):
             MultiBoxField(
                 np.array(
                     [
-                        [0.85, 0.1, 0.25 / 2],
-                        [0.6, -0.15, 0.5 / 2],
+                        [0.5, 0.14, 0.28 / 2],  # 0.85,pos1
+                        # [0.7, -0.15, 0.8 / 2], #pos2
                     ]
                 ),
                 np.array(
                     [
-                        [0.1, 0.25, 0.25],
-                        [0.25, 0.25, 0.5],
+                        [0.05, 0.28, 0.28],  # size1
+                        # [0.25, 0.4, 0.8], #size2
                     ]
                 ),
                 tensor_args=tensor_args,

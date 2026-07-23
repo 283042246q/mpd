@@ -22,6 +22,10 @@ class ParametricTrajectoryBase(abc.ABC):
 
         self.q_pos_start = None
         self.q_pos_goal = None
+        self.q_vel_start = None
+        self.q_vel_goal = None
+        self.q_acc_start = None
+        self.q_acc_goal = None
 
         phase_time_class_fn_d = {"PhaseTimeLinear": PhaseTimeLinear, "PhaseTimeSigmoid": PhaseTimeSigmoid}
         assert (
@@ -42,6 +46,22 @@ class ParametricTrajectoryBase(abc.ABC):
         q_pos_start = self.q_pos_start if q_pos_start is None else q_pos_start
         q_pos_goal = self.q_pos_goal if q_pos_goal is None else q_pos_goal
         return q_pos_start, q_pos_goal
+
+    def set_boundary_conditions(
+        self,
+        q_pos_start,
+        q_pos_goal,
+        q_vel_start=None,
+        q_vel_goal=None,
+        q_acc_start=None,
+        q_acc_goal=None,
+    ):
+        self.q_pos_start = q_pos_start
+        self.q_pos_goal = q_pos_goal
+        self.q_vel_start = q_vel_start
+        self.q_vel_goal = q_vel_goal
+        self.q_acc_start = q_acc_start
+        self.q_acc_goal = q_acc_goal
 
     @abc.abstractmethod
     def augment_control_points_fn(self, *args, **kwargs):
@@ -67,7 +87,12 @@ class ParametricTrajectoryBase(abc.ABC):
         q_pos_start, q_pos_goal = self.get_q_pos_start_q_goal(q_pos_start, q_pos_goal)
 
         q_control_points = self.augment_control_points_fn(q_control_points, q_pos_start, q_pos_goal)
-        q_control_points = self.preprocess_control_points(q_control_points)
+        q_control_points = self.preprocess_control_points(
+            q_control_points,
+            q_pos_start=q_pos_start,
+            q_pos_goal=q_pos_goal,
+            **kwargs,
+        )
         if q_control_points.ndim < 2:
             raise NotImplementedError
 

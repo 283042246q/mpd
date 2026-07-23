@@ -34,6 +34,13 @@ def make_timesteps(batch_size, i, device):
     return t
 
 
+def linear_guidance_schedule_value(start, end, step_index, n_steps):
+    if end is None or n_steps <= 1:
+        return start if end is None else end
+    progress = step_index / (n_steps - 1)
+    return start + (end - start) * progress
+
+
 class MyDataParallel(nn.DataParallel):
     def __getattr__(self, name):
         try:
@@ -238,6 +245,13 @@ class GaussianDiffusionModel(nn.Module, ABC):
         max_grad_value=1.0,  # clip the control point gradients
         n_diffusion_steps_without_noise=0,
         ddim_scale_grad_prior=1.0,
+        ddim_scale_grad_prior_end=None,
+        ee_pose_goal_weight_start=None,
+        ee_pose_goal_weight_end=None,
+        ee_goal_position_weight_start=None,
+        ee_goal_position_weight_end=None,
+        ee_goal_orientation_weight_start=None,
+        ee_goal_orientation_weight_end=None,
         compute_costs_with_xrecon=False,
         results_ns=None,
         **sample_kwargs,
@@ -310,14 +324,80 @@ class GaussianDiffusionModel(nn.Module, ABC):
             # Modify the noise if guidance is active
             # https://arxiv.org/pdf/2105.05233.pdf - Algorithm 2
             if guide is not None and (ddim_sampling_timesteps - k_step) <= t_start_guide:
+                active_guide_steps = min(int(t_start_guide), ddim_sampling_timesteps)
+                guide_step_index = active_guide_steps - (ddim_sampling_timesteps - k_step)
+                prior_weight_step = ddim_scale_grad_prior
+                if ddim_scale_grad_prior_end is not None:
+                    prior_weight_step = linear_guidance_schedule_value(
+                        ddim_scale_grad_prior,
+                        ddim_scale_grad_prior_end,
+                        guide_step_index,
+                        active_guide_steps,
+                    )
+                legacy_ee_pose_goal_weight_step = None
+                if ee_pose_goal_weight_end is not None and ee_pose_goal_weight_start is not None:
+                    legacy_ee_pose_goal_weight_step = linear_guidance_schedule_value(
+                        ee_pose_goal_weight_start,
+                        ee_pose_goal_weight_end,
+                        guide_step_index,
+                        active_guide_steps,
+                    )
+                ee_goal_position_weight_step = legacy_ee_pose_goal_weight_step
+                if ee_goal_position_weight_end is not None and ee_goal_position_weight_start is not None:
+                    ee_goal_position_weight_step = linear_guidance_schedule_value(
+                        ee_goal_position_weight_start,
+                        ee_goal_position_weight_end,
+                        guide_step_index,
+                        active_guide_steps,
+                    )
+                ee_goal_orientation_weight_step = legacy_ee_pose_goal_weight_step
+                if ee_goal_orientation_weight_end is not None and ee_goal_orientation_weight_start is not None:
+                    ee_goal_orientation_weight_step = linear_guidance_schedule_value(
+                        ee_goal_orientation_weight_start,
+                        ee_goal_orientation_weight_end,
+                        guide_step_index,
+                        active_guide_steps,
+                    )
+
+                cost_weight_overrides = {}
+                if ee_goal_position_weight_step is not None:
+                    cost_weight_overrides["CostTaskSpaceEEGoalPosition"] = ee_goal_position_weight_step
+                if ee_goal_orientation_weight_step is not None:
+                    cost_weight_overrides["CostTaskSpaceEEGoalOrientation"] = ee_goal_orientation_weight_step
+                if legacy_ee_pose_goal_weight_step is not None:
+                    cost_weight_overrides["CostTaskSpaceEEGoalPose"] = legacy_ee_pose_goal_weight_step
+                if not cost_weight_overrides:
+                    cost_weight_overrides = None
+                if results_ns is not None and (
+                    ddim_scale_grad_prior_end is not None
+                    or legacy_ee_pose_goal_weight_step is not None
+                    or ee_goal_position_weight_step is not None
+                    or ee_goal_orientation_weight_step is not None
+                ):
+                    if "ddim_guidance_schedule" not in results_ns:
+                        results_ns.ddim_guidance_schedule = []
+                    results_ns.ddim_guidance_schedule.append(
+                        {
+                            "active_step": guide_step_index + 1,
+                            "active_steps_total": active_guide_steps,
+                            "ee_goal_position_weight": ee_goal_position_weight_step,
+                            "ee_goal_orientation_weight": ee_goal_orientation_weight_step,
+                            "ee_pose_goal_weight": legacy_ee_pose_goal_weight_step,
+                            "prior_weight": prior_weight_step,
+                        }
+                    )
                 with TimerCUDA() as t_guide:
                     x_start = x.clone()
                     for k_gd in range(n_guide_steps):
-                        grad_prior_weighted = grad_prior * ddim_scale_grad_prior
+                        grad_prior_weighted = grad_prior * prior_weight_step
                         if compute_costs_with_xrecon:
                             raise NotImplementedError("compute_costs_with_xrecon is not implemented")
                         else:
-                            grad_guide = guide(x, context_d=context_d)
+                            grad_guide = guide(
+                                x,
+                                context_d=context_d,
+                                cost_weight_overrides=cost_weight_overrides,
+                            )
 
                         grad_guide_clipped = clip_grad_fn(grad_guide)
                         grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
