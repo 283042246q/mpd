@@ -1,0 +1,11 @@
+schema: mpd_warehouse_extra_boxes
+schema_version: 1
+scene_id: EnvWarehouseExtraObjectsV00
+description: Original Warehouse extra obstacle, externalized from env_warehouse.py.
+reference_frame: panda_link0_unrotated
+object_name: tableshelf-extraobjects
+
+boxes:
+  - name: original_center_box
+    center: [0.50, 0.14, 0.14]
+    size: [0.05, 0.28, 0.28]

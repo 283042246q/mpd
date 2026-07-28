@@ -1,0 +1,14 @@
+schema: mpd_warehouse_extra_boxes
+schema_version: 1
+scene_id: EnvWarehouseExtraBoxes
+description: Two tall boxes with a nominal 0.20 m task-space gap along the y axis.
+reference_frame: panda_link0_unrotated
+object_name: warehouse-extra-boxes-narrow-020
+
+boxes:
+  - name: narrow_gap_negative_y
+    center: [0.55, -0.27, 0.35]
+    size: [0.12, 0.34, 0.70]
+  - name: narrow_gap_positive_y
+    center: [0.55, 0.27, 0.35]
+    size: [0.12, 0.34, 0.70]

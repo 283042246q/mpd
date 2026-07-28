@@ -1,0 +1,1944 @@
+
+inference默认几步
+
+
+• 默认是 1 个 start-goal 任务：
+
+  n_start_goal_states: int = 1
+
+  每个任务里默认采样多少条轨迹看 cfg。你这个 Warehouse cfg 是：
+
+  n_trajectory_samples: 100
+  num_T_pts: 128
+  trajectory_duration: 10.0
+  diffusion_sampling_method: ddim
+  ddim:
+    ddim_sampling_timesteps: 15
+    n_guide_steps: 4
+
+  所以默认含义是：
+
+  - 跑 1 个 start-goal 规划任务
+  - 生成约 100 条候选轨迹
+  - 每条轨迹离散成 128 个 waypoint
+  - 规划轨迹时长是 10s
+  - DDIM 采样步数是 15
+  - guide 优化每个相关采样阶段做 4 步
+
+  你看到的 IsaacLab replay 视频是把其中一条 128 waypoint 轨迹按视频帧导出来。当前默认 replay
+  trajectory_index=0，不是自动 best。
+
+
+这些是 B-spline 轨迹表示 和 数据集大小 的信息。
+
+  Number of B-spline control points.
+    desired          : 18
+    adjusted         : 22
+    learnable + fixed: 16 + 6
+
+  含义：
+
+  - desired: 18
+    cfg 或训练模型里希望使用的 B-spline 控制点数量。
+  - adjusted: 22
+    程序根据 B-spline 阶数、端点约束等规则自动调整后的实际控制点数量。不是所有 desired 值都能直接满足内部
+    knot / endpoint 约束，所以会调整。
+  - learnable + fixed: 16 + 6
+    实际 22 个控制点里：
+      - 16 个是模型要预测/优化的控制点
+      - 6 个是固定控制点，通常用于固定轨迹起点、终点以及端点附近的约束，让轨迹严格从 q_start 到 q_goal 或目
+        标附近出发/结束
+
+  后面的数据集：
+
+  TrajectoryDatasetBspline
+  n_tasks: 20000
+  n_trajs: 20000
+  control_points_dim: (16, 2)
+
+  含义：
+
+  - n_tasks: 20000
+    数据集里有 20000 个 start-goal 规划任务。
+  - n_trajs: 20000
+    有 20000 条专家/先验轨迹。这里等于 n_tasks，说明大概率每个任务一条轨迹。
+  - control_points_dim: (16, 2)
+    每条训练样本中，模型学习的是 16 个控制点，每个控制点是 2 维。
+    这里是 2D robot 或 pointmass，所以维度是 2。Panda 会是 (learnable_control_points, 7)。
+
+  train_subset size: 19500
+  val_subset size  : 500
+
+  含义：
+
+  - 训练集 19500 条
+  - 验证集 500 条
+  - 总共 20000 条，按约 97.5% / 2.5% 划分
+
+  简单说：模型不是直接预测 128 个轨迹点，而是预测 B-spline 的一部分控制点；固定控制点保证起终点，learnable
+  控制点决定中间路径形状。
+
+
+16 + 6 是 B-spline 控制点数量，是轨迹的低维参数表示。
+
+  128 是 最终展开出来的轨迹采样点数量，也就是实际用于碰撞检查、代价计算、IsaacLab replay 的 waypoint 数量。
+
+  可以理解成：
+
+  16 个可学习控制点 + 6 个固定控制点
+          ↓ B-spline 插值/展开
+  128 个连续轨迹采样点
+
+  所以模型主要预测/优化的是 16 x DOF 的控制点，而不是直接预测 128 x DOF 的完整轨迹。之后程序用 B-spline 把
+  控制点变成 128 个轨迹点。
+
+
+inference 的时候会用到这 20000 个数据集吗？
+
+  会读，但不是拿 20000 条都去推理。
+
+  inference 需要加载数据集，主要用于：
+
+  - 读取训练时的数据归一化参数
+  - 构建 TrajectoryDatasetBspline
+  - 从 train/val subset 里抽 start-goal 任务
+  - 得到 q_pos_start、q_pos_goal、ee_pose_goal
+  - 保持和训练时相同的数据格式、B-spline 参数、上下文编码
+
+  默认：
+
+  selection_start_goal = "validation"
+  n_start_goal_states = 1
+
+  所以它会从验证集 500 条里随机抽 1 个 start-goal 来做 inference。
+
+
+
+
+训练数据维度:
+  [B, learnable_control_points, robot_dof]
+  例如 Panda: [128, 16, 7]
+  B batchsize 总大小128*16*7
+
+  展开后的轨迹维度:
+  [B, 128, robot_dof]
+  例如 Panda: [128, 128, 7]
+
+  inference/IsaacLab payload:
+  [128, B_candidates, robot_dof]
+  例如: [128, 96, 7]
+  B_candidates 是 同一个 start-goal 任务下保留下来的候选轨迹数量。
+
+一个 batch 里是 B 条独立轨迹样本：
+
+  sample 0: 一整条轨迹的 16 个可学习控制点
+  sample 1: 另一整条轨迹的 16 个可学习控制点
+  ...
+  sample 127: 另一整条轨迹的 16 个可学习控制点
+
+  不是同一条轨迹上连续的 128 个时间点
+
+
+
+训练的是bspline控制点，然后生成waypoint轨迹，再转成jointspace输出吗
+
+
+• 基本对，但最后一句要修正一下：
+
+  训练的不是先生成 waypoint 再转 joint-space。B-spline 控制点本身就在 joint-space 里。
+
+  流程是：
+
+  训练数据里的专家 joint-space path
+    -> 拟合成 B-spline 控制点
+    -> 去掉固定端点/约束点，只训练 learnable control points
+    -> 模型学习这些 B-spline 控制点
+
+  inference 时：
+
+  模型生成 learnable B-spline control points
+    -> 加回固定控制点，比如 start/goal 附近控制点
+    -> B-spline 插值/采样
+    -> 得到 128 个 joint-space waypoint
+    -> 用这些 waypoint 做碰撞检查、代价优化、IsaacLab replay
+
+  所以对 Panda：
+
+  控制点: [16, 7]
+  展开后 waypoint 轨迹: [128, 7]
+
+  这里 7 一直是 Panda 的 7 个关节角。
+
+  可以理解为：
+
+  B-spline 控制点 = joint-space 轨迹的低维表示
+  128 waypoints = 从这条 B-spline 曲线采样出来的 joint-space 路径
+
+  不是 task-space waypoint，也不是笛卡尔轨迹再 IK 到 joint-space。末端目标 ee_pose_goal 只是作为条件和代价
+  项，引导最后生成的 joint-space 轨迹让末端到目标 pose。
+
+训练输入
+
+  主输入是加噪后的控制点：
+
+  x_noisy: [batch_size, n_learnable_control_points, state_dim]
+
+  同时还有：
+
+  t: [batch_size]
+  context: 起点/终点关节 + 可选末端目标位姿
+
+训练输出
+
+  扩散模型输出和输入控制点同形状：
+
+  output: [batch_size, n_learnable_control_points, state_dim]
+
+  当前配置：
+
+  predict_epsilon=True
+
+  所以输出不是直接轨迹，而是预测噪声：
+
+  预测 epsilon noise
+
+  loss 是：
+
+  MSE(predicted_noise, real_noise)
+
+  最终推理时
+
+  网络先生成归一化的 B-spline 可学习控制点：
+
+  [16, 7]  # Panda 例子
+
+  然后补上固定控制点，比如起点、终点、零速度/零加速度约束点，再展开成：
+
+  num_T_pts = 128
+  => [128, 7] joint-space trajectory
+
+
+
+state_dim 是每个控制点的关节维度：
+
+  PointMass2D: state_dim = 2
+  Panda:       state_dim = 7
+
+  在 TemporalUnet 里，输入先是：
+
+  [B, H, D]
+
+  然后转成 Conv1D 格式：
+
+  [B, D, H]
+
+  其中：
+
+  H = 控制点序列长度
+  D = 关节维度，被当作 channel
+
+  U-Net 内部会把 channel 扩大：
+
+  D -> 32 -> 64 -> 128 -> 256
+
+  同时把 H 下采样再上采样：
+
+  H=16 -> 8 -> 4 -> 2 -> 4 -> 8 -> 16
+
+  最后输出再变回：
+
+  [B, H, D]
+
+中间只是 U-Net 内部临时改变 channel 和 horizon。最终维度不变。
+
+
+
+
+
+  checkpoint 参数:
+  网络权重字典，不是轨迹点；由 UNet/context model 结构决定。
+
+  checkpoint 文件在 checkpoints/ 里一般有：
+
+  model_current.pth
+  model_current_state_dict.pth
+  model__iter_XXXXXX.pth
+  model__iter_XXXXXX_state_dict.pth
+
+  ema_model_current.pth
+  ema_model_current_state_dict.pth
+  ema_model__iter_XXXXXX.pth
+  ema_model__iter_XXXXXX_state_dict.pth
+
+  区别：
+
+  - model_*.pth：保存整个 PyTorch model 对象
+  - model_*_state_dict.pth：只保存参数字典
+  - ema_model_*：指数滑动平均模型，inference 通常更推荐用 EMA，因为更稳定
+
+  这些 checkpoint 里的参数维度不是单一 [B, 16, D]，而是网络权重，比如 Linear、Conv1d、Unet block 的参数。它
+  们的形状由这些训练配置决定：
+
+  state_dim = D
+  n_support_points = 16
+  unet_input_dim = 32
+  context_combined_out_dim = 128
+  n_diffusion_steps = 100
+
+
+
+
+
+MPD / PyBullet / TorchRobotics 资产
+
+  主要在仓库内：
+
+  mpd/torch_robotics/torch_robotics/data/urdf/
+
+  机器人：
+
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/
+
+  Panda 重点文件：
+
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/franka_description/robots/
+panda_arm_hand_fixed_gripper.urdf
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/franka_description/robots/
+panda_arm_hand_no_gripper.urdf
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/franka_description/meshes/
+
+  碰撞球、关节限位配置：
+
+  mpd/torch_robotics/torch_robotics/data/configs/panda/panda_sphere_config.yaml
+  mpd/torch_robotics/torch_robotics/data/configs/panda/joint_limits.yaml
+
+  简单物体：
+
+  mpd/torch_robotics/torch_robotics/data/urdf/objects/
+
+
+  1. 场景定义阶段
+
+  Warehouse 环境定义在：
+
+  mpd/torch_robotics/torch_robotics/environments/env_warehouse.py
+
+  里面程序化创建了 3 类固定物体：
+
+  table_obj_field = create_table_object_field(...)
+  shelf_obj_field = create_shelf_field(...)
+  small_shelf_object = MultiBoxField(...)
+
+  也就是说 Warehouse 的桌子、架子、小架子，本质是 MultiBoxField 盒子组合，不是 mesh 资产。
+
+  数据生成配置在：
+
+  data_generation_cfgs/EnvWarehouse-RobotPanda_v01.yaml
+
+  这个 yaml 不是定义障碍物 mesh，而是定义末端目标采样区域：
+
+  pose_regions:
+    region_00: top of small shelf
+    region_01: big shelf
+    region_02: top of the table
+
+  2. 数据生成 / PyBullet / OMPL 阶段
+
+  入口大致是：
+
+  scripts/generate_data/generate_trajectories.py
+
+  机器人资产：
+
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/franka_description/robots/
+panda_arm_hand_fixed_gripper.urdf
+
+  Warehouse 障碍物调用方式：
+
+  self.env_tr.get_obj_fixed_list()
+  self.env_tr.get_obj_extra_list()
+
+  然后对每个 primitive：
+
+  MultiSphereField -> add_sphere(...)
+  MultiBoxField    -> add_box(...)
+
+  所以 PyBullet 里不是加载 Warehouse 资产文件，而是把 EnvWarehouse 中的 box primitive 动态创建成 PyBullet
+  collision body。
+
+  3. 训练阶段
+
+  训练不再加载 PyBullet/IsaacLab 资产。
+
+  训练读取的是已经生成好的数据：
+
+  data_trajectories/EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/
+dataset_merged_doubled.hdf5
+
+  训练时会重新构建 EnvWarehouse，主要用于：
+
+  - collision cost
+  - SDF / distance field
+  - robot kinematics
+  - normalization / context
+
+  但它不生成视频，也不加载 IsaacLab USD 资产。
+
+  4. inference 阶段
+
+  inference cfg 是：
+
+  scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml
+
+  它指定：
+
+  model_dir_ddpm_bspline: ...
+  model_selection: bspline
+  env_id_replace: null
+  rotation_z_axis_deg: 0.0
+
+  inference 会：
+
+  1. 加载训练模型
+  2. 加载 Warehouse 数据集
+  3. 构建 EnvWarehouse
+  4. 从 validation set 抽 start-goal
+  5. 生成 Panda 关节轨迹
+  6. 用 MPD 的 collision cost 检查 Warehouse box 障碍物
+
+  这里 Warehouse 障碍物仍然来自：
+
+  env_warehouse.py 里的 MultiBoxField
+
+  不是来自外部资产文件。
+
+  5. IsaacLab evaluator 阶段
+
+  inference.py --sim_backend isaaclab 会调用：
+
+  export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
+
+  文件在：
+
+  scripts/isaaclab/scene_payload.py
+
+  这个函数会把 Warehouse 的 MultiBoxField 转成 payload：
+
+  {
+    "type": "box",
+    "position": ...,
+    "orientation": ...,
+    "size": ...
+  }
+
+  然后保存进：
+
+  isaaclab-trajectories-000.pt
+
+  里面有：
+
+  "scene": {
+    "obstacles": [
+      {"type": "box", "position": ..., "size": ...}
+    ]
+  }
+
+  6. IsaacLab 里真正生成障碍物
+
+  IsaacLab evaluator/replay 读取 payload 后调用：
+
+  scripts/isaaclab/evaluate_mpd_trajectories.py
+  scripts/isaaclab/replay_mpd_trajectory.py
+
+  里面对 box 调用：
+
+  sim_utils.CuboidCfg(...)
+  obstacle_cfg.func(...)
+
+  所以 IsaacLab 也不是加载 Warehouse USD，而是根据 payload 动态 spawn 12 个 box。
+
+  你之前那个 run 里统计显示：
+
+  "env_name": "EnvWarehouse",
+  "n_obstacles": 12,
+  "obstacle_types": ["box"]
+
+  这 12 个 box 就是从 EnvWarehouse 的 table/shelf/small_shelf primitives 导出的。
+
+当前 IsaacLab 里机器人用的是 IsaacLab 自带的 Panda 资产配置：
+
+  from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG
+
+  代码位置：
+
+  scripts/isaaclab/evaluate_mpd_trajectories.py
+  scripts/isaaclab/replay_mpd_trajectory.py
+
+  里面是：
+
+  PANDA_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
+  PANDA_CFG.spawn.activate_contact_sensors = True
+  PANDA_CFG.spawn.rigid_props.disable_gravity = True
+
+  然后在 scene 里：
+
+  robot = PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+障碍物不是用 MPD 里的 .urdf/.dae/.stl 资产转换出来的。
+
+  Warehouse 障碍物本来就是 MPD 里的几何 primitive：
+
+  MultiBoxField
+
+  IsaacLab 里是把这些 primitive 的数值参数导出来，再重新生成 IsaacLab primitive：
+
+  MPD MultiBoxField
+    -> position / orientation / size
+    -> isaaclab-trajectories-000.pt 里的 scene payload
+    -> IsaacLab sim_utils.CuboidCfg
+
+  所以它不是：
+
+  MPD URDF mesh -> 转 USD -> IsaacLab 使用
+
+  而是：
+
+  MPD 几何参数 -> IsaacLab 几何参数
+
+  sphere 同理：
+
+  MPD MultiSphereField -> radius / position -> IsaacLab SphereCfg
+
+  对齐方式主要靠 同一个 world/base 坐标系：
+
+  - MPD 里的 Warehouse 障碍物位置是相对于机器人 base/world 定义的。
+  - scene_payload.py 导出的是这些障碍物的 world position、orientation、size。
+  - IsaacLab replay/evaluator 把 Panda 放在 env 原点 /World/envs/env_*/Robot。
+  - 障碍物也 spawn 到同一个 env/world 坐标下：
+
+  prim_path = "/World/envs/env_.*/MpdObstacle_XXX"
+  obstacle_cfg.func(
+      prim_path,
+      obstacle_cfg,
+      translation=position,
+      orientation=orientation,
+  )
+
+  所以默认假设是：
+
+  MPD robot base at origin
+  IsaacLab Panda base at origin
+  MPD obstacle world pose == IsaacLab obstacle pose
+
+  也就是没有额外做复杂标定矩阵。
+
+  当前对齐链路：
+
+  EnvWarehouse 中的 ObjectField / MultiBoxField
+    -> obj.get_position_orientation()
+    -> center_world = obj_ori @ center_local + obj_pos
+    -> payload["position"], payload["orientation"], payload["size"]
+    -> IsaacLab CuboidCfg translation/orientation/size
+
+  机器人轨迹对齐靠关节名/顺序：
+
+  MPD q[0:7] -> panda_joint1 ... panda_joint7
+
+  需要注意：这是一种“坐标约定一致”的对齐，不是严谨的 mesh 级资产对齐。当前能工作，是因为 Warehouse 都是
+  box/sphere primitive，且 Panda base 默认都在原点。若以后用真实 CAD/USD/URDF 场景，就需要显式维护：
+
+  T_isaaclab_world_from_mpd_world
+  T_robot_base_from_world
+  障碍物尺寸/姿态单位
+  机器人 base pose
+
+  否则仿真和 MPD 的碰撞判断会偏。
+
+
+
+
+
+
+warehouse训练时对于不同的环境配置是放在一个model里训练的吗
+
+
+• 默认不是“多个不同 Warehouse 配置混在一个 model 里训练”。
+
+  当前 Warehouse 训练模型对应的是一个明确的数据集目录，例如：
+
+  EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect
+
+  这个名字里的：
+
+  config_file_v01
+
+  就是指用：
+
+  data_generation_cfgs/EnvWarehouse-RobotPanda_v01.yaml
+
+  生成的数据集。
+
+  训练时 dataset_subdir 指向哪个数据集，就只训练那个数据集：
+
+  dataset_subdir = "EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect"
+
+  所以一个模型通常对应：
+
+  一个环境类型 EnvWarehouse
+  一个机器人 RobotPanda
+  一个数据生成配置 v01
+  一个 planner 数据来源 RRTConnect
+
+  但要注意：
+
+  - v01.yaml 里定义的是 目标位姿采样区域，不是多个不同 Warehouse 几何布局。
+  - Warehouse 的几何障碍物布局主要在 env_warehouse.py 里固定生成。
+  - 如果你开 EnvWarehouseExtraObjectsV00，那是另一个环境变体，默认不是同一个训练集，除非你专门生成混合数据
+    集再训练。
+
+  简单说：
+
+  当前官方 Warehouse model:
+  只对应 EnvWarehouse + config_file_v01 这一套分布
+  不是把很多不同 Warehouse 布局混在一个模型里训练
+
+  如果后面想让一个模型适应多种 Warehouse 布局，需要重新设计数据集，把环境参数/障碍物 payload 也作为 context
+  输入模型。当前模型主要条件是 start/goal 和 ee_goal_pose，不是完整场景布局。
+
+
+python train.py --device cuda:0 --num_train_steps 300000 --n_task_samples 15000 \
+--dataset_subdir EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect \
+--dataset_file_merged dataset_merged_doubled.hdf5 \
+--debug False --results_dir /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/train/logs/ware_simp
+
+
+
+
+
+
+
+是的，generate_data 本质上是：
+
+  1. 在当前 EnvWarehouse + RobotPanda 环境里采样起点/终点；
+  2. 检查关节限位和碰撞；
+  3. 用 OMPL 的 RRTConnect 规划一条无碰轨迹；
+  4. 保存成 hdf5 / pickle 数据集。
+
+  但 warehouse 不是完全随机 joint 起终点。这个目录：
+
+  data_public/data_trajectories/EnvWarehouse-RobotPanda-config_file_v01-
+  joint_joint-one-RRTConnect
+
+  对应的 args.yaml 里是：
+
+  env_id: EnvWarehouse
+  robot_id: RobotPanda
+  cfg_file: EnvWarehouse-RobotPanda_v01.yaml
+  planner: RRTConnect
+  num_trajectories_generated: 228363
+  interpolate_num: 256
+
+  所以它会参考 data_generation_cfgs/EnvWarehouse-RobotPanda_v01.yaml 里的末端位
+  姿区域采样，比如：
+
+  - 小货架上方
+  - 大货架格口/层位
+  - 桌面上方
+
+  然后通过 IK / collision-free sampling 找到对应的 Panda 关节起点和终点，再用
+  RRTConnect 规划。
+
+  没有真正考虑“夹着物体从书架上拿下来”这种操作语义。当前 public warehouse 数据是
+  静态场景里的机械臂无碰运动规划轨迹，不包含：
+
+  - 物体被夹爪抓住并作为机器人附着碰撞体移动；
+  - 抓取状态切换；
+  - 接触、提起、放置；
+  - 物体从书架移动到桌面的物体轨迹；
+  - 人工示教动作。
+
+  代码里确实有 grasped_object 支持入口，但 warehouse inference 配置里是：
+
+  grasped_object: null
+
+  生成数据时只是 gripper=True，也就是 Panda 带夹爪几何，不等于夹着物体。
+
+  所以结论：
+
+  data_public/...EnvWarehouse...RRTConnect 里的轨迹是 RRTConnect 自动规划出来
+  的，不是人工示教；warehouse 里目前没有看到人工示教轨迹。它学到的是“Panda 在仓
+  库/货架/桌子静态障碍环境中，从一个姿态运动到另一个姿态”的轨迹先验，不是“抓住物
+  体并搬运”的 manipulation 轨迹。
+
+
+› 他训练和推理的起点终点都一定位于- 小货架上方
+    - 大货架格口/层位
+    - 桌面上方
+  吗？在当前warehouse配置下
+
+
+• 我查一下当前 inference 的任务采样逻辑，因为训练数据生成和推理时取任务不一定完
+  全一样。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 沙箱同样拦截了只读命令，我用提升权限读取项目文件，确认当前代码里的实际分支。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 关键点已经清楚：训练数据生成时有一个“只目标在区域内”的分支；推理默认从数据集抽
+  样，所以会继承这个分布。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 我再确认一下 selection_start_goal 的默认值，避免把推理说成只从验证集取。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 不是都一定。
+
+  在当前 warehouse 配置下：
+
+  训练数据生成时：
+
+  - q_goal 的末端位姿基本一定来自这三个区域之一：
+      - 小货架上方 region_00
+      - 大货架格口/层位 region_01
+      - 桌面上方 region_02
+
+  - q_start 不一定都在这三个区域里。代码里 move_between_pose_regions: True 之后
+  还有一个随机分支：
+      - 一种情况：起点和终点都从这三个区域里各选一个；
+      - 另一种情况：只采样目标末端位姿，起点是随机无碰 joint state，不要求末端在
+      货架/桌面区域。
+
+  所以训练集不是纯粹的“区域到区域”轨迹，而是混合了：
+
+  随机可行起点 -> 货架/桌面区域目标
+  货架/桌面区域起点 -> 另一个货架/桌面区域目标
+
+  推理时当前默认 selection_start_goal="validation"，也就是从训练数据切出来的验证
+  集里取 q_pos_start / q_pos_goal / ee_pose_goal。因此推理起终点继承同样分布：
+
+  - 目标一般还是这三个区域之一；
+  - 起点不保证一定在这三个区域；
+  - 中间轨迹点也不受这三个区域限制，只要求避障、平滑、到达目标。
+
+  如果你看到视频里机械臂从工作区外或者奇怪姿态转到货架/桌面附近，这并不一定是
+  bug，很可能就是“随机可行起点 -> 指定目标区域”的那类样本。
+
+
+
+env_id_replace 的含义：
+
+  - null：使用训练数据 args.yaml 里的原始环境，也就是 EnvWarehouse。
+  - 'EnvWarehouseExtraObjectsV00'：推理时把环境类替换成额外障碍物版本。
+  - 它不会换模型，也不会换数据集，只是推理/碰撞 cost/验证时用更难的环境。
+  - 起点终点还是从原 warehouse 数据集 validation/training 里取，然后检查是否在新
+  环境里碰撞，碰撞就换下一个样本。
+
+  rotation_z_axis_deg 的含义：
+
+  是的，基本可以理解为把 warehouse 障碍物整体绕机器人底座/world 原点的 z 轴旋
+  转。
+
+  代码里是对 table、shelf、small shelf、extra objects 的位姿做：
+
+  H = H_perturbation @ H
+
+  其中 H_perturbation 是绕 z 轴的旋转矩阵。
+
+  注意几点：
+
+  - 旋转的是环境障碍物，不是机器人。
+  - 机器人 base 不动。
+  - 数据集里的 q_pos_start / q_pos_goal / ee_pose_goal 不会跟着旋转。
+  - 所以 rotation_z_axis_deg != 0 是一种环境扰动/OOD 测试，不是“整个任务一起旋
+  转”。
+
+
+
+• EnvWarehouse 生成的不是 IsaacLab/URDF 场景，而是一个由长方体解析几何组成的 MPD
+  碰撞环境。它主要用于 SDF、碰撞代价和轨迹优化；机器人由 loader 另外创建。
+
+  整体流程是：
+
+  构造桌子、货架几何体
+          ↓
+  设置它们在机器人基坐标系中的位姿
+          ↓
+  可选：绕机器人基座 Z 轴旋转整个环境
+          ↓
+  交给 EnvBase 分类为固定/额外障碍物
+          ↓
+  在三维工作空间预计算 SDF 和梯度
+
+  ### 1. 建立环境旋转矩阵
+
+  入口在 mpd/torch_robotics/torch_robotics/environments/env_warehouse.py:17：
+
+  def __init__(self, rotation_z_axis_deg=0, ...):
+
+  它根据 rotation_z_axis_deg 建立齐次变换矩阵：
+
+  H_perturbation = [
+      [cosθ, -sinθ, 0, 0],
+      [sinθ,  cosθ, 0, 0],
+      [0,       0, 1, 0],
+      [0,       0, 0, 1],
+  ]
+
+  之后每个物体的位姿都执行：
+
+  H = H_perturbation @ H
+
+  因此它表示所有障碍物绕世界坐标原点，也就是机器人基座附近的 Z 轴整体旋转。机器
+  人本身不会旋转。
+
+  ### 2. 创建桌子
+
+  桌子几何体由 mpd/torch_robotics/torch_robotics/environments/
+  env_table_shelf.py:14 创建：
+
+  centers = [(0, 0, 0)]
+  sizes = [(0.56, 0.90, 0.80)]
+
+  也就是一个尺寸为 0.56 × 0.90 × 0.80 m 的箱体。
+
+  在 warehouse 中，桌子先绕 Z 轴旋转 90°，再设置中心位置：
+
+  [0.45, 0.0, -0.40]
+
+  这样桌面上表面刚好位于 z=0，机器人基座也以这个高度作为参考。
+
+  ### 3. 创建大货架
+
+  大货架在 mpd/torch_robotics/torch_robotics/environments/env_table_shelf.py:23
+  中由多个箱体组成：
+
+  - 左右侧板
+  - 后板
+  - 底板
+  - 顶板
+  - 五个中间层板
+
+  整体尺寸大约为：
+
+  宽度：0.80 m
+  深度：0.28 m
+  高度：2.05 m
+
+  随后在 warehouse 中设置：
+
+  position = [0.0, 0.43, -0.80]
+  rotation = 0°
+
+  这里的 0.43 来自：
+
+  0.15 + table_width / 2
+
+  因此大货架位于机器人一侧，与桌子保持约 0.15 m 间隔。
+
+  ### 4. 创建小货架
+
+  小货架直接使用一个箱体近似：
+
+  size = [0.8, 0.28, 1.06]
+  position ≈ [0.4, -0.60, -0.27]
+
+  代码位于 mpd/torch_robotics/torch_robotics/environments/env_warehouse.py:55。
+
+  需要注意，小货架在 MPD 碰撞模型中是一个完整的实心长方体，不包含真实的层板和格
+  口结构；大货架才是由多个板件组合而成。
+
+  ### 5. 固定障碍物与额外障碍物
+
+  基础环境将三个对象放入固定障碍物列表：
+
+  obj_list = [
+      table_obj_field,
+      shelf_obj_field,
+      small_shelf_object_field,
+  ]
+
+  如果子类传入 obj_extra_list，例如 EnvWarehouseExtraObjectsV00，额外障碍物也会
+  应用相同的 Z 轴旋转，但在 EnvBase 中单独保存为额外障碍物。
+
+  固定障碍物正常渲染为灰色，额外障碍物渲染为红色。
+
+  ### 6. 建立工作空间和 SDF
+
+  最后调用 mpd/torch_robotics/torch_robotics/environments/env_base.py:19：
+
+  super().__init__(
+      limits=[[-1, -1, -1], [1.5, 1.0, 1.5]],
+      obj_fixed_list=obj_list,
+  )
+
+  工作空间范围是：
+
+  x: -1.0 ～ 1.5 m
+  y: -1.0 ～ 1.0 m
+  z: -1.0 ～ 1.5 m
+
+  三维环境默认 SDF 网格分辨率是 0.02 m。初始化时会为固定障碍物和额外障碍物分别计
+  算：
+
+  - 每个网格点到最近障碍物的有符号距离
+  - SDF 对空间位置的梯度
+
+  轨迹规划时：
+
+  - SDF 为正：点在障碍物外
+  - SDF 接近 0：靠近障碍物表面
+  - SDF 为负：进入障碍物
+  - 多个障碍物之间取最小 SDF
+
+  另外，代码中的 MultiBoxField 实际被重定义为 MultiRoundedBoxField，箱体边缘带有
+  约 0.001 m 的圆角，使碰撞代价的梯度更平滑，更适合 MPD 的梯度引导优化。
+
+  get_gpmp2_params() 和 get_rrt_connect_params() 只提供规划器默认超参数，不参与
+  环境几何体生成。
+
+
+
+EnvWarehouseExtraObjectsV00 定义在：
+
+  mpd/torch_robotics/torch_robotics/environments/env_warehouse.py:123
+
+  它继承基础仓库环境 EnvWarehouse，额外加入两个长方体障碍物：
+
+  - 位置：[0.85, 0.1, 0.125]，尺寸：[0.1, 0.25, 0.25]
+  - 位置：[0.6, -0.15, 0.25]，尺寸：[0.25, 0.25, 0.5]
+
+  该类在 mpd/torch_robotics/torch_robotics/environments/__init__.py:15 中导出。
+
+  推理配置通过：
+
+  env_id_replace: 'EnvWarehouseExtraObjectsV00'
+
+  选择这个环境。loaders.py 使用类名动态加载：
+
+  env_class = getattr(
+      environments,
+      env_id_replace if env_id_replace else dataset_args["env_id"],
+  )
+
+  位置在 mpd/utils/loaders.py:63。
+
+  因此它不是单独的 IsaacLab 资产，而是 MPD 中定义的碰撞环境；推理时会转换为
+  scene payload，再在 IsaacLab 中生成对应的 box 障碍物。
+
+
+
+ 需要先区分三种“采样”：
+
+  1. 数据生成时采样起点、终点，使用 region。
+  2. 训练时从已生成的 HDF5 数据集中取 batch，不再读取 region。
+  3. inference 时生成 100 条候选轨迹，但它们共享同一组起终点；默认起终点来自训练
+     集或验证集，也不会重新读取 region。
+
+  Region 位置
+
+  Warehouse 的 region 定义在：
+
+  data_generation_cfgs/EnvWarehouse-RobotPanda_v01.yaml:1
+
+  当前有三个区域：
+
+   Region       含义          大致位置
+  ━━━━━━━━━━━  ━━━━━━━━━━━━  ━━━━━━━━━━━━━━━
+   region_00    小货架上方    y=-0.75~-0.45
+  ───────────  ────────────  ───────────────
+   region_01    大货架层位    y=0.45~0.60
+  ───────────  ────────────  ───────────────
+   region_02    桌面上方      y=-0.25~0.25
+
+  例如：
+
+  region_02:
+    translation:
+      x: [[0.30, 0.80]]
+      y: [[-0.25, 0.25]]
+      z: [[0.15, 0.25]]
+    rotation:
+      base: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+      x: [[-15., 15.]]
+      y: [[-15., 15.]]
+      z: [[-90., 90.]]
+
+  其中：
+
+  - translation：末端位置在机器人基坐标系下的范围，单位为米。
+  - base：末端的基础旋转矩阵。
+  - rotation.x/y/z：在基础姿态上增加的随机欧拉角，单位为度。
+  - 一个轴可以配置多个区间，例如大货架的三个 z 区间代表三个层位。
+  - 多个区间是等概率选择，不按区间长度加权。
+
+  采样代码在 scripts/generate_data/generate_trajectories.py:300。
+
+  它先从位置区间均匀采样，再计算：
+
+  rotation_target = rotation_base * rotation_random_around_base
+
+  随后通过 IK 将末端位姿转换为无碰撞关节状态。
+
+  当前起终点规则
+
+  配置中目前是：
+
+  move_between_pose_regions: True
+
+  但这不表示每次都在两个 region 之间运动。实际代码在 scripts/generate_data/
+  generate_trajectories.py:348：
+
+  if move_between_pose_regions and random.choice([True, False]):
+
+  因此大约：
+
+  - 50%：从两个不同 region 分别采样起点和终点。
+  - 50%：只从某个 region 采样终点，起点为随机无碰撞关节状态。
+
+  两个 region 之间也是随机选取，当前配置不能指定固定的 region_00 -> region_02 方
+  向。
+
+  只限制目标区域
+
+  例如只希望目标位于桌面上方，可以新建配置：
+
+  env_id: 'EnvWarehouse'
+  robot_id: 'RobotPanda'
+  move_between_pose_regions: False
+
+  pose_regions:
+    table_goal:
+      translation:
+        x: [[0.40, 0.65]]
+        y: [[-0.15, 0.15]]
+        z: [[0.18, 0.22]]
+      rotation:
+        base: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+        x: [[-5., 5.]]
+        y: [[-5., 5.]]
+        z: [[-20., 20.]]
+
+  此时目标位于桌面 region，起点仍是随机无碰撞关节状态。
+
+  指定起点 Region 和终点 Region
+
+  当前代码需要略微扩展。建议在 YAML 中增加：
+
+  start_region: small_shelf_start
+  goal_region: table_goal
+
+  然后在 get_random_ee_pose_from_cfg_file() 中优先处理：
+
+  if "start_region" in cfg_ee and "goal_region" in cfg_ee:
+      ee_pose_start = get_random_pose_from_region(
+          cfg_ee["pose_regions"][cfg_ee["start_region"]]
+      )
+      ee_pose_goal = get_random_pose_from_region(
+          cfg_ee["pose_regions"][cfg_ee["goal_region"]]
+      )
+
+  这样才能保证固定采样方向，例如：
+
+  小货架上方 -> 桌面上方
+  大货架第二层 -> 放置区域
+
+  如果需要固定位置，可以把上下界写成相同值：
+
+  x: [[0.50, 0.50]]
+  y: [[-0.10, -0.10]]
+  z: [[0.20, 0.20]]
+
+  旋转扰动也设为：
+
+  x: [[0.0, 0.0]]
+  y: [[0.0, 0.0]]
+  z: [[0.0, 0.0]]
+
+  不过固定末端位姿仍可能因为 IK 无解、自碰撞或环境碰撞而被跳过。
+
+  Inference 指定精确起终点
+
+  Inference 默认设置在 scripts/inference/inference.py:419：
+
+  selection_start_goal = "validation"
+
+  可选：
+
+  training   -> 从训练集随机选择
+  validation -> 从验证集随机选择
+  YAML路径    -> 使用文件中指定的起终点
+
+  自定义文件格式如下：
+
+  - q_pos_start: [0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.7]
+    q_pos_goal:  [0.3, -0.8, 0.2, -1.8, 0.1, 1.2, 0.5]
+    ee_pose_goal: [1, 0, 0, 0.50,
+                   0, 1, 0, 0.00,
+                   0, 0, 1, 0.25]
+
+  ee_pose_goal 是目标末端位姿的 3×4 矩阵按行展开，共 12 个值。它必须与
+  q_pos_goal 的正向运动学结果一致。
+
+  调用方式：
+
+  python inference.py \
+    --cfg_inference_path ./cfgs/config_EnvWarehouse-RobotPanda-
+    config_file_v01_00.yaml \
+    --selection_start_goal /绝对路径/custom_start_goal.yaml \
+    --n_start_goal_states 1 \
+    --device cuda:0
+
+  需要注意，修改 data_generation_cfgs 中的 region 不会改变已有公开数据或现有模
+  型。若希望模型真正学习新的起终点分布，需要重新生成轨迹、合并为 HDF5，再使用新
+  数据集训练；如果只是测试某个精确任务，使用 --selection_start_goal 即可。
+
+
+这个项目没有独立的“推理集”文件。完整 HDF5 数据集在训练启动时按 task_id 划分为
+  训练集和验证集，推理默认把验证集当作测试/推理任务集使用。
+
+  完整数据集
+
+  数据根目录由 mpd/paths.py:9 定义：
+
+  DATASET_BASE_DIR = <项目根目录>/data_trajectories
+
+  当前 data_trajectories 是软链接：
+
+  data_trajectories -> data_public/data_trajectories
+
+  Warehouse 完整数据位于：
+
+  data_public/data_trajectories/
+  └── EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/
+      ├── args.yaml
+      ├── dataset_merged_doubled.hdf5
+      └── dataset_merged_doubled_reload-*.pickle
+
+  训练使用哪个数据，由 scripts/train/train.py:31 的参数确定：
+
+  dataset_subdir = "EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-
+  RRTConnect"
+  dataset_file_merged = "dataset_merged_doubled.hdf5"
+
+  dataset_merged_doubled.hdf5 是原始轨迹和反向轨迹合并后的完整数据，不等于训练
+  集。
+
+  训练集和验证集划分
+
+  划分逻辑在 mpd/utils/loaders.py:166。
+
+  默认验证集比例为：
+
+  val_set_size_fraction = 0.025
+
+  即：
+
+  训练集：约 97.5%
+  验证集：约 2.5%
+
+  代码不是直接随机切分每条轨迹，而是先按 task_id 划分：
+
+  task_ids = list(full_dataset.map_task_id_to_control_points_id.keys())
+
+  train_task_ids, val_task_ids = train_test_split(
+      task_ids,
+      test_size=ceil(len(task_ids) * 0.025),
+  )
+
+  然后将同一个 task_id 下的全部轨迹放进同一个 subset。因此，同一组起点和终点对应
+  的多条规划轨迹不会同时出现在训练集和验证集中，可以避免任务泄漏。
+
+  最终创建：
+
+  train_subset = torch.utils.data.Subset(full_dataset, train_subset_indices)
+  val_subset = torch.utils.data.Subset(full_dataset, val_subset_indices)
+
+  两个 DataLoader 都会在各自 subset 内进行 shuffle。
+
+  索引保存位置
+
+  训练时 save_indices=True，划分结果保存在模型目录：
+
+  模型目录/
+  ├── train_subset_indices.pt
+  ├── val_subset_indices.pt
+  ├── args.yaml
+  └── checkpoints/
+
+  例如当前本地 Warehouse 模型：
+
+  scripts/train/logs/ware_simp/1726484688/
+  ├── train_subset_indices.pt
+  └── val_subset_indices.pt
+
+  这一模型当前保存了：
+
+  训练样本索引：14342
+  验证样本索引：368
+
+  这些是经过 B-spline 拟合和无效轨迹过滤后的样本索引，不一定等于原始 HDF5 的任务
+  数量。
+
+  推理集如何定义
+
+  Inference 在 scripts/inference/inference.py:498 中先读取模型目录的 args.yaml，
+  然后设置：
+
+  load_indices=True
+
+  因此它会从该模型目录重新加载：
+
+  train_subset_indices.pt
+  val_subset_indices.pt
+
+  不会重新随机划分，保证推理使用的验证集与训练时完全一致。
+
+  默认参数是：
+
+  selection_start_goal = "validation"
+
+  所以默认流程为：
+
+  完整 HDF5
+    -> 加载模型保存的 val_subset_indices.pt
+    -> 从 validation subset 随机选一组起点终点
+    -> 针对这组起终点生成 100 条候选轨迹
+
+  这里的 100 条候选轨迹不是 100 个验证样本，而是同一组起终点下，由扩散模型生成的
+  100 个不同候选。
+
+  可以在终端切换：
+
+  # 使用验证集，默认
+  --selection_start_goal validation
+
+  # 使用训练集任务
+  --selection_start_goal training
+
+  # 使用自行指定的起终点
+  --selection_start_goal /绝对路径/custom_start_goal.yaml
+
+  因此项目中的对应关系是：
+
+   名称              定义方式                      用途
+  ━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   完整数据集        dataset_merged_doubled.hdf    全部规划轨迹
+                     5
+  ────────────────  ────────────────────────────  ──────────────────────────────
+   训练集            train_subset_indices.pt       更新模型参数
+  ────────────────  ────────────────────────────  ──────────────────────────────
+   验证集            val_subset_indices.pt         训练期间验证、默认 inference
+  ────────────────  ────────────────────────────  ──────────────────────────────
+   独立测试集        当前没有                      需要自行生成或指定
+  ────────────────  ────────────────────────────  ──────────────────────────────
+   自定义推理任务    selection_start_goal YAML     指定真机或特定起终点
+
+  EnvWarehouseExtraObjectsV00 或环境旋转也不会产生新的推理集。它们仍使用原验证集
+  中的起终点，只是在改变后的环境中重新检查起终点是否碰撞，不合法的样本会被跳过。
+
+
+
+
+  start_goal_source 主要在推理配置 YAML 中填写：
+
+  scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-
+  config_file_v01_00.yaml:19
+
+  start_goal_source: dataset
+
+  四种模式分别如下：
+
+  - dataset：从原训练/验证数据集取起终点。具体使用 training 还是 validation，由
+    scripts/inference/inference.py:436 控制，例如：
+
+    python inference.py --selection_start_goal validation
+
+  - regions：从自定义区域 YAML 采样：
+
+    start_goal_source: regions
+    start_goal_regions_path: start_goal_regions/EnvWarehouse-RobotPanda-
+    regions.yaml
+    区域填写在 scripts/inference/cfgs/start_goal_regions/EnvWarehouse-
+    RobotPanda-regions.yaml:9。
+
+  - states_file：读取已经写好的具体关节起终点。当前代码使用 selection_start_goal
+    作为文件路径：
+
+    start_goal_source: states_file
+
+    python inference.py --selection_start_goal /path/to/start_goal_states.yaml
+
+  - auto：自动判断。selection_start_goal 为 training/validation 时使用 dataset；
+    否则把它当作状态 YAML 路径，使用 states_file，逻辑见 mpd/inference/
+    inference.py:55。
+
+  当前 Warehouse 配置明确设置为 dataset，所以类里的默认值 auto 不会生效。要自定
+  义 region，直接将其改为：
+
+  start_goal_source: regions
+
+
+
+
+
+› 原yaml里3个rotationbase矩阵代表什么
+
+
+• 这三个 rotation.base 是末端执行器相对于机器人基座坐标系的基础旋转矩阵：
+
+  R_base = [ EE局部x轴在世界系中的方向,
+             EE局部y轴在世界系中的方向,
+             EE局部z轴在世界系中的方向 ]
+
+  严格来说，矩阵的三列分别表示末端局部 x/y/z 轴在机器人基座坐标系中的方向。
+
+  ### Region 00：小货架
+
+  base: [[0, 0, 1],
+         [0, 1, 0],
+         [-1, 0, 0]]
+
+  对应：
+
+  EE x轴 -> 世界 -Z
+  EE y轴 -> 世界 +Y
+  EE z轴 -> 世界 +X
+
+  末端不是竖直向下，而是侧向朝向 +X，适合从侧面或小货架方向伸入。
+
+  ### Region 01：大货架
+
+  base: [[0, -1, 0],
+         [0,  0, 1],
+         [-1, 0, 0]]
+
+  对应：
+
+  EE x轴 -> 世界 -Z
+  EE y轴 -> 世界 -X
+  EE z轴 -> 世界 +Y
+
+  末端主要朝向 +Y，对应位于机器人 +Y 方向的大货架。
+
+  ### Region 02：桌面
+
+  base: [[-1, 0,  0],
+         [ 0, 1,  0],
+         [ 0, 0, -1]]
+
+  对应：
+
+  EE x轴 -> 世界 -X
+  EE y轴 -> 世界 +Y
+  EE z轴 -> 世界 -Z
+
+  末端 z 轴竖直向下，适合从桌面上方向下抓取或放置。
+
+  最终姿态计算近似为：
+
+  R_target = R_env_z @ R_base @ R_random_xyz
+
+  其中：
+
+  - R_base：上述基础抓取方向。
+  - R_random_xyz：YAML 中 x/y/z 角度范围产生的小扰动。
+  - R_env_z：当前 rotation_z_axis_deg，在 rotate_with_environment: true 时应用。
+
+  所以修改区域位置时，必须同步选择符合目标表面的 rotation.base。桌面位置通常使用
+  region_02 的矩阵，不能只复制平移范围而保留小货架的姿态。
+
+
+
+
+
+
+
+
+当前仓库已经具备基础的“抓取物体随机器人一起规划”能力。
+
+  直接启用
+
+  在 Warehouse 推理配置 scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-
+  config_file_v01_00.yaml:26 中设置：
+
+  grasped_object:
+    name: GraspedObjectBox
+    attached_to_frame: panda_hand
+    object_collision_margin: 0.02
+
+  现有 GraspedObjectBox 是固定的 0.05 x 0.05 x 0.10 m 箱体，中心相对 panda_hand
+  位于 [0, 0, 0.11]，定义在 mpd/torch_robotics/torch_robotics/environments/
+  grasped_objects.py:39。
+
+  MPD 中如何计算
+
+  物体会作为固定 link 挂到 panda_hand：
+
+  world_T_object(q) = world_T_hand(q) @ hand_T_object
+
+  随后物体表面采样点被表示为碰撞球，和机械臂、夹爪碰撞球一起计算：
+
+  Cobs = sum ReLU(
+      collision_sphere_radius
+      + obstacle_margin
+      - SDF_environment(sphere_center(q))
+  )
+
+  梯度通过：
+
+  dC/dq = Jacobian(sphere_center)^T * gradient(SDF)
+
+  回传到 B-spline 控制点。相关实现位于：
+
+  - 附着物体 URDF 与碰撞球：mpd/torch_robotics/torch_robotics/robots/
+    robot_base.py:33
+
+  - 环境碰撞 cost：mpd/inference/cost_guides.py:599
+  - 夹爪碰撞球：mpd/torch_robotics/torch_robotics/data/configs/panda/
+    panda_sphere_config.yaml:47
+
+  PyBullet/OMPL 使用带实际箱体 collision geometry 的临时 URDF，因此起终点 IK 和
+  预筛选也会考虑被抓物体。
+
+  给定任意物体
+
+  当前 GraspedObjectBox 的尺寸和抓取变换是硬编码的。要支持任意物体，应将其扩展为
+  接收：
+
+  grasped_object:
+    name: GraspedObjectBox
+    attached_to_frame: panda_hand
+    size: [0.08, 0.06, 0.20]
+    pos: [0.0, 0.0, 0.16]
+    ori: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    collision_sphere_radius: 0.02
+    collision_point_spacing: 0.025
+
+  其中：
+
+  - size：物体碰撞盒尺寸。
+  - pos/ori：抓取后物体相对 panda_hand 的固定变换。
+  - 碰撞点应按物体体积或表面规则采样，不能继续只使用当前固定的 14 个点。
+  - object_collision_margin 当前实际作为每个物体碰撞球的半径，并不是单纯的额外安
+    全距离。
+
+  - 额外安全距离仍由 obstacle_cutoff_margin_extra 控制。
+
+  还需补齐的部分
+
+  现有 Torch 自碰撞配置只包含原机械臂 link 对，没有自动加入“物体碰撞球与机械
+  臂”的碰撞对。因此完整实现还应加入：
+
+  物体 vs panda_link1...panda_link6
+
+  并排除允许接触的：
+
+  物体 vs panda_hand / fingers
+
+  否则 MPD 能处理“物体与环境”，但不能完整引导“物体不要撞到机械臂自身”。PyBullet
+  可能检测到这类碰撞，但它只负责筛选，不会给 MPD 提供梯度。
+
+  另外，抓取完成后必须把该物体从环境障碍物/SDF 中移除，再作为附着物加入机器人，
+  否则初始状态会被判定为“物体与自身环境模型碰撞”。如果目标给的是物体目标位姿，还
+  要转换为手爪目标位姿：
+
+  world_T_hand_goal = world_T_object_goal @ inverse(hand_T_object)
+
+
+这五个类都是“已经完整接入 MPD 训练流水线”的机器人，但复杂程度不同。
+
+   类        RobotPointMass2D
+   状态维度  2
+   实际含义  平面中的圆形质点，q=[x,y]
+   资产      2个平移关节 URDF + 1个碰撞球
+  ──────────────────────────────────────────────────────────────────────────────
+   类        RobotPointMass3D
+   状态维度  3
+   实际含义  三维空间球形质点，q=[x,y,z]
+   资产      3个平移关节 URDF + 1个碰撞球
+  ──────────────────────────────────────────────────────────────────────────────
+   类        RobotPlanar2Link
+   状态维度  2
+   实际含义  平面二连杆机械臂
+   资产      2个旋转关节 URDF + 碰撞球 + 关节限制
+  ──────────────────────────────────────────────────────────────────────────────
+   类        RobotPlanar4Link
+   状态维度  4
+   实际含义  平面四连杆机械臂
+   资产      4个旋转关节 URDF + 碰撞球 + 关节限制
+  ──────────────────────────────────────────────────────────────────────────────
+   类        RobotPanda
+   状态维度  7
+   实际含义  Franka Panda，固定夹爪
+   资产      完整 URDF/mesh + 碰撞球 + 自碰撞配置 + 关节限制
+
+  质点定义在 mpd/torch_robotics/torch_robotics/robots/robot_point_mass.py:14，平
+  面机械臂在 mpd/torch_robotics/torch_robotics/robots/robot_planar_link.py:13，
+  Panda 在 mpd/torch_robotics/torch_robotics/robots/robot_panda.py:14。
+
+  ## 现有五类
+
+  它们可以直接开始对应的数据生成和训练，因为已经具备：
+
+  Robot class
+  + URDF
+  + 碰撞球配置
+  + 正向运动学/Jacobian
+  + 末端link定义
+  + 环境和数据生成配置
+
+  但仍然要使用匹配的数据集和训练配置，不能用 Panda 数据训练 Planar4Link。
+
+  ## 其他URDF资产
+
+  data/urdf/robots 还包含：
+
+  KUKA iiwa7
+  UR10
+  Habitat Stretch
+  TIAGo
+  Allegro Hand
+  Shadow Hand
+
+  这些不能只写一个 class 就立即训练。多数只有 URDF/mesh，缺少 MPD 必需的碰撞和训
+  练配置。
+
+  尤其 RobotBase 强制要求：
+
+  urdf_robot_file
+  collision_spheres_file_path
+  link_name_ee
+
+  见 mpd/torch_robotics/torch_robotics/robots/robot_base.py:171。
+
+  ## 新机器人需要补齐
+
+  以 RobotKukaIiwa 为例：
+
+  class RobotKukaIiwa(RobotBase):
+      link_name_ee = "iiwa_link_7"
+
+      def __init__(self, tensor_args, **kwargs):
+          super().__init__(
+              urdf_robot_file=... / "kuka_iiwa/urdf/iiwa7.urdf",
+              collision_spheres_file_path=... / "kuka_iiwa/iiwa_spheres.yaml",
+              joint_limits_file_path=... / "kuka_iiwa/joint_limits.yaml",
+              link_name_ee=self.link_name_ee,
+              task_space_dim=3,
+              tensor_args=tensor_args,
+              **kwargs,
+          )
+
+  此外必须实现抽象方法：
+
+  render()
+  render_trajectories()
+
+  并在 mpd/torch_robotics/torch_robotics/robots/__init__.py:1 注册。
+
+  ### 碰撞球配置
+
+  这是 URDF 之外最重要的文件：
+
+  iiwa_link_1:
+    - [0.0, 0.0, 0.1, 0.06]
+
+  iiwa_link_2:
+    - [0.0, 0.0, 0.15, 0.07]
+
+  self_collision:
+    iiwa_link_1: [iiwa_link_4, iiwa_link_5, iiwa_link_6, iiwa_link_7]
+
+  前3个数字是球心在 link 坐标系的位置，最后一个是半径。Panda 示例见 mpd/
+  torch_robotics/torch_robotics/data/configs/panda/panda_sphere_config.yaml:1。
+
+  ### 关节限制
+
+  URDF 提供位置范围，但 MPD 的速度、加速度过滤来自额外 YAML：
+
+  iiwa_joint_1:
+    qmin: -2.967
+    qmax: 2.967
+    qdot_max: 1.7
+    qddot_max: 8.0
+
+  如果不提供，dq_max 和 ddq_max 会是 None，训练和过滤不会检查速度、加速度，mpd/
+  torch_robotics/torch_robotics/robots/robot_base.py:346。
+
+  ## 哪个最容易新增
+
+  推荐顺序：
+
+  1. KUKA iiwa7：完整 URDF/mesh、固定基座、7自由度，代码中已有可微运动学
+     wrapper，最接近 Panda。
+
+  2. UR10：完整 URDF/mesh、6自由度，也已有运动学 wrapper。
+  3. TIAGo/Stretch：移动底盘、多运动链、连续关节和大量非规划关节，需要先制作裁剪
+     URDF。
+
+  4. Allegro/Shadow Hand：高自由度、强自碰撞，数据生成和碰撞建模工作量最大。
+
+  KUKA/UR10 仍然需要重新生成数据并训练新模型。即使 iiwa7 与 Panda 都是7自由度，
+  也不能直接复用 Panda checkpoint。
+
+  完整流程是：
+
+  检查/裁剪URDF
+  → 创建碰撞球和自碰撞配置
+  → 创建关节限制配置
+  → 实现并注册Robot类
+  → 验证FK/Jacobian/PyBullet加载
+  → 新建环境与起终点采样配置
+  → OMPL生成新数据集
+  → 训练新MPD模型
+  → 创建新inference配置
+
+如果只用传一次完整的轨迹给下层，是不是只要运行一次plan_trajectory就行了？讲一
+  下当前配置下plan_trajectory的运行流程
+
+
+• 对，一次性下发完整轨迹时通常只需调用一次；我再按当前 Warehouse/Panda 配置把
+  plan_trajectory() 从输入、扩散采样、引导、筛选到选 best 的实际调用链逐段对应出
+  来。
+
+• 流程核对时发现一个与当前模型配置有关的细节：它是 context_ee_goal_pose=true，终
+  点关节角由模型生成，不应强行覆盖成某个 IK 的 q_pos_goal。我先修正刚加入的边界
+  实现，保持原有末端位姿条件语义，再继续说明流程。
+
+• 回归测试抓到了批量候选下的广播问题：每条候选有不同关节终点，而目标速度是共享向
+  量。我修正张量广播后重跑。
+
+• 是。如果目标、环境在执行期间不变化，而且下层一次接收完整 JointTrajectory，那么
+  每次任务只需要调用一次 plan_trajectory()。
+
+  但准确说是“一次成功规划调用”：如果没有有效轨迹、机器人状态已过期、环境变化或执
+  行异常，需要再次调用。
+
+  ## 调用关系
+
+  程序启动
+  → 创建 GenerativeOptimizationPlanner
+  → 加载模型、cost、CUDA warmup（只做一次）
+
+  收到任务
+  → 获取当前 q/dq/ddq
+  → plan_trajectory()（调用一次）
+  → 得到 q_trajs_pos_best
+  → 转成 JointTrajectory
+  → FollowJointTrajectory 下发一次
+
+  不要每次重新运行完整的 scripts/inference/inference.py，否则会重复加载模型、
+  warmup、生成报告和保存结果。
+
+  ## 当前流程
+
+  1. 准备边界状态
+
+     将输入转成 GPU tensor，并设置：
+
+     q_pos_start / q_vel_start / q_acc_start
+     q_pos_goal  / q_vel_goal  / q_acc_goal
+     EE_pose_goal
+
+     未传速度和加速度时自动使用零值，mpd/inference/inference.py:581。
+
+  2. 构造模型条件
+
+     当前训练模型配置是：
+
+     context_qs = true
+     context_ee_goal_pose = true
+     B-spline degree = 5
+     desired control points = 18
+
+     起终点关节状态和末端目标位姿被归一化并作为扩散模型条件，mpd/inference/
+     inference.py:630。
+
+  3. 生成100条候选
+
+     当前配置：
+
+     planner_alg: mpd
+     n_trajectory_samples: 100
+     diffusion_sampling_method: ddim
+     ddim_sampling_timesteps: 25
+     ddim_eta: 0.5
+
+     DDIM 从随机噪声开始，同时生成100组归一化 B-spline 控制点，mpd/models/
+     diffusion_models/diffusion_model_base.py:269。
+
+  4. 扩散去噪和代价引导
+
+     执行25个 DDIM 去噪步骤。最后约5个步骤启用 motion-planning cost guide，每个
+     步骤做4次引导。
+
+     当前 cost 包括：
+      - 环境碰撞，权重10。
+      - 自碰撞，权重1。
+      - 关节限制，权重1。
+      - 末端目标误差，权重1。
+      - 速度代价，权重0.01。
+      - 加速度代价，权重0.001。
+
+     配置见 scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-
+     config_file_v01_00.yaml:45。
+
+  5. B-spline重建
+
+     控制点反归一化后，加入传入的首尾位置、速度和加速度边界，然后插值成：
+
+     100条候选 × 128个时间点 × 7个关节
+     trajectory_duration = 10秒
+     phase_time = Linear
+
+     也就是大致每 10 / 127 ≈ 0.079s 一个轨迹点。
+
+  6. 有效性过滤
+
+     对最终100条轨迹检查：
+      - 环境碰撞。
+      - 自碰撞。
+      - 关节位置限制。
+      - 关节速度限制。
+      - 关节加速度限制。
+
+     过滤发生在 mpd/inference/inference.py:798。如果全部无效，q_trajs_pos_best
+     为 None，不能下发，需要保持/停止并重试规划。
+
+  7. 选择最佳轨迹
+
+     这里有个容易忽略的细节：虽然配置写的是：
+
+     best_trajectory_selection: shortest_path_length
+
+     但当前模型 context_ee_goal_pose=true，代码会优先选择末端位置误差最小的有效
+     轨迹，而不是最短路径，mpd/inference/inference.py:861。
+
+  8. 输出给控制器
+
+     主要使用：
+
+     result.q_trajs_pos_best   # [128, 7]
+     result.q_trajs_vel_best   # [128, 7]
+     result.q_trajs_acc_best   # [128, 7]
+     result.timesteps          # [128]
+
+     将它们转换为一条 trajectory_msgs/JointTrajectory，通过
+     FollowJointTrajectory action 下发一次即可。
+
+  适合只规划一次的前提是：规划时机器人状态足够新、10秒执行期间环境静态。只要存在
+  人员、动态障碍物或明显跟踪误差，就不应完全依赖这一次10秒轨迹，需要取消并重新调
+  用 plan_trajectory()。
+
+
+plan_trajectory的output results_ns是什么格式
+
+
+• 我把 plan_trajectory() 最终写入的所有字段和当前 Panda 配置下的 tensor shape 对
+  齐一下，同时说明 results_ns 为什么用 DotMap 而不是普通 tensor。
+
+• results_ns 是一个 DotMap，本质上类似支持属性访问的有序字典：
+
+  result.q_trajs_pos_best
+  # 等价于
+  result["q_trajs_pos_best"]
+
+  当前配置下：
+
+  I = 26   # 初始噪声 + 25个DDIM步骤
+  B = 100  # 候选轨迹数
+  C = 16   # 模型生成的可学习B-spline控制点数
+  H = 128  # 离散轨迹点数
+  D = 7    # Panda关节数
+  V = 有效轨迹数量，0 <= V <= 100
+
+  主要结构为：
+
+  DotMap(
+      # 输入边界
+      q_pos_start=Tensor[7],
+      q_pos_goal=Tensor[7],
+      ee_pose_goal=Tensor[3, 4],
+      q_vel_start=Tensor[7],
+      q_vel_goal=Tensor[7],
+      q_acc_start=Tensor[7],
+      q_acc_goal=Tensor[7],
+
+      # DDIM每一步的控制点
+      control_points_iters=Tensor[26, 100, 16, 7],
+
+      # DDIM每一步重建出的128点轨迹
+      q_trajs_pos_iters=Tensor[26, 100, 128, 7],
+      q_trajs_vel_iters=Tensor[26, 100, 128, 7],
+      q_trajs_acc_iters=Tensor[26, 100, 128, 7],
+
+      # 当前配置下通常为None
+      control_points_recon_iters=None,
+      q_trajs_pos_recon_iters=None,
+      q_trajs_vel_recon_iters=None,
+      q_trajs_acc_recon_iters=None,
+
+      # 最后一个DDIM步骤的100条候选
+      control_points_iter_0=Tensor[100, 16, 7],
+      q_trajs_pos_iter_0=Tensor[100, 128, 7],
+      q_trajs_vel_iter_0=Tensor[100, 128, 7],
+      q_trajs_acc_iter_0=Tensor[100, 128, 7],
+
+      # 有效性诊断
+      collision_waypoint_mask=BoolTensor[100, 128],
+      collision_trajectory_mask=BoolTensor[100],
+      first_collision_steps=LongTensor[100],
+      joint_position_violation_mask=BoolTensor[100],
+      joint_velocity_violation_mask=BoolTensor[100],
+      joint_acceleration_violation_mask=BoolTensor[100],
+      valid_trajectory_mask=BoolTensor[100],
+
+      # 过滤后的V条轨迹
+      control_points_valid=Tensor[V, 16, 7],
+      q_trajs_pos_valid=Tensor[V, 128, 7],
+      q_trajs_vel_valid=Tensor[V, 128, 7],
+      q_trajs_acc_valid=Tensor[V, 128, 7],
+
+      # 最终选择的一条轨迹；无有效轨迹时全部为None
+      control_points_best=Tensor[16, 7] | None,
+      q_trajs_pos_best=Tensor[128, 7] | None,
+      q_trajs_vel_best=Tensor[128, 7] | None,
+      q_trajs_acc_best=Tensor[128, 7] | None,
+
+      timesteps=Tensor[128],
+
+      # 时间统计，单位秒
+      t_generator=float,
+      t_guide=float,
+      t_inference_total=float,
+  )
+
+  字段最终集中写入位置在 mpd/inference/inference.py:896。
+
+  在线使用只需要关心：
+
+  if result.q_trajs_pos_best is None:
+      # 没有安全轨迹：不要下发
+      handle_planning_failure()
+  else:
+      positions = result.q_trajs_pos_best.detach().cpu()
+      velocities = result.q_trajs_vel_best.detach().cpu()
+      accelerations = result.q_trajs_acc_best.detach().cpu()
+      times = result.timesteps.detach().cpu()
+
+  当前调用最好显式初始化计时字段：
+
+  from dotmap import DotMap
+
+  results_ns = DotMap(t_generator=0.0, t_guide=0.0)
+
+  result = planner.plan_trajectory(
+      q_pos_start=q,
+      q_pos_goal=q_goal,
+      EE_pose_goal=ee_goal,
+      results_ns=results_ns,
+  )
+
+  虽然函数允许 results_ns=None，mpd/inference/inference.py:575，但当前 DDIM 代码
+  会对 t_generator、t_guide 执行 +=，因此显式初始化更安全。
+
+
+
+
+
+
+Joint Space → EE Pose：FK
+主要接口是：
+planning_task.robot.get_EE_pose(q)
+定义在 [robot_base.py (line 386)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/torch_robotics/torch_robotics/robots/robot_base.py:386)。
+底层使用 TorchKin：
+pose = self.fk_ee(q)[0]
+输出末端齐次变换：
+\[
+q\in\mathbb R^7
+\rightarrow
+{}^WT_{EE}\in SE(3)
+\]PyBullet 侧也有一个 FK 接口：
+pbompl_interface.get_ee_pose(q)
+位于 [pb_ompl.py (line 140)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/deps/pybullet_ompl/pb_ompl/pb_ompl.py:140)。
+EE Pose → Joint Space：IK
+接口是：
+pbompl_interface.get_state_not_in_collision(
+    ee_pose_target=ee_pose
+)
+它先调用：
+self.robot.run_ik(ee_pose_target)
+然后检查：
+IK 是否成功。
+关节是否越界。
+结果是否碰撞。
+入口在 [pb_ompl.py (line 631)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/deps/pybullet_ompl/pb_ompl/pb_ompl.py:631)。
+底层 IK 不是 TorchKin/Theseus，而是 Pinocchio 的阻尼雅可比迭代：
+\[
+\Delta q
+=
+-J^\mathsf T
+(JJ^\mathsf T+\lambda I)^{-1}e
+\]实现见 [pb_ompl.py (line 162)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/deps/pybullet_ompl/pb_ompl/pb_ompl.py:162)。
+训练流程有没有使用
+数据生成阶段：FK 和 IK 都使用
+如果数据生成配置提供的是 EE 起点/目标位姿，则通过 IK 得到关节状态：
+q_pos_goal = get_state_not_in_collision(
+    ee_pose_target=ee_pose_goal
+)
+见 [generate_trajectories.py (line 185)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/generate_data/generate_trajectories.py:185)。
+如果要为相同 EE pose 生成多个冗余关节解，也会重复运行 IK。然后 RRTConnect 在 joint space 中规划路径。
+训练数据预处理：使用 FK
+加载轨迹后，如果没有直接提供 EE goal pose，会从关节终点计算：
+ee_pose_goal = robot.get_EE_pose(q_goal)
+见 [trajectories_dataset_bspline.py (line 325)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/datasets/trajectories_dataset_bspline.py:325)。
+这个 EE pose 随后作为 diffusion context。
+Diffusion 训练本身：不运行 FK/IK
+Temporal U-Net 的训练 forward 只接收：
+带噪 B 样条控制点。
+diffusion timestep。
+起点/目标 context embedding。
+训练 loss 不通过 FK 或 IK，也不计算末端 pose loss。它只预测加入控制点的高斯噪声。
+所以：
+数据生成/预处理：使用 FK、IK
+Diffusion loss：不使用 FK、IK
+推理流程有没有使用
+FK：大量使用
+FK 在推理中用于：
+将所有 B 样条 waypoint 转为连杆和末端位姿。
+碰撞 SDF cost。
+EE goal cost。
+末端误差指标。
+将 joint goal 转为 EE goal context。
+特别是 cost guide 每次都调用 TorchKin 的 FK 和 Jacobian。
+当前运行时接口要求用户提供 q_pos_goal，然后自动计算：
+ee_pose_goal = planning_task.robot.get_EE_pose(q_pos_goal)
+见 [infer_once.py (line 523)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/runtime/infer_once.py:523)。
+IK：只在部分推理入口使用
+当推理配置使用 EE pose region 采样起终点时：
+q_pos_start = self._solve_region_ik(ee_pose_start)
+q_pos_goal = self._solve_region_ik(ee_pose_goal)
+对应 [inference.py (line 194)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/inference/inference.py:194)。
+但以下流程不会在 planning 内部运行 IK：
+从数据集读取已有 q_start/q_goal。
+scripts/runtime/infer_once.py 接收已有 q_pos_goal。
+DDIM cost guidance。
+EE goal guidance 不是先做 IK，再规划到 IK 解；它直接用：
+\[
+e=\log(T_{\rm goal}T_{\rm current}^{-1})
+\]通过末端雅可比将 pose error 转为控制点梯度。
+总结：
+阶段	Joint→EE FK	EE→Joint IK
+数据生成	使用	使用
+数据预处理	使用	通常不使用
+Diffusion loss	不使用	不使用
+Cost-guided inference	大量使用	不使用
+Region 起终点采样	用于验证	使用
+infer_once.py	使用	不使用
+
+所以仓库具备双向转换能力，但当前 diffusion 网络本身始终在 joint-space B 样条控制点上训练和采样；FK/IK 属于网络外部的几何与数据准备模块。

@@ -1,0 +1,8 @@
+schema: mpd_warehouse_extra_boxes
+schema_version: 1
+scene_id: EnvWarehouseExtraBoxes
+description: Simple Warehouse baseline without additional obstacles.
+reference_frame: panda_link0_unrotated
+object_name: warehouse-extra-boxes-simple
+
+boxes: []

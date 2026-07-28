@@ -1,0 +1,150 @@
+
+如果要用ros2发送轨迹，过一段时间重新推理，如果用isaaclab backend的话，怎么样
+  可以实现快速的启动的同时保证几个conda环境不引起冲突，不需要保存额外的txt、
+  mp4、png，当前的运行逻辑+提前打开isaaclab可以吗
+
+
+• 当前逻辑不能简单地“提前打开 IsaacLab”就获得加速，因为现在的 IsaacLab evaluator
+  是一次性子进程：
+
+  MPD 写 trajectory.pt
+  -> 启动 IsaacLab 进程
+  -> 创建 SimulationApp 和场景
+  -> 读取一次轨迹
+  -> 写 statistics.json
+  -> 进程退出
+
+  对应 scripts/inference/inference.py:84 和 scripts/isaaclab/
+  evaluate_mpd_trajectories.py:231。手动提前打开 IsaacLab 后，当前 MPD 没有通信
+  接口把新轨迹发送给它。
+
+  ## 推荐架构
+
+  ROS2 / Coordinator
+          |
+          | current joint state / scene
+          v
+  MPD Planner Process
+  mpd-splines-public Conda
+  模型和 SDF 常驻内存
+          |
+          | JointTrajectory / socket
+          v
+  Persistent IsaacLab Executor
+  IsaacLab Python 环境
+  SimulationApp 和场景只初始化一次
+          |
+          | collision / execution feedback
+          v
+  ROS2 Coordinator
+
+  关键是让两个环境运行在独立进程中，不要在同一个 Python 进程里同时导入 MPD、
+  IsaacLab 和 ROS2 包。
+
+  启动方式类似：
+
+  /home/eric/anaconda3/envs/mpd-splines-public/bin/python mpd_planner_node.py
+
+  /home/eric/IsaacLab_ori/isaaclab.sh -p isaaclab_executor_node.py
+
+  两个进程只通过 ROS2、Unix socket、ZeroMQ 或共享内存通信，因此 PYTHONPATH、
+  PyTorch、CUDA 和 Conda 依赖不会互相污染。
+
+  如果两个 Conda 环境的 Python 版本与 ROS2 rclpy 不兼容，建议增加第三个系统 ROS2
+  adapter：
+
+  ROS2 adapter
+    <-> Unix socket <-> MPD process
+    <-> Unix socket <-> IsaacLab process
+
+  这样只有 adapter 导入 rclpy。
+
+  ## ROS2 轨迹发送
+
+  真实机器人优先使用：
+
+  control_msgs/action/FollowJointTrajectory
+
+  而不是单纯发布 trajectory_msgs/JointTrajectory topic，因为 action 支持：
+
+  - 执行反馈。
+  - 取消当前轨迹。
+  - 新轨迹抢占。
+  - 控制器返回执行失败原因。
+
+  MPD 只发送 q_trajs_pos_best，不要把全部 q_trajs_pos_valid 发送给真实机器人。
+
+  ## 周期性重新推理
+
+  当前 MPD 一次生成完整轨迹。要过一段时间重新推理，应包装成 receding-horizon：
+
+  1. 读取当前实际 joint state
+  2. 更新环境/SDF/world latent
+  3. MPD 生成完整未来轨迹
+  4. 只执行前 k 个 waypoint 或前 0.5~1.0 秒
+  5. 后台开始下一次 MPD 推理
+  6. 新轨迹准备好后取消/抢占旧轨迹
+  7. 从最新实测 joint state 继续规划
+
+  不能直接使用旧轨迹中“预计执行到的位置”作为新起点，必须使用 /joint_states 或仿
+  真中的实际状态。
+
+  为了避免抢占时速度跳变，新轨迹应约束：
+
+  q_start   = 当前实测位置
+  dq_start  = 当前实测速度
+  ddq_start = 当前估计加速度
+
+  至少需要保证新旧轨迹起点的位置和速度连续。
+
+  ## 快速启动
+
+  常驻进程中只做一次：
+
+  - 加载 MPD checkpoint 和 normalizer。
+  - 构建环境和 SDF。
+  - CUDA/model warmup。
+  - 启动 IsaacLab SimulationApp。
+  - 创建 Panda、障碍物和 contact sensor。
+  - 创建 ROS2 publisher/action client 或本地 socket。
+
+  每次重规划只做：
+
+  更新 q_start/goal/环境
+  -> diffusion inference
+  -> validity filter
+  -> 发送最佳轨迹
+
+  不要重新加载模型、重新启动 IsaacLab 或重新创建场景。
+
+  ## 不保存 txt、mp4、png
+
+  当前配置可以关闭视频和图片：
+
+  isaaclab_replay: false
+  render_joint_space_time_iters: false
+  render_joint_space_env_iters: false
+  render_env_robot_opt_iters: false
+  render_env_robot_trajectories: false
+
+  但目前代码仍会：
+
+  - 写 inference-report-*.txt。
+  - 写 results_single_plan-*.pt。
+  - 当前一次性 IsaacLab evaluator 写 trajectory .pt、statistics .json 和日志。
+
+  要做到纯在线运行，需要增加：
+
+  write_inference_report: false
+  save_results_single_plan: false
+  isaaclab_transport: ros2  # 或 socket
+
+  persistent IsaacLab 模式下直接传内存消息，不再使用：
+
+  isaaclab-trajectories-*.pt
+  isaaclab-statistics-*.json
+  isaaclab-evaluator-*.log
+
+  结论是：保留当前轨迹生成和碰撞检测逻辑可以，但不能保留当前“一次一进程 + 文件通
+  信”的 IsaacLab 启动方式。 最小正确改造是“MPD 常驻 planner + IsaacLab 常驻
+  executor + ROS2/socket 通信 + 可关闭所有落盘输出”。

@@ -24,6 +24,7 @@ start_goal_max_sampling_attempts: 100
 
 #env_id_replace: null
 env_id_replace: 'EnvWarehouseExtraObjectsV00' #额外障碍物
+#extra_boxes_yaml: warehouse/extra_boxes/warehouse_extra_boxes_narrow_020.yaml
 
 grasped_object: null
 #name: GraspedObjectBox

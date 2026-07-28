@@ -1,5 +1,4 @@
 data_public/
-docs/
 Motion_Planning_Diffusion_Learning_and_Adapting_Robot_Motion_Planning_With_Diffusion_Models.pdf
 address_token.txt
 # Byte-compiled / optimized / DLL files
@@ -61,7 +60,7 @@ coverage.xml
 *.pot
 
 # Django stuff:
-*.log
+#*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -134,25 +133,25 @@ dmypy.json
 .pyre/
 
 # pth files
-*.pth
-*.pt
+#*.pth
+#*.pt
 
 .idea
 .idea/*
-logs/*
+#logs/*
 
 **no_add/
 
 *logs
-logs
+#logs
 
-*results
+#*results
 
 
 *wandb
 
 
-*.csv
+#*.csv
 
 *generate_data/2d_pcl
 *generate_data/3d_pcl
@@ -193,7 +192,7 @@ scripts/generate_data/Env*
 
 logs_inference_real_robot*
 
-.*mp4
+#.*mp4
 
 **/scripts/inference/cfgs/tmp/
 
@@ -207,7 +206,7 @@ scripts/plots/planar_4_link/plots/
 scripts/plots/human_demonstrations/EnvWarehouse-RobotPanda_v00_1725546573-20241114T131337Z-001/
 scripts/plots/human_demonstrations/plots_human_demonstrations/
 
-**/*.mp4
+#**/*.mp4
 
 scripts/plots/human_demonstrations/plots_human_demonstrations-mpd-extra_object_box_higher__TRUE/videos-000/*.mp4
 

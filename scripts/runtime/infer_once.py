@@ -29,6 +29,9 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-Ro
 EXPECTED_JOINT_NAMES = tuple(f"panda_joint{index}" for index in range(1, 8))
 EXPECTED_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 1
+DEFAULT_REQUEST_ID = "diffusion_planner_example"
+DEFAULT_SCENE_ID = "EnvWarehouseExtraObjectsV00"
+DEFAULT_SEED = 0
 
 
 class RuntimeContractError(RuntimeError):
@@ -186,12 +189,16 @@ def _require_vector(
 
 
 def validate_request(request: dict[str, Any]) -> dict[str, Any]:
-    schema_version = request.get("schema_version")
+    schema_version = request.get("schema_version", EXPECTED_SCHEMA_VERSION)
     if isinstance(schema_version, bool) or schema_version != EXPECTED_SCHEMA_VERSION:
         raise RequestValidationError(f"schema_version must be {EXPECTED_SCHEMA_VERSION}, got {schema_version!r}.")
 
-    request_id = _require_string(request, "request_id")
-    scene_id = _require_string(request, "scene_id")
+    request_id = request.get("request_id", DEFAULT_REQUEST_ID)
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise RequestValidationError("request_id must be a non-empty string.")
+    scene_id = request.get("scene_id", DEFAULT_SCENE_ID)
+    if not isinstance(scene_id, str) or not scene_id.strip():
+        raise RequestValidationError("scene_id must be a non-empty string.")
 
     joint_names = request.get("joint_names")
     if not isinstance(joint_names, list) or tuple(joint_names) != EXPECTED_JOINT_NAMES:
@@ -199,7 +206,7 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
             "joint_names must exactly match the ordered Panda joints: " f"{list(EXPECTED_JOINT_NAMES)}."
         )
 
-    seed = request.get("seed")
+    seed = request.get("seed", DEFAULT_SEED)
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**32:
         raise RequestValidationError("seed must be an integer in [0, 2**32).")
 
@@ -668,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
         request_id_value = raw_request.get("request_id")
         request_id = request_id_value if isinstance(request_id_value, str) else None
         request = validate_request(raw_request)
+        request_id = request["request_id"]
         result_payload, trajectory_arrays = _run_inference(
             request,
             request_sha256,

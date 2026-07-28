@@ -1,0 +1,1140 @@
+可以，而且你的思路是正确方向：先粗采样进行 broad phase，根据 SDF、自碰撞间隙和运动幅度选择危险区间，再只在危险区间稠密采样、计算 Jacobian 和梯度。最终平均采样点数可以明显少于 128。
+推荐的两阶段流程
+第一阶段：粗筛选
+例如从 128 个预计算 B 样条点中均匀选 16 或 32 个：
+\[
+q_k=B_k w
+\]粗筛阶段只计算：
+B 样条关节位置。
+FK 和碰撞球位置。
+SDF 距离。
+自碰撞球对距离。
+关节限制距离。
+暂时不计算昂贵的 Jacobian。
+对障碍物定义余量：
+\[
+c_{m,k}=sdf(x_{m,k})-r_m-\epsilon
+\]对自碰撞定义：
+\[
+c_{ij,k}
+=
+\|x_{i,k}-x_{j,k}\|-r_i-r_j
+\]若粗采样点满足：
+SDF clearance 很大
+自碰撞 clearance 很大
+关节距离 limit 很远
+相邻 q 变化和曲率较小
+则该区间保持稀疏。
+第二阶段：危险区间细化
+以下情况对区间二分或加入 2～4 个采样点：
+任一球 SDF clearance < refine_margin。
+任一自碰撞 pair 间隙小。
+区间两端 SDF 差异大。
+\(\|q_{k+1}-q_k\|\) 大。
+B 样条曲率大。
+粗采样点已经碰撞。
+最终可能变成：
+安全轨迹：16～32 点
+一般轨迹：32～64 点
+危险轨迹：64～128 点
+最后仍使用 128～256 点做一次无梯度碰撞验证；若失败则丢弃或再进行一次稠密修正。
+如何避免粗采样漏碰撞
+仅看区间端点不安全。SDF 是 1-Lipschitz：
+\[
+|sdf(x_1)-sdf(x_2)|\leq\|x_1-x_2\|
+\]因此可以使用保守判据。若：
+\[
+\min(c_k,c_{k+1})
+>
+\Delta x_{\max}
+\]其中 \(\Delta x_{\max}\) 是区间内碰撞球最大可能移动距离，则可以认为该区间安全。
+实际可近似用：
+\[
+\Delta x_{\max}
+\approx
+\|J(q)\|\,\|q_{k+1}-q_k\|
+\]没有这个运动上界时，自适应采样只能作为启发式，最终必须做稠密验证。
+应先算 FK，还是 FK+Jacobian
+当前代码一开始就对：
+100 条轨迹 × 128 点 × 56 个碰撞球
+全部计算 FK 和 Jacobian：[cost_guides.py (line 166)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/inference/cost_guides.py:166)。
+更高效的方式是：
+粗采样
+→ 只算 FK
+→ 查询 SDF/自碰撞距离
+→ 得到 active mask
+→ 只对 active 点计算 Jacobian
+→ 映射到控制点梯度
+因为远离障碍物的点：
+\[
+\frac{\partial C_{\rm coll}}{\partial q}=0
+\]完全没有必要计算其 collision Jacobian。
+Panda 当前有多少碰撞球
+当前配置共有 56 个球：
+Link	球数量
+panda_link1	4
+panda_link2	4
+panda_link3	4
+panda_link4	4
+panda_link5	12
+panda_link6	3
+panda_link7	5
+panda_hand	20
+总计	56
+
+配置见 [panda_sphere_config.yaml (line 4)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/torch_robotics/torch_robotics/data/configs/panda/panda_sphere_config.yaml:4)。
+其中 panda_link5 + panda_hand 就占了 32/56，属于优先优化对象。
+碰撞球能否筛选
+可以，但不建议永久删除整个 link 的环境碰撞检测。Warehouse 中任何 link 都可能撞到 shelf/table。
+更安全的是分层筛选：
+Link 级 broad phase
+每个物理 link 先构造一个较大的包围球、capsule 或 OBB。
+link 包围体远离障碍物
+→ 跳过该 link 的所有细球
+
+link 包围体接近障碍物
+→ 查询该 link 的全部细球
+例如 panda_hand 的 20 个球可以先用一个 hand bounding sphere/OBB 检查；只有接近障碍物时再展开 20 个球。
+只为危险球计算 Jacobian
+所有球的空间位置可以先算出来，但只保留：
+active = sdf < radius + refine_margin
+对应 active 球的 Jacobian。
+更大的结构优化
+当前代码把 56 个球作为 URDF 的 56 个虚拟 fixed link，并让 TorchKin为每个球生成 FK/Jacobian。
+更高效的设计是：
+只计算 8 个父 link 的 FK/Jacobian。
+使用父 link 位姿变换本地球心：\[
+x_{\rm sphere}=R_{\rm link}p_{\rm local}+t_{\rm link}
+\]
+由父 link Jacobian和球心偏移计算球心位置 Jacobian。
+这样可以把运动学输出规模从 56 个虚拟 link 降到约 8 个物理 link。
+当前自碰撞检查哪些 link
+当前配置检查 14 组物理 link pair：
+Link	与这些 link 检查
+panda_link1	link4、link5、link6、link7、hand
+panda_link2	link5、link6、link7、hand
+panda_link3	link6、link7、hand
+panda_link4	link7、hand
+
+定义见 [panda_sphere_config.yaml (line 71)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/torch_robotics/torch_robotics/data/configs/panda/panda_sphere_config.yaml:71)。
+程序会把每组 link pair 展开成所有球对：[robot_base.py (line 150)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/torch_robotics/torch_robotics/robots/robot_base.py:150)。
+当前总计约 548 个球对/轨迹点，而不是全部：
+\[
+\binom{56}{2}=1540
+\]说明当前配置已经做过一次拓扑剪枝，只保留约 36% 的球对。
+哪些 pair 不需要检查
+当前没有检查：
+link1–link2、link1–link3
+link2–link3、link2–link4
+link3–link4、link3–link5
+link4–link5、link4–link6
+link5–link6、link5–link7、link5–hand
+link6–link7、link6–hand
+link7–hand
+这些大多是：
+直接相邻 link。
+中间只隔一个关节、在 Panda 机械结构和关节限位下不会发生有效碰撞的 link。
+手爪自身固定连接部分。
+碰撞球模型本身长期重叠的相邻结构。
+如果检查这些 pair，会把正常的机械连接误判为自碰撞。
+Hand 哪些碰撞必须保留
+当前 hand 与：
+link1、link2、link3、link4
+需要检查。这些属于远端 hand 回折后可能碰到的近端机械臂。
+hand 与：
+link5、link6、link7
+不检查，因为它们是 wrist/hand 邻接结构。
+需要注意：
+当前 hand 使用 20 个球近似，包括固定手爪区域。
+当前 gripper=True 仍然是固定 gripper，不建模手指开合自由度。
+如果以后需要动态开合手指，应增加左右 finger 的独立碰撞模型和相应 pair。
+抓持物体时，代码会额外把物体碰撞球与机械臂 link 建立自碰撞 pair；只跳过 reference_frame 和明确允许接触的 link。
+自碰撞如何进一步剪枝
+推荐使用两级 broad phase。
+第一级：物理 link 包围体
+对当前 14 个 link pair，先算：
+\[
+d_{\rm broad}
+=
+\|c_i-c_j\|-R_i-R_j
+\]如果：
+\[
+d_{\rm broad}>\epsilon_{\rm refine}
+\]则跳过这一组所有细球 pair。
+只有近距离的 link pair 才展开细球。这样可以把 548 个球对查询缩小到少数 active pair。
+第二级：细球 pair
+对 active link pair 才计算：
+\[
+d_{ab}
+=
+\|x_a-x_b\|-r_a-r_b
+\]然后只选择最小距离 pair 产生梯度。
+也可以直接用 capsule-capsule 距离替代大量球对，但需要重新验证与 mesh collision 的一致性。
+最值得先做的优化顺序
+EE goal 只算最后一个轨迹点。
+当前代码对 128 个点都计算 EE FK/Jacobian，最后却只使用末端点，可以直接减少。
+
+粗采样只算 FK，不算 Jacobian。
+
+只对 SDF active 的时间点和球计算 collision Jacobian。
+
+自碰撞先做 14 个 link-pair broad phase，再展开 548 个球对。
+
+用 8 个父 link FK 替代 56 个虚拟球 link FK。
+
+最后加入自适应时间采样。
+
+自适应采样虽然理论收益大，但会产生不同轨迹不同采样数量，不利于 GPU batch。工程上建议：
+预计算固定的 128 点 B 样条基矩阵。
+每条轨迹从中选 top-K 危险索引。
+按 K=16/32/64/128 分桶 batch。
+使用对应的非均匀积分权重。
+最终统一做 128 点验证。
+这样通常比完全动态递归采样更容易在 GPU 上取得真实加速。
+
+
+
+
+
+
+
+先给结论：在 GPU 资源有限的情况下，优先做“方向 1 梯度减枝 + 方向 2 自适应 guidance”的联合方案。它们不需要重新训练，直接针对当前约 0.5 s 的梯度瓶颈，而且两者可以形成一个完整的论文贡献。方向 3 建议先做 obstacle-parameter context，不要一开始就做 point cloud 或 neural SDF world model。
+当前代码基线
+当前每次 guidance 都会：
+将 B 样条控制点展开成全部 waypoint 的位置、速度、加速度。
+对所有候选、所有 waypoint、所有碰撞球计算 FK 和 Jacobian。
+再计算障碍物、自碰撞、关节限制、末端目标等梯度。
+对应代码在 [cost_guides.py (line 148)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/inference/cost_guides.py:148) 和 [cost_guides.py (line 161)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/inference/cost_guides.py:161)。这意味着目前的 mask 主要是在 FK/Jacobian 已经算完后筛选，对减少主要耗时帮助有限。
+当前 step-dependent 参数只实现了：
+ddim_scale_grad_prior
+EE position cost weight
+EE orientation cost weight
+而且都是线性 schedule，见 [diffusion_model_base.py (line 324)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/models/diffusion_models/diffusion_model_base.py:324)。当前配置是 15 个 DDIM step、最后约 5 个 step 开启 guidance、每个 step 6 次梯度更新，见 [config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml (line 108)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml:108)。
+三个方向对比
+方向	一人工作量	GPU需求	可行性	当前创新性	建议
+梯度/FK/碰撞减枝	MVP 3–5 周；论文版 6–10 周	低	高	单纯少采样较低；风险驱动且有误差界较高	第一优先
+step-dependent guidance	线性 1 周；反馈式 3–5 周	很低	很高	线性很低；逐候选闭环调度中等	与方向 1 联合
+environment context	obstacle 参数 8–12 周；完整 world model 3–6 月以上	中到高	中等	通用 context 已拥挤	第二阶段
+
+工作量假设是已经熟悉当前仓库，不包括论文写作和真实机器人部署。
+方向 1：梯度计算减枝
+最值得做的不是“固定从 128 个点减到 32 个点”，而是分层计算：
+控制点
+  → 16/32 个粗采样点，只做 FK/SDF 距离
+  → 找出危险时间区间、危险球、危险自碰撞 link pair
+  → 只对 active set 计算 Jacobian
+  → 对危险区间加密到 64/128 点
+  → 最终用 256/512 点独立碰撞验证
+可以分四级实现：
+时间减枝：根据粗采样 SDF、关节变化量、轨迹曲率决定哪些 B 样条区间需要加密。
+碰撞球减枝：先用 link bounding sphere/capsule 检查，只有接近障碍物的 link 才展开详细球。
+自碰撞 pair 减枝：先计算 link-level 距离，再展开当前约 548 个 sphere pair。
+Jacobian 减枝：距离查询只需要 FK；只有 distance < activation_margin 的点才需要 Jacobian。
+这里最关键的是第四项。仅在算完所有 Jacobian 后 mask，通常不会显著加速。
+相关工作包括：
+cuRobo, arXiv:2310.17274：GPU 并行多 seed 优化，约 50 ms 规划，是必须对比的速度基线。
+DiffCo, arXiv:2102.07413：可在线更新的可微碰撞代理，报告比几何检查快 10–100 倍。
+RAMP, arXiv:2305.10534：用 configuration-space implicit SDF 做反应式重规划。
+Neural Implicit Swept Volume, arXiv:2402.15281：连续 swept-volume 神经距离模型，并保留几何 checker。
+nvblox, arXiv:2311.00626：适合从深度相机实时更新 ESDF，但它解决的是地图更新，不会自动解决机器人 FK/Jacobian 和自碰撞耗时。
+创新性判断：
+固定降采样、简单 threshold mask：约 2/5。
+B 样条区间风险估计 + active Jacobian + link/sphere/pair 分层减枝：约 3.5/5。
+再加入基于 B 样条导数和 SDF Lipschitz 性质的保守误差界：约 4/5。
+如果没有误差界，最终 dense checking 能保证“输出轨迹经过验证”，但不能保证优化过程中没有漏掉本应产生梯度的碰撞区间。
+方向 2：step-dependent guidance
+继续增加线性、余弦 schedule 的论文创新性已经不高。直接相关工作包括：
+CADS, arXiv:2310.17347：随 diffusion step 退火条件。
+Adaptive Guidance, arXiv:2312.12487：跳过冗余 guidance 计算，报告约 25% 计算降低。
+Sum of Costs Diffusion with Dynamic Guidance, arXiv:2605.24690：已经直接研究 motion planning 中动态选择 guidance 起始 step。
+MD-COAS, arXiv:2607.14455：联合自适应 diffusion schedule 和约束优化，和本方向重叠很强。
+因此建议从“预定义 schedule”升级为“每条候选轨迹的闭环控制器”。
+控制器输入可以是：
+粗采样最小 SDF、自碰撞 clearance。
+碰撞 waypoint 比例。
+EE position/orientation error。
+当前 cost、cost 下降率。
+‖grad_prior‖、‖grad_cost‖ 及二者夹角。
+当前 diffusion noise level。
+已使用的时间预算。
+控制器输出：
+当前候选是否执行 guidance。
+n_guide_steps。
+时间采样数量。
+active sphere/link 数量。
+guide_lr、max_perturb_x。
+prior/collision/goal/smoothness weights。
+只保留 top-K 高质量或高风险候选继续优化。
+一个合理规律是：
+早期高噪声：强调 prior 和粗粒度拓扑，不投入密集 Jacobian。
+中期：根据碰撞风险加强 collision guidance。
+后期：只对仍接近碰撞或目标误差大的候选优化，增强 EE 精度和平滑性。
+已经安全且目标满足的候选提前停止 guidance。
+真正的创新点是“风险和预算驱动的逐候选调度”，而不是把 guide_lr 从 1.0 线性变成 0.2。
+方向 3：environment context
+这个方向可行，但相关工作已经很多：
+PRESTO, arXiv:2409.16012：用稀疏关键 configuration 表示 C-space 障碍物，并条件化 diffusion。
+DiffusionSeeder, arXiv:2410.16727：用深度图条件化 diffusion，再用 cuRobo 修正。
+CAMPD, arXiv:2510.14615：传感器无关、任意数量 context 的 diffusion motion planner。
+SceneDiffuser, arXiv:2301.06015：scene-conditioned diffusion planning。
+Motion Policy Networks, arXiv:2210.12209：用深度点云在大量随机环境中训练反应式规划网络。
+因此仅仅“把 environment embedding 拼进 context”创新性有限。
+当前实施计划的选择是合理的：第一版使用 obstacle_params + obstacle_mask，见 [WORLD_MODEL_MPD_IMPLEMENTATION_PLAN.md (line 312)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/WORLD_MODEL_MPD_IMPLEMENTATION_PLAN.md:312)；MVP 也明确建议先保留 exact SDF，而不训练 neural SDF，见 [WORLD_MODEL_MPD_IMPLEMENTATION_PLAN.md (line 634)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/WORLD_MODEL_MPD_IMPLEMENTATION_PLAN.md:634)。
+有限 GPU 下建议：
+用 box/sphere 的位置、尺寸、姿态作为 obstacle token。
+先用小型 DeepSets/attention encoder。
+从现有 checkpoint warm-start，先冻结 UNet，只训练 context encoder 和 FiLM/adapter。
+使用相同 start/goal、不同障碍物布局的成对数据，防止模型忽略 context。
+保留 exact SDF guidance 作为最终安全修正。
+只有 obstacle context 明显有效后，再考虑 neural SDF。
+严格来说，静态障碍物编码更准确的名字是“scene-conditioned trajectory prior”，不是完整 world model；只有加入环境动态、状态转移或未来预测后，才更符合 world model 的定义。
+推荐研究路线
+阶段 A：方向 1+2，约 8–10 周
+第 1 周：CUDA 同步 profiler，分开测 FK、Jacobian、SDF、自碰撞、B 样条映射。
+第 2–5 周：粗到细时间采样、active sphere/pair、active Jacobian。
+第 6–8 周：逐候选风险反馈 guidance。
+第 9–10 周：动态障碍物重规划实验和消融。
+推荐论文定位：
+Budget-aware adaptive guidance for B-spline diffusion planning with active collision Jacobian refinement.
+
+阶段 B：环境条件先验，约 8–12 周
+随机 primitive Warehouse 数据生成。
+obstacle set encoder。
+冻结模型训练与逐步解冻。
+未见环境测试。
+与 no-context + exact guide 比较。
+只有满足以下现象才值得进入 neural SDF：
+未 guidance 的 prior 碰撞率明显下降。
+所需 guidance 次数减少。
+hard/narrow-passage 环境成功率提升。
+held-out 环境依然有效。
+必做实验指标
+总推理延迟和 guidance 延迟：p50、p95。
+FK/Jacobian、SDF、自碰撞分别耗时。
+每个 step 的 active waypoint、sphere、pair、candidate 数量。
+相对 256/512 点 dense checker 的碰撞漏检率。
+collision-free success、EE 位置/姿态误差。
+path length、速度、加速度、jerk。
+动态障碍物变化后的重规划时间。
+GPU 显存和峰值利用率。
+建议把“最终 dense checker 零漏检、guidance 至少加速 2 倍、成功率下降不超过 1 个百分点”设为方向 1 的 go/no-go 目标。总体上，方向 1+2 最适合当前项目和算力条件，也最容易形成区别于已有环境条件 diffusion 工作的明确贡献。
+
+
+
+
+costguide计算梯度时，用单步去噪得到大约的最终路径，再对这个路径计算梯度，效果如何
+
+
+
+可以，而且这通常比直接在当前带噪控制点 \(x_t\) 上计算 cost 更合理。这个方法本质上是：
+当前 diffusion step 先预测 clean control points \(\hat x_0\)，将其展开为完整 B 样条轨迹，在这条“预测最终轨迹”上计算 cost 和梯度，再用梯度修正本次 DDIM 更新。
+
+当前代码其实已经预留了 compute_costs_with_xrecon，但尚未实现，见 [diffusion_model_base.py (line 394)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/mpd/models/diffusion_models/diffusion_model_base.py:394)。
+1. 当前做法和建议做法
+当前大致是：
+当前带噪控制点 x_t
+    ↓
+CostGuide(x_t)
+    ↓
+修改 denoising noise / score
+    ↓
+得到 x_{t-1}
+建议尝试：
+当前带噪控制点 x_t
+    ↓ denoiser
+预测 clean control points x0_hat
+    ↓ B-spline
+预测最终 waypoint 轨迹
+    ↓
+FK / SDF / self-collision / joint limits
+    ↓
+grad C(x0_hat)
+    ↓
+修正 x0_hat
+    ↓ DDIM update
+得到 x_{t-1}
+数学上：
+\[
+\hat x_0
+=
+\frac{x_t-\sqrt{1-\bar\alpha_t}\epsilon_\theta(x_t,t)}
+{\sqrt{\bar\alpha_t}}
+\]然后计算：
+\[
+g_0=\nabla_{\hat x_0}C(\hat x_0)
+\]修正预测的最终控制点：
+\[
+\hat x_0^{guided}
+=
+\hat x_0-\eta_t g_0
+\]最后由修正后的 \(\hat x_0^{guided}\) 生成 \(x_{t-1}\)。
+2. 为什么可能比当前方法更有效
+碰撞梯度更有物理意义
+当前 \(x_t\) 包含 diffusion noise。将它展开成 waypoint 后：
+关节角可能不自然；
+B 样条可能穿过大量障碍物；
+FK/SDF 梯度可能非常大；
+梯度方向可能只是在修复噪声，而不是修复最终轨迹。
+而 \(\hat x_0\) 是模型认为的最终 clean trajectory，因此：
+waypoint 更接近训练数据分布；
+FK 位姿更合理；
+碰撞梯度更接近最终真正需要的修正；
+EE goal、joint limit 和 smoothness cost 更稳定。
+尤其当前 guidance 只在最后约 5/15 个 DDIM step 开启，这时 \(\hat x_0\) 已经通常具有明确轨迹形状，很适合进行 clean-trajectory guidance。
+可以减少重复 cost guide
+当前配置大致是：
+\[
+5\text{ 个 active DDIM step}
+\times
+6\text{ 个 guide step}
+=
+30\text{ 次 cost gradient}
+\]而且同一个 DDIM step 内，denoiser model_out 并没有重新计算，只有轨迹不断被 guide 修改。因此后几次 cost gradient 是在“已经变化的轨迹 + 旧 denoiser 输出”上工作。
+可以尝试变成：
+每个 active DDIM step：
+1 次预测 x0
+1 次或 2 次 x0 cost gradient
+即约 5–10 次 cost gradient，而不是 30 次。理论上 guidance 部分可能减少到原来的约 \(1/3\) 到 \(1/6\)，但实际加速还取决于 FK/Jacobian batching。
+3. 三种实现方式
+方式 A：直接修正预测的 \(\hat x_0\)
+最推荐。
+\[
+\hat x_0^{guided}
+=
+\operatorname{clip}
+\left(
+\hat x_0-\eta_t\nabla C(\hat x_0)
+\right)
+\]然后使用修正后的 \(\hat x_0\) 完成 DDIM 更新。
+优点：
+不需要对 denoiser 反向传播；
+不需要计算网络 Jacobian；
+可以直接复用现有 CostGuide；
+梯度明确对应最终 B 样条控制点；
+显存和实现复杂度较低。
+需要注意，修正后必须重新：
+应用 start/goal hard conditioning；
+限制控制点变化；
+clamp 到归一化范围；
+重新计算与 \(\hat x_0^{guided}\) 一致的 predicted noise。
+方式 B：将 \(\hat x_0\) 的梯度映射回 \(x_t\)
+严格来说应计算：
+\[
+\nabla_{x_t}C(\hat x_0(x_t))
+=
+\left(
+\frac{\partial \hat x_0}{\partial x_t}
+\right)^T
+\nabla_{\hat x_0}C
+\]完整 Jacobian 为：
+\[
+\frac{\partial\hat x_0}{\partial x_t}
+=
+\frac{
+I-\sqrt{1-\bar\alpha_t}
+\frac{\partial\epsilon_\theta}{\partial x_t}
+}{
+\sqrt{\bar\alpha_t}
+}
+\]这需要通过整个 denoiser 反向传播：
+显存明显增加；
+推理时间增加；
+当前手写 CostGuide 架构需要较大改动；
+可能抵消梯度减枝带来的收益。
+不建议作为第一版。
+也可以忽略 denoiser Jacobian，近似为：
+\[
+\nabla_{x_t}C
+\approx
+\frac{1}{\sqrt{\bar\alpha_t}}
+\nabla_{\hat x_0}C
+\]但早期 \(\bar\alpha_t\) 较小时会放大梯度，必须做 timestep-dependent scaling 和 clipping。
+方式 C：完整去噪结束后只优化一次
+即：
+DDIM 全部完成
+    ↓
+得到最终控制点
+    ↓
+做若干次 trajectory optimization
+这本质上接近 DiffusionSeeder：
+diffusion 负责生成 seed；
+cost guide 变成后处理优化器。
+优点是简单，缺点是如果最终轨迹深度穿过障碍物，局部梯度可能无法改变路径拓扑。因此通常不如在最后几个 diffusion step 中逐步修正。
+4. 对各类 cost 的预期效果
+Cost	使用 \(\hat x_0\) 计算的预期效果
+障碍物碰撞	后期更稳定；早期预测不准时可能误导
+自碰撞	通常更好，因为 clean robot configuration 更合理
+EE goal	明显适合，直接修正最终轨迹末端
+关节位置限制	更稳定，不再主要修复 diffusion noise
+速度/加速度限制	更有意义，因为基于完整预测轨迹计算
+平滑性	较稳定，但过大控制点更新仍可能引入局部曲率
+路径长度	更接近最终评价指标
+
+最大风险是早期的 \(\hat x_0\) 仍然不准确。模型可能在不同路径模态之间切换，此时过强 guidance 会：
+提前锁定错误拓扑；
+降低 100 条候选的多样性；
+将轨迹推向局部最优；
+让所有候选趋向相似路径。
+因此不能从第一个 DDIM step 就强力使用。
+5. 推荐 schedule
+对于当前 15 个 DDIM step，可以先测试：
+step 1–8:
+    不计算完整 gradient
+    只依赖 diffusion prior
+
+step 9–10:
+    对 x0_hat 做粗采样 FK/SDF
+    只判断风险，不一定计算 Jacobian
+
+step 11–13:
+    对有碰撞风险的候选计算 1 次 x0 gradient
+
+step 14–15:
+    对仍有碰撞或 goal error 的候选计算 1–2 次 x0 gradient
+    使用更密集 waypoint
+对应的 guidance 强度应在后期增加：
+\[
+\eta_t
+=
+\eta_{\min}
++
+p_t(\eta_{\max}-\eta_{\min})
+\]同时限制：
+\[
+\|\hat x_0^{guided}-\hat x_0\|_\infty
+\leq\delta_t
+\]早期 \(\delta_t\) 小，后期可以略大，但不建议完全取消 trust region。
+6. 更适合与方向 2 控制器结合
+预测的 \(\hat x_0\) 可以作为控制器的观测：
+\[
+o_t=
+[
+\min d_{\mathrm{SDF}},
+N_{\mathrm{collision}},
+e_{\mathrm{goal}},
+C_{\mathrm{self}},
+C_{\mathrm{limits}},
+t
+]
+\]然后控制器决定：
+这条候选是否需要 gradient
+使用多少 waypoint
+计算哪些 sphere/link
+执行 0、1 还是 2 次 guide
+guide_lr 使用多大
+注意风险检测应先用 FK + SDF value，不计算 Jacobian。只有确定需要修正后才计算 Jacobian，否则为了决定“是否计算梯度”而先把完整梯度算一遍，就没有加速意义。
+7. 建议消融实验
+至少比较四组：
+方法	guide 位置	guide 次数
+当前基线	\(x_t\)	6 次/active step
+Clean guide	\(\hat x_0\)	6 次
+少步 clean guide	\(\hat x_0\)	1–2 次
+自适应 clean guide	\(\hat x_0\)	每候选动态决定
+
+评价：
+gradient 总耗时；
+p50/p95 总推理时间；
+dense collision-free rate；
+EE error；
+path length、acceleration、jerk；
+候选多样性；
+相对原始 diffusion prior 的控制点改变量。
+总体判断：**在预测的 clean B-spline 轨迹 \(\hat x_0\) 上计算 cost gradient 很值得实现，尤其适合当前只在后期启用 guidance 的设置。**第一版建议直接修正 \(\hat x_0\)，不要通过 denoiser 反向传播；并把每个 active step 的 6 次 gradient 先降到 1–2 次。这样既可能提高梯度质量，也有实际减少推理时间的机会。
+
+
+
+方式 A：直接修正预测的 \(\hat x_0\)  方式 B：将 \(\hat x_0\) 的梯度映射回 \(x_t\) 具体解释一下
+
+
+两者的共同起点都是：不在带噪的 \(x_t\) 上解释碰撞，而是先让 denoiser 预测最终干净轨迹 \(\hat x_0\)，在 \(\hat x_0\) 上计算真实几何 cost。
+区别在于梯度最终作用在哪里：
+方式 A：把 \(\hat x_0\) 当作可以直接优化的轨迹变量。
+方式 B：把 cost 看成关于 \(x_t\) 的复合函数，通过 denoiser Jacobian 将梯度传回 \(x_t\)。
+1. 基础关系
+扩散前向过程为：
+\[
+x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon
+\]记：
+\[
+a_t=\sqrt{\bar\alpha_t},\qquad
+b_t=\sqrt{1-\bar\alpha_t}
+\]网络预测噪声：
+\[
+\epsilon_\theta=\epsilon_\theta(x_t,t,c)
+\]预测最终干净控制点：
+\[
+\hat x_0
+=
+\frac{x_t-b_t\epsilon_\theta(x_t,t,c)}{a_t}
+\]这里的 \(\hat x_0\) 是归一化 B 样条控制点。CostGuide 将其展开为 waypoint：
+\[
+q=B\hat x_0
+\]再计算：
+\[
+C(\hat x_0)
+=
+C_{\mathrm{collision}}
++C_{\mathrm{self}}
++C_{\mathrm{joint}}
++C_{\mathrm{goal}}
++\cdots
+\]得到：
+\[
+g_0=\nabla_{\hat x_0}C(\hat x_0)
+\]两种方式从这里开始分开。
+方式 A：直接修正 \(\hat x_0\)
+2. 基本形式
+直接执行控制点空间的梯度下降：
+\[
+\hat x_0^{\,g}
+=
+\hat x_0-\eta_t g_0
+\]然后把修正后的 clean trajectory 放回 DDIM 更新：
+\[
+x_{t-1}
+=
+a_{t-1}\hat x_0^{\,g}
++
+c_t\epsilon_\theta
++
+\sigma_tz
+\]其中 \(c_t\) 是 DDIM 中保留噪声方向的系数。
+计算流程是：
+x_t
+ ↓ denoiser forward
+epsilon_theta
+ ↓ predict_start_from_noise
+x0_hat
+ ↓ CostGuide
+grad C(x0_hat)
+ ↓ gradient descent
+x0_hat_guided
+ ↓ DDIM update
+x_{t-1}
+3. 它优化的是什么
+方式 A 直接认为：
+既然模型已经给出了大致的最终 B 样条，就直接对这条最终轨迹做一次 trajectory optimization。
+
+这和传统轨迹优化很接近，只不过每个 diffusion step 都会重新生成一个新的预测最终轨迹。
+例如 collision cost：
+\[
+C_{\mathrm{obs}}
+=
+\frac12
+\sum_{i,l}
+\operatorname{ReLU}
+(r_l+m-d(p_{i,l}))^2
+\]先得到 waypoint 关节梯度：
+\[
+\nabla_{q_i}C
+=
+J_i^T\nabla_{p_i}C
+\]再映射到 B 样条控制点：
+\[
+g_0
+=
+\nabla_{\hat x_0}C
+=
+B^T\nabla_qC
+\]然后直接修改控制点：
+\[
+\Delta\hat x_0=-\eta_tB^TJ^T\nabla_pC
+\]这里不经过 diffusion 网络的 Jacobian。
+4. 修正后如何处理噪声
+有两种选择。
+A1. 保留原始预测噪声
+\[
+x_{t-1}
+=
+a_{t-1}\hat x_0^{\,g}
++
+c_t\epsilon_\theta
+\]这表示：
+clean trajectory 被 cost 修正；
+diffusion prior 给出的噪声方向仍保留；
+实现简单；
+通常更稳定。
+建议第一版使用这种方式。
+A2. 重新计算一致噪声
+根据当前 \(x_t\) 和修正后的 \(\hat x_0^{\,g}\)：
+\[
+\epsilon^{g}
+=
+\frac{x_t-a_t\hat x_0^{\,g}}{b_t}
+\]再用 \(\epsilon^g\) 做 DDIM 更新。
+它能让三者严格满足：
+\[
+x_t=a_t\hat x_0^{\,g}+b_t\epsilon^g
+\]但 cost 修正也会改变噪声方向，有时修正会被部分抵消或放大。建议作为消融实验，不作为第一版默认实现。
+5. 方式 A 的优缺点
+优点：
+不需要对 UNet 反向传播；
+只需要当前 CostGuide 已有的控制点梯度；
+显存增加很小；
+适合减少 n_guide_steps；
+物理意义清楚；
+很适合最后几个低噪声 DDIM step。
+缺点：
+强行修改 \(\hat x_0\)，可能离开模型数据分布；
+没考虑 denoiser 对不同控制点方向的敏感程度；
+早期 \(\hat x_0\) 不可靠时，梯度可能推动错误路径；
+大步长可能破坏轨迹模态和多样性。
+因此需要 trust region：
+\[
+\Delta x_0
+=
+\operatorname{clip}(-\eta_tg_0,-\delta_t,\delta_t)
+\]以及：
+\[
+\hat x_0^{\,g}
+=
+\operatorname{clip}(\hat x_0+\Delta x_0,-1,1)
+\]最后重新应用 start/goal hard conditioning。
+方式 B：将梯度映射回 \(x_t\)
+6. 复合函数形式
+方式 B 不直接修改 \(\hat x_0\)，而是定义：
+\[
+L_t(x_t)
+=
+C(\hat x_0(x_t,t))
+\]因为 \(\hat x_0\) 是 \(x_t\) 经过 denoiser 得到的，所以：
+\[
+\nabla_{x_t}L_t
+=
+\left(
+\frac{\partial\hat x_0}{\partial x_t}
+\right)^T
+\nabla_{\hat x_0}C
+\]记：
+\[
+g_t=\nabla_{x_t}L_t
+\]然后在带噪变量空间更新：
+\[
+x_t^{\,g}=x_t-\lambda_tg_t
+\]之后再从 \(x_t^{\,g}\) 执行下一步去噪。
+流程是：
+x_t
+ ↓ denoiser forward，并保留计算图
+epsilon_theta
+ ↓
+x0_hat
+ ↓ CostGuide
+g_0 = grad C(x0_hat)
+ ↓ denoiser vector-Jacobian product
+g_t = (dx0_hat/dx_t)^T g_0
+ ↓
+修改 x_t 或 diffusion score
+ ↓
+x_{t-1}
+7. denoiser Jacobian 是什么
+由：
+\[
+\hat x_0
+=
+\frac{x_t-b_t\epsilon_\theta(x_t,t,c)}{a_t}
+\]可得：
+\[
+\frac{\partial\hat x_0}{\partial x_t}
+=
+\frac{1}{a_t}
+\left(
+I-b_t
+\frac{\partial\epsilon_\theta}{\partial x_t}
+\right)
+\]所以：
+\[
+g_t
+=
+\frac{1}{a_t}
+\left(
+I-b_tJ_\epsilon
+\right)^Tg_0
+\]其中：
+\[
+J_\epsilon
+=
+\frac{\partial\epsilon_\theta}{\partial x_t}
+\]直观上，\(J_\epsilon\) 描述：
+改变当前带噪控制点 \(x_t\) 后，denoiser 预测的最终轨迹会怎样改变。
+
+因此方式 B 会考虑模型本身对梯度方向的响应。
+8. 不需要显式构造完整 Jacobian
+不能直接构造：
+\[
+J_\epsilon\in\mathbb{R}^{D\times D}
+\]而应该使用 vector-Jacobian product：
+x_t.requires_grad_(True)
+
+eps = model(x_t, t, context)
+x0_hat = predict_start_from_noise(x_t, t, eps)
+
+g0 = guide(x0_hat.detach())
+
+g_t = torch.autograd.grad(
+    outputs=x0_hat,
+    inputs=x_t,
+    grad_outputs=g0,
+)[0]
+这里 g0 可以继续由当前手写 CostGuide 计算，不要求 FK/SDF 全部改成 PyTorch autograd。
+这只是一次通过 denoiser 的反向传播，不是二阶梯度；但它的时间和显存通常接近一次网络训练 backward。
+9. 得到 \(g_t\) 后如何使用
+B1. 直接修改 \(x_t\)
+\[
+x_t^{\,g}
+=
+x_t-\lambda_tg_t
+\]为了严格一致，修改后最好重新运行：
+\[
+\epsilon_\theta(x_t^{\,g},t,c)
+\]这意味着每个 guide step 多一次 denoiser forward，并且之前还有一次 backward，代价较高。
+如果不重新 forward，使用旧的 \(\epsilon_\theta\)，则是近似更新。
+B2. 修改 diffusion score/noise
+目标后验可以写成：
+\[
+p(x_t\mid\text{constraints})
+\propto
+p_\theta(x_t)\exp(-\lambda C)
+\]因此后验 score 为：
+\[
+\nabla_{x_t}\log p
+=
+\nabla_{x_t}\log p_\theta
+-\lambda g_t
+\]因为噪声预测和 score 的关系约为：
+\[
+s_\theta(x_t,t)
+=
+-\frac{\epsilon_\theta}{b_t}
+\]所以可以将 cost gradient 转换成 guided noise，再完成 DDIM 更新。
+具体正负号必须和当前 guide() 返回的是“cost gradient”还是“descent direction”统一，不能直接照搬当前 grad_prior - grad_guide 的符号。
+10. 忽略 denoiser Jacobian的近似
+为了避免 UNet backward，可以令：
+\[
+\frac{\partial\epsilon_\theta}{\partial x_t}\approx0
+\]得到：
+\[
+g_t
+\approx
+\frac{1}{a_t}g_0
+=
+\frac{1}{\sqrt{\bar\alpha_t}}g_0
+\]这就是 stop-gradient 近似。
+问题是早期：
+\[
+\bar\alpha_t\ll1
+\]所以：
+\[
+\frac{1}{\sqrt{\bar\alpha_t}}
+\]可能很大，导致梯度爆炸。
+但在最后几个 diffusion step：
+\[
+\bar\alpha_t\approx1
+\]于是：
+\[
+g_t\approx g_0
+\]这说明：如果 guidance 只发生在最后几个 step，方式 A 和 stop-gradient 方式 B 实际会比较接近。
+两种方式的本质差别
+考虑一维例子：
+\[
+\hat x_0=f(x_t)
+\]\[
+C=\frac12(\hat x_0-y)^2
+\]则：
+\[
+g_0=\hat x_0-y
+\]方式 A：
+\[
+\hat x_0^{\,g}
+=
+\hat x_0-\eta(\hat x_0-y)
+\]它直接把预测结果推向 \(y\)。
+方式 B：
+\[
+x_t^{\,g}
+=
+x_t-\lambda f'(x_t)(\hat x_0-y)
+\]如果：
+\[
+|f'(x_t)|\ll1
+\]说明 denoiser 对这个输入方向不敏感。方式 B 会减少该方向上的更新，而方式 A 仍然强行修改最终输出。
+因此：
+方式 A：更像外部轨迹优化器。
+方式 B：更像在 diffusion 概率模型内部做后验采样。
+11. 对比
+属性	方式 A：直接改 \(\hat x_0\)	方式 B：梯度传回 \(x_t\)
+Cost 计算位置	clean trajectory	clean trajectory
+实际更新变量	\(\hat x_0\)	\(x_t\) 或 score
+是否经过 UNet Jacobian	否	是
+是否需要 UNet backward	否	精确实现需要
+显存	较低	较高
+推理时间	较低	较高
+理论后验一致性	较弱	较强
+保持数据分布	依赖小步长	通常更好
+适合后期 guidance	很适合	适合
+适合实时减速目标	更适合	较不适合
+
+12. 当前项目推荐
+当前瓶颈是 FK、Jacobian、SDF 和多次 guidance，同时 GPU 资源有限，因此建议：
+第一版实现方式 A
+最后 5 个 DDIM step
+每步预测一次 x0_hat
+先用粗 FK/SDF 判断风险
+有风险才计算 g0
+对 x0_hat 做 1 次直接修正
+保留原 eps_theta 完成 DDIM 更新
+最终 dense collision checking
+参数起点可以尝试：
+n_guide_steps: 1
+eta_x0: 0.05 / 0.1 / 0.2
+max_delta_x0: 0.03 / 0.05 / 0.1
+这些值在归一化控制点空间中测试。
+方式 B 作为消融
+只在最后 1–2 个 step 测试：
+stop-gradient 近似；
+完整 UNet VJP；
+是否重新 forward denoiser。
+重点比较：
+collision-free rate；
+对 prior 的偏离；
+guidance 延迟；
+GPU 显存；
+轨迹多样性。
+如果方式 A 已经达到相同成功率，而方式 B 增加大量 UNet backward 时间，就没有必要使用方式 B。对于当前实时规划目标，方式 A 是更务实的主方案，方式 B 更适合作为理论更完整的对照实验。
+
+
+/home/eric/文档/2605.24690v1.pdf，这篇里的梯度引导是哪一种
+
+
+
+这篇论文更接近方式 B：在预测最终轨迹 \(\hat\tau_0\) 上计算 cost，然后更新当前扩散变量 \(\tau_t\)。
+但论文没有明确写出梯度下标，也没有公开代码，因此还存在一个实现细节上的歧义：它究竟完整地通过 denoiser 反传，还是把 \(\nabla_{\hat\tau_0}J\) 近似直接施加给 \(\tau_t\)。
+论文中的流程
+论文 Algorithm 1 和公式 (7) 是：
+\[
+\hat\tau_0
+=
+\frac{
+\tau_t-\sqrt{1-\alpha_t}\,
+\epsilon_\theta(\tau_t)
+}{
+\sqrt{\alpha_t}
+}
+\]先在预测最终轨迹上计算：
+\[
+J(\hat\tau_0)
+\]然后更新当前带噪轨迹：
+\[
+\tau_t
+\leftarrow
+\tau_t-w\nabla J(\hat\tau_0)
+\tag{7}
+\]再进行正常反向扩散：
+\[
+\tau_{t-1}\sim p_\theta(\tau_{t-1}\mid\tau_t)
+\]因此它的流程是：
+当前带噪轨迹 τ_t
+    ↓ denoiser
+预测最终轨迹 τ̂_0
+    ↓
+在 τ̂_0 上计算碰撞 cost
+    ↓
+利用该 cost 的梯度修改 τ_t
+    ↓
+从修改后的 τ_t 采样 τ_{t-1}
+这与方式 A 的关键区别是：论文并没有写成
+\[
+\hat\tau_0
+\leftarrow
+\hat\tau_0-w\nabla_{\hat\tau_0}J
+\]然后直接用修正后的 \(\hat\tau_0\) 构造 \(\tau_{t-1}\)。它更新的是 \(\tau_t\)，所以不是前面定义的方式 A。
+严格解释：方式 B
+如果严格按照复合函数理解，论文实际优化的是：
+\[
+L(\tau_t)
+=
+J\big(\hat\tau_0(\tau_t)\big)
+\]因此梯度应为：
+\[
+\nabla_{\tau_t}L
+=
+\left(
+\frac{\partial\hat\tau_0}{\partial\tau_t}
+\right)^T
+\nabla_{\hat\tau_0}J
+\]也就是：
+\[
+\tau_t
+\leftarrow
+\tau_t
+-w
+\nabla_{\tau_t}
+J\big(\hat\tau_0(\tau_t)\big)
+\]由于：
+\[
+\hat\tau_0
+=
+\frac{
+\tau_t-\sqrt{1-\alpha_t}\epsilon_\theta(\tau_t)
+}{
+\sqrt{\alpha_t}
+}
+\]所以：
+\[
+\frac{\partial\hat\tau_0}{\partial\tau_t}
+=
+\frac{1}{\sqrt{\alpha_t}}
+\left[
+I-
+\sqrt{1-\alpha_t}
+\frac{\partial\epsilon_\theta}{\partial\tau_t}
+\right]
+\]最终：
+\[
+\nabla_{\tau_t}J
+=
+\frac{1}{\sqrt{\alpha_t}}
+\left[
+I-
+\sqrt{1-\alpha_t}J_{\epsilon}
+\right]^T
+\nabla_{\hat\tau_0}J
+\]这就是完整的方式 B，需要通过 denoiser 做一次 vector-Jacobian product。
+为什么认为作者意图是方式 B
+主要有三个证据。
+1. 更新变量明确写的是 \(\tau_t\)
+Algorithm 1 第 18 行：
+\[
+\tau_t^{(k)}
+\leftarrow
+\tau_t^{(k)}
+-w\nabla J(\hat\tau_0^{(k)})
+\]不是修改 \(\hat\tau_0\)。
+2. 修改后重新进行 denoising
+第 19 行：
+\[
+\tau_{t-1}^{(k)}
+\sim
+p_\theta(\tau_{t-1}\mid\tau_t)
+\]说明 cost guidance 是对当前 diffusion state 进行修正，然后继续正常反向扩散。
+3. 引用了 Diffusion Posterior Sampling
+其公式 (3) 附近引用了：
+Diffusion Posterior Sampling，arXiv:2209.14687；
+Tweedie’s formula。
+DPS 的标准做法正是：
+\[
+\nabla_{x_t}
+C(\hat x_0(x_t))
+\]也就是通过预测 clean sample 将观测或 cost 梯度反传到当前 noisy sample。
+因此从方法意图和引用关系看，应将它归类为方式 B。
+论文没有说明清楚的地方
+公式 (7) 只写：
+\[
+\nabla J(\hat\tau_0)
+\]没有写：
+\[
+\nabla_{\tau_t}J(\hat\tau_0(\tau_t))
+\]还是：
+\[
+\nabla_{\hat\tau_0}J(\hat\tau_0)
+\]这在数学上是不完整的。可能有三种实际实现。
+B-full：完整反传
+tau_t.requires_grad_(True)
+
+eps = model(tau_t, t)
+tau_0_hat = predict_x0(tau_t, eps, t)
+cost = collision_cost(tau_0_hat)
+
+grad_tau_t = torch.autograd.grad(cost.sum(), tau_t)[0]
+tau_t = tau_t - w * grad_tau_t
+这是真正的方式 B，并包含：
+\[
+\frac{\partial\epsilon_\theta}{\partial\tau_t}
+\]计算成本包括一次 UNet backward。
+B-stopgrad：忽略 denoiser Jacobian
+如果将网络预测的噪声 detach：
+eps = model(tau_t, t).detach()
+tau_0_hat = predict_x0(tau_t, eps, t)
+cost = collision_cost(tau_0_hat)
+
+grad_tau_t = torch.autograd.grad(cost.sum(), tau_t)[0]
+则：
+\[
+\nabla_{\tau_t}J
+\approx
+\frac{1}{\sqrt{\alpha_t}}
+\nabla_{\hat\tau_0}J
+\]仍然属于方式 B 的近似版本，但不经过 UNet backward，速度更快。
+Identity：直接拿 \(\hat\tau_0\) 梯度更新 \(\tau_t\)
+也可能实现为：
+grad_x0 = gradient_collision_cost(tau_0_hat)
+tau_t = tau_t - w * grad_x0
+这实际是假设：
+\[
+\frac{\partial\hat\tau_0}{\partial\tau_t}\approx I
+\]它既不是严格的方式 A，也不是完整的方式 B，而是“在 clean trajectory 算梯度、直接施加到 noisy trajectory”的启发式近似。
+仅从 PDF 无法排除这一实现，因为论文没有给代码，也没有说明是否保留 denoiser autograd graph。
+与当前 MPD 的区别
+论文处理的是 50 个 waypoint：
+\[
+\tau\in\mathbb R^{50\times7}
+\]而当前项目扩散的是 B 样条控制点：
+\[
+x\in\mathbb R^{N_{\mathrm{cp}}\times7}
+\]如果在当前项目中复现论文思路，链路应当是：
+\[
+x_t
+\rightarrow
+\hat x_0
+\rightarrow
+q=B\hat x_0
+\rightarrow
+\text{FK/SDF}
+\rightarrow
+J
+\]完整梯度为：
+\[
+\nabla_{x_t}J
+=
+\left(
+\frac{\partial\hat x_0}{\partial x_t}
+\right)^T
+B^T
+J_{\mathrm{FK}}^T
+\nabla_pJ
+\]当前 CostGuide 已经可以提供：
+\[
+g_0
+=
+\nabla_{\hat x_0}J
+=
+B^TJ_{\mathrm{FK}}^T\nabla_pJ
+\]所以只缺：
+\[
+g_t
+=
+\left(
+\frac{\partial\hat x_0}{\partial x_t}
+\right)^Tg_0
+\]这一层 denoiser VJP。
+论文的效果
+论文 Table III 比较了：
+Guidance 计算轨迹	Global	Both	Hybrid
+当前 noisy 轨迹 \(\tau_t\)	89.44%	91.44%	91.94%
+预测最终轨迹 \(\hat\tau_0\)	94.22%	96.88%	96.66%
+
+在预测最终轨迹上计算 cost，成功率提高约 5 个百分点。这支持“clean trajectory guidance”确实比直接对 noisy trajectory 算碰撞更准确。
+但它使用：
+256 个 diffusion step；
+500 条并行候选；
+AABB swept/intersection volume cost；
+50 个 waypoint。
+论文没有报告完整推理延迟，因此它证明的是成功率改善，不等于证明了实时性。
+结论
+最准确的分类是：
+这篇论文在 \(\hat\tau_0\) 上评价 cost，但修改的是当前 \(\tau_t\)，方法意图属于方式 B，即 \(\nabla_{\tau_t}J(\hat\tau_0(\tau_t))\)。
+
+不过 PDF 没有明确说明是否完整保留 denoiser Jacobian。没有代码的情况下，无法确认它使用的是：
+完整 B：通过 UNet 反传；
+stop-gradient B：忽略 UNet Jacobian；
+identity 近似：直接把 \(\hat\tau_0\) 梯度施加到 \(\tau_t\)。
+对当前项目，建议优先实现 B-stopgrad 和方式 A，再把完整 B-full 作为消融；因为 B-full 的 UNet backward 很可能增加推理时间，而当前目标是实时规划。

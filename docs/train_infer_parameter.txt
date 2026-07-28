@@ -1,0 +1,393 @@
+改warehouse的训练配置，可以优先调哪些参数
+
+
+• 优先调这几类，按重要性排序：
+
+  1. 数据集配置
+
+  最先看：
+
+  dataset_subdir
+  dataset_file_merged
+
+  Warehouse 当前通常是：
+
+  dataset_subdir = "EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect"
+  dataset_file_merged = "dataset_merged_doubled.hdf5"
+
+  如果你换了 Warehouse 场景、目标区域、障碍物布局，优先应该重新生成数据集，而不是只改训练参数。
+
+  2. B-spline 控制点数量
+
+  bspline_num_control_points_desired
+  num_T_pts
+
+  Warehouse/Panda 常见是：
+
+  bspline_num_control_points_desired = 18
+  num_T_pts = 128
+
+  影响：
+
+  - 控制点少：轨迹更平滑，但绕障能力弱
+  - 控制点多：轨迹更灵活，但训练更难，也更容易抖
+  - num_T_pts 主要影响展开后的碰撞检查/可视化精度，不直接等于模型训练长度
+
+  优先调 bspline_num_control_points_desired，num_T_pts 一般保持 128。
+
+  3. 条件输入
+
+  context_qs
+  context_ee_goal_pose
+  context_q_out_dim
+  context_ee_goal_pose_out_dim
+  context_combined_out_dim
+
+  Warehouse/Panda 建议：
+
+  context_qs = True
+  context_ee_goal_pose = True
+  context_q_out_dim = 128
+  context_ee_goal_pose_out_dim = 128
+  context_combined_out_dim = 128
+
+  如果做实机或复杂目标，context_ee_goal_pose=True 很重要，因为目标不只是关节终点，还包括末端 pose。
+
+  4. 模型容量
+
+  unet_input_dim
+  unet_dim_mults_option
+
+  常见：
+
+  unet_input_dim = 32
+  unet_dim_mults_option = 1
+
+  如果 Warehouse 成功率低、轨迹复杂，可以尝试增大模型，但会更慢、更吃显存。优先不要一上来大改。
+
+  5. 扩散步数
+
+  n_diffusion_steps
+  variance_schedule
+  predict_epsilon
+
+  常见：
+
+  n_diffusion_steps = 100
+  variance_schedule = "cosine"
+  predict_epsilon = True
+
+  训练阶段一般先别动这些。推理慢/快更多调 inference 的 DDIM 步数，不是训练的 n_diffusion_steps。
+
+  6. 训练步数和 batch
+
+  batch_size
+  lr
+  num_train_steps
+  use_ema
+
+  建议：
+
+  batch_size = 128 或 256
+  lr = 3e-4
+  num_train_steps = 1_000_000
+  use_ema = True
+
+  如果显存不够，先降 batch_size。如果 loss 不稳，再降 lr 到 1e-4。
+
+  7. 数据规模
+
+  n_task_samples
+
+  默认：
+
+  n_task_samples = -1
+
+  表示用全部数据。调试可以设小，比如 1000，正式训练用 -1。
+
+  最推荐的优先级：
+
+  1. dataset_subdir / 数据集本身
+  2. bspline_num_control_points_desired
+  3. context_ee_goal_pose 是否开启
+  4. batch_size / lr / num_train_steps
+  5. unet_input_dim / unet_dim_mults_option
+  6. n_diffusion_steps
+
+  如果只是想让 Warehouse 轨迹更像能执行、少奇异姿态，优先不是改模型容量，而是：
+
+  重新生成更合理的 start/goal 数据
+  限制 pose_regions
+  提高数据质量
+  适当增加 B-spline 控制点
+  inference 时加强 joint limit / velocity / acceleration / collision guide
+
+
+
+
+
+inference：
+以 scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml:1 为例，优先改这些：
+
+  1. 先改模型路径
+
+  最重要的是：
+
+  model_dir_ddpm_bspline: '...'
+  model_dir_cvae_bspline: '...'
+  model_dir_ddpm_waypoints: '...'
+  model_selection: 'bspline'
+
+  如果你跑的是 mpd + bspline，实际会用：
+
+  model_selection: 'bspline'
+  planner_alg: 'mpd'
+  model_dir_ddpm_bspline: '/你的训练输出目录'
+
+  model_dir_ddpm_bspline 要指向训练日志目录，目录里必须有：
+
+  args.yaml
+  checkpoints/
+
+  不要只改路径中间那串 dataset_subdir___.../bspline_num_control_points_desired___18/... 的文字，它只是训练 launcher 生成的目录
+  名。真正生效的是该目录里的 args.yaml 和 checkpoint。
+
+  2. 再改 planner
+
+  常用推荐：
+
+  planner_alg: 'mpd'
+  diffusion_sampling_method: 'ddim'
+
+  含义简单说：
+
+  planner_alg: 'diffusion_prior'
+
+  只用扩散模型直接采样，不做梯度引导，最快但碰撞/目标误差可能差。
+
+  planner_alg: 'diffusion_prior_then_guide'
+
+  先扩散采样，再单独做梯度优化。
+
+  planner_alg: 'mpd'
+
+  推荐默认。扩散采样过程中结合 cost gradient 引导，效果通常更好。
+
+  planner_alg: 'cvae'
+
+  用 CVAE 模型，对应 model_dir_cvae_bspline。
+
+  planner_alg: 'cvae_prior_then_guide'
+
+  CVAE 采样后再梯度优化。
+
+  Warehouse 先用：
+
+  planner_alg: 'mpd'
+  diffusion_sampling_method: 'ddim'
+
+  3. 再改速度/质量参数
+
+  优先调这几个：
+
+  n_trajectory_samples: 100
+  ddim:
+    ddim_sampling_timesteps: 15
+    n_guide_steps: 4
+    guide_lr: 1.0
+    ddim_scale_grad_prior: 0.25
+
+  调试时可以先降：
+
+  n_trajectory_samples: 16
+  ddim:
+    ddim_sampling_timesteps: 8
+    n_guide_steps: 2
+
+  正式跑再提高：
+
+  n_trajectory_samples: 100
+  ddim:
+    ddim_sampling_timesteps: 15
+    n_guide_steps: 4
+
+  如果轨迹碰撞多，优先加：
+
+  ddim:
+    n_guide_steps: 6
+    ddim_scale_grad_prior: 0.4
+
+  如果轨迹抖、偏离模型先验太多，降低：
+
+  ddim:
+    guide_lr: 0.5
+    ddim_scale_grad_prior: 0.15
+
+  4. 再改环境和任务条件
+
+  Warehouse 相关：
+
+  min_distance_q_pos_start_goal: 3.5
+  env_id_replace: null
+  grasped_object: null
+  rotation_z_axis_deg: 0.0
+  obstacle_cutoff_margin_extra: 0.05
+  margin_for_dense_collision_checking: 0.0
+
+  如果要测额外障碍物：
+
+  env_id_replace: 'EnvWarehouseExtraObjectsV00'
+
+  如果起点终点太近、视频看起来动作很小，可以增大：
+
+  min_distance_q_pos_start_goal: 4.0
+
+  如果太难、经常找不到有效轨迹，可以降到：
+
+  min_distance_q_pos_start_goal: 2.5
+
+  5. 最后改轨迹时间和采样点
+
+  num_T_pts: 128
+  trajectory_duration: 10.0
+  phase_time_class: 'PhaseTimeLinear'
+
+  num_T_pts 是最终展开的 waypoint 数，比如 128 个关节点。
+  trajectory_duration 是 IsaacLab replay/evaluator 使用的总时长。
+  一般先别动 num_T_pts，要让视频慢一点就改：
+
+  trajectory_duration: 15.0
+
+  要快一点：
+
+  trajectory_duration: 5.0
+
+  不要优先改的
+
+  不要在 inference yaml 里随便改训练结构相关东西，比如 B-spline 控制点数量、UNet 维度、context 维度。这些来自模型目录里的
+  args.yaml，必须和 checkpoint 匹配。
+
+  推荐的 Warehouse mpd + bspline 基础配置就是：
+
+  model_dir_ddpm_bspline: '/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/train/logs/你的模型目录'
+  model_selection: 'bspline'
+
+  planner_alg: 'mpd'
+  diffusion_sampling_method: 'ddim'
+
+  num_T_pts: 128
+  trajectory_duration: 10.0
+  n_trajectory_samples: 100
+
+  ddim:
+    ddim_sampling_timesteps: 15
+    n_guide_steps: 4
+    guide_lr: 1.0
+    ddim_scale_grad_prior: 0.25
+
+  sim_backend、device、isaaclab_headless、results_dir 这些不在这个 yaml 里优先改，建议终端传：
+
+  python inference.py \
+    --cfg_inference_path ./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml \
+    --sim_backend isaaclab \
+    --device cuda:0 \
+    --isaaclab_device cuda:0 \
+    --isaaclab_headless True \
+    --results_dir ./logs/warehouse_test
+
+
+
+
+结论是：
+论文配置适合复现论文、验证算法基线。
+仓库 Warehouse 配置适合已知静态环境下优先追求避碰成功率。
+真机不建议直接照搬任何一套，应以 Warehouse 的安全权重为基础，加入论文更强的速度/加速度约束，并配合安全裕量和控制器硬限制。
+场景选择
+场景	建议起始配置	主要目标
+论文复现	0.9/0.9/0.5/0.5/0.2/0.2	与论文指标可比
+已知 Warehouse 仿真	10/1/1/1/0.01/0.001	最大化无碰撞率
+Warehouse 新增障碍物	collision 3~10，joint 1，task 0.5~1，vel 0.05~0.2，acc 0.02~0.1	适应场景变化
+真机初始验证	collision 5~10，self 1，joint 1，task 0.5~1，vel 0.1~0.2，acc 0.05~0.2	安全、平滑、可跟踪
+高精度抓取/装配	真机配置基础上，EE weight 后期递增	降低最终位姿误差
+
+Warehouse 原始配置见 [Warehouse YAML (line 53)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml:53)。
+修改顺序
+建议不要首先盲目增加 collision weight，而是按下面顺序调整：
+安全距离
+先修改 obstacle_cutoff_margin_extra。它决定机器人距离障碍物多远时开始产生避碰梯度。真机应覆盖感知误差、标定误差、跟踪误差和制动距离。
+
+Collision 与 joint limit
+确保所有测试 context 都有有效轨迹，再优化精度和平滑性。
+
+Velocity 与 acceleration
+轨迹在仿真中有效但真机抖动、超调或跟踪误差大时，提高这两个权重，或者延长 trajectory_duration。
+
+EE task weight
+安全和动态可执行性满足后再提高。更推荐后期从低到高，例如 0.5→1 或 1→3，避免早期强拉终点导致中间轨迹撞障碍物。
+
+Prior 与 guide steps
+已知环境可提高 prior；新增障碍物或目标误差大时，后期降低 prior。在线规划优先 i=3,M=4，i=5,M=6 更强但约需 12 秒。
+
+按症状判断
+现象	优先修改
+碰撞率高	增大安全 margin，再提高 collision、降低 prior 或增加 guidance
+轨迹过度绕行	降低 collision/margin，或提高 prior
+EE 误差大但轨迹安全	提高末期 EE weight、降低末期 prior
+Joint-limit 失败多	提高 joint-limit weight，并给关节限位留 buffer
+轨迹抖动、加速度大	提高 velocity/acceleration，延长执行时间
+IsaacLab 安全但真机碰撞	检查坐标系、标定、障碍物模型和跟踪误差，不应只继续加 weight
+平均值好但偶尔完全失败	看 pose_metric_coverage、最差值和 P95，而不是只看均值
+
+仿真到真机
+真机安全不能只依赖 MPD soft cost：
+MPD：检查 128 点密集轨迹、碰撞和关节限制。
+IsaacLab：检查接触、跟踪和简化动力学，但不能验证真实标定与感知误差。
+控制器：必须保留速度、加速度、位置硬限制以及取消/急停能力。
+初次执行：使用低速比例、较长轨迹时间，持续比较 /joint_states 与指令轨迹。
+当前 IsaacLab 只验证 MPD 已判定有效的轨迹，不会替 MPD 重新选择最优轨迹。
+实际调参时最好记录每个 cost 在裁剪前的 weighted gradient norm。当前代码会先将各 cost 梯度加权求和，再逐元素裁剪到 [-1,1]；如果长期饱和，继续增大 weight 基本无效，应降低整体权重或 guide_lr，再调整相对比例。
+
+
+
+
+我对 [sweep-ranked.csv (line 1)](/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/log/test2/sweep-ranked.csv:1) 的结论是：不要直接选第一行的“最低误差”，应优先考虑 coverage 和最差 context。
+最重要的结果
+只有 4 组在 15 个 contexts 中都产生了至少一条有效轨迹：
+组合	位置误差	姿态误差	有效率	推理时间
+w1to3-i3-m6-p0.5	1.58 cm	1.46°	84.53%	2.07 s
+w1to3-i5-m6-p0.5	1.57 cm	1.53°	84.27%	3.93 s
+w1-i3-m6-p0.5	2.16 cm	2.50°	85.00%	2.07 s
+w1-i5-m6-p0.5	2.01 cm	2.28°	84.73%	3.40 s
+
+各参数的趋势
+EE weight 线性 1→3 优于固定 1：在相同 i=3,M=6,prior=0.5 下，位置误差从 2.16 cm 降到 1.58 cm，姿态误差从 2.50° 降到 1.46°，有效率只下降约 0.47 个百分点。
+固定 prior=0.5 最稳定：所有完整 coverage 组合都来自固定 0.5。
+prior 降到 0.25 或线性下降会提高精度，但会损失 coverage：很多组合变成 14/15 contexts，不能只看较低的平均误差。
+i=3 比 i=5 更划算：i=5 没有明显提升，推理时间约增加 1.8~2 倍。
+M=6 比 M=4 更稳定：整体 coverage 更高，但仍不能解决最困难 context。
+推荐
+我推荐默认使用：
+w1to3-i3-m6-p0.5
+对应：
+EE pose weight: 1.0 → 3.0
+icost: 3
+M: 6
+prior weight: 0.5 固定
+理由是它在完整 coverage 的组合中：
+位姿精度最好的一档；
+比 i=5 快约一倍；
+比固定 EE weight=1 精度明显好；
+15 个 contexts 都至少有有效轨迹。
+如果更重视有效率而不是末端精度，可以选：
+w1-i3-m6-p0.5
+它的有效率最高，为 85.0%，但位姿误差明显更大。
+如果只追求最低 EE 误差，可以选：
+w1to3-i3-m6-p0.25
+它约为 0.96 cm / 0.69°，但只有 14/15 个 contexts 有 valid pose metric，不建议作为真机默认配置。
+真机注意事项
+这次 sweep 设置了 sim_backend=none，所以结果只验证 MPD 内部的 SDF、碰撞和关节限制，不包含 IsaacLab 动力学，也不包含真实机械臂跟踪误差。并且推荐组虽然 coverage 是 15/15，最困难的 sample_index=7372 只有约 1/100 条轨迹有效，说明它只是“没有完全失败”，并不代表该场景很稳。
+因此：
+离线仿真/算法筛选：推荐 w1to3-i3-m6-p0.5。
+IsaacLab 验证：先用该组，再检查接触、轨迹跟踪和最小距离。
+真机初次运行：仍需增加障碍物安全裕量、速度缩放和控制器硬限制；不能仅凭这份 CSV 直接执行。
+在线低延迟：i=3,M=4 更快，但当前结果 coverage 较差，不如 M=6 稳定。
