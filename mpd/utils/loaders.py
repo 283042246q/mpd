@@ -21,6 +21,25 @@ from torch_robotics.tasks.tasks import PlanningTask
 from torch_robotics.torch_utils.torch_utils import freeze_torch_model_params, DEFAULT_TENSOR_ARGS
 
 
+def resolve_planning_environment_id(dataset_env_id, planning_env_id=None, env_id_replace=False):
+    """Resolve the complete planning-scene class while supporting the legacy override."""
+    legacy_env_id = env_id_replace or None
+    if planning_env_id and legacy_env_id and planning_env_id != legacy_env_id:
+        raise ValueError(
+            f"planning_env_id={planning_env_id!r} conflicts with legacy " f"env_id_replace={legacy_env_id!r}."
+        )
+
+    selected_env_id = planning_env_id or legacy_env_id or dataset_env_id
+    if not isinstance(selected_env_id, str) or not selected_env_id:
+        raise ValueError(f"Invalid planning environment id: {selected_env_id!r}.")
+    if not hasattr(environments, selected_env_id):
+        raise ValueError(
+            f"Unknown planning environment {selected_env_id!r}; it must be exported "
+            "from torch_robotics.environments."
+        )
+    return selected_env_id
+
+
 def get_planning_task_and_dataset(
     parametric_trajectory_class=None,
     phase_time_class="PhaseTimeLinear",
@@ -37,6 +56,7 @@ def get_planning_task_and_dataset(
     model_dir=None,
     preload_data_to_device=False,
     dataloader_num_workers=0,  # max(0, os.cpu_count() - 2),
+    planning_env_id=None,
     env_id_replace=False,
     obstacle_cutoff_margin_extra=0.0,
     margin_for_dense_collision_checking=0.0,
@@ -60,7 +80,12 @@ def get_planning_task_and_dataset(
     ##############################################################################################
     # -------------------------------- Load environment, robot, task -----------------------------
     # Environment
-    env_class = getattr(environments, env_id_replace if env_id_replace else dataset_args["env_id"])
+    planning_env_id = resolve_planning_environment_id(
+        dataset_args["env_id"],
+        planning_env_id=planning_env_id,
+        env_id_replace=env_id_replace,
+    )
+    env_class = getattr(environments, planning_env_id)
     env = env_class(**kwargs, tensor_args=tensor_args)
 
     # Robot

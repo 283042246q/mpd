@@ -1,0 +1,31 @@
+# Task B: leave the reachable bottom-drawer corner and enter the adjacent
+# shelf's middle compartment.  This is separate from Task A so region sampling
+# cannot create unintended start/goal pairings.
+env_id: EnvOpenDrawerShelf
+robot_id: RobotPanda
+rotate_with_environment: false
+max_sampling_attempts: 200
+
+start_regions:
+  bottom_drawer_reachable_corner:
+    translation:
+      x: [[0.50, 0.54]]
+      y: [[0.18, 0.26]]
+      z: [[0.28, 0.32]]
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-2.0, 2.0]]
+      y: [[-2.0, 2.0]]
+      z: [[-2.0, 2.0]]
+
+goal_regions:
+  adjacent_shelf_middle_level:
+    translation:
+      x: [[0.53, 0.59]]
+      y: [[-0.48, -0.38]]
+      z: [[0.53, 0.59]]
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-4.0, 4.0]]
+      y: [[-4.0, 4.0]]
+      z: [[-6.0, 6.0]]

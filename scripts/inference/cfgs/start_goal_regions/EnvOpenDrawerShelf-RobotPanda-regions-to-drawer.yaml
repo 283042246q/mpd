@@ -1,0 +1,31 @@
+# Task A: approach the cabinet and move into a reachable corner of the open
+# bottom drawer.  The target is inset from the panels to account for the full
+# Panda hand, fingers, wrist, and the 0.02 m planning clearance.
+env_id: EnvOpenDrawerShelf
+robot_id: RobotPanda
+rotate_with_environment: false
+max_sampling_attempts: 200
+
+start_regions:
+  free_in_front:
+    translation:
+      x: [[0.28, 0.36]]
+      y: [[0.05, 0.22]]
+      z: [[0.54, 0.66]]
+    rotation:
+      base: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+      x: [[-8.0, 8.0]]
+      y: [[-8.0, 8.0]]
+      z: [[-20.0, 20.0]]
+
+goal_regions:
+  bottom_drawer_reachable_corner:
+    translation:
+      x: [[0.50, 0.54]]
+      y: [[0.18, 0.26]]
+      z: [[0.28, 0.32]]
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-2.0, 2.0]]
+      y: [[-2.0, 2.0]]
+      z: [[-2.0, 2.0]]

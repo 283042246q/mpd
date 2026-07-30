@@ -142,7 +142,7 @@ dmypy.json
 
 **no_add/
 
-*logs
+#*logs
 #logs
 
 #*results

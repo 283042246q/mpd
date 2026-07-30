@@ -14,4 +14,6 @@ from .env_square_2d import EnvSquare2D
 from .env_table_shelf import EnvTableShelf, EnvTableShelfExtraObjectsV00
 from .env_warehouse import EnvWarehouse
 from .env_warehouse_extra_boxes import EnvWarehouseExtraBoxes, EnvWarehouseExtraObjectsV00
+from .env_open_drawer_shelf import EnvOpenDrawerShelf
+from .env_three_pillars_passage import EnvThreePillarsPassage
 from .env_empty_2d import EnvEmpty2D, EnvEmpty2DExtraSphere, EnvEmpty2DExtraNonConvex, EnvEmpty2DExtraSquare
