@@ -472,6 +472,33 @@ worker 可以保留上一轮 elite candidates 在 GPU 上，减少 host/device �
 
 ### Phase 2：静态场景滚动重规划（1–2 周）
 
+实施状态（2026-08-13）：**已完成并通过 30 分钟 Franka fake-hardware 验证。**
+
+- 在 `physical_ai_runtime/src/motion_planning/motion_planners/` 新增独立
+  `mpd_planner_adapter`，没有修改既有 `manipulation_motion_planning` 核心逻辑和
+  两份单次推理脚本；ROS 侧使用 Pixi/ROS 2 Jazzy，CUDA 仍隔离在 MPD Conda worker；
+- `MpdGlobalTrajectoryBackend` 实现现有 `GlobalTrajectoryBackend` 契约，完成
+  FR3 state/pose/joint target 到 resident worker schema 的转换、NPZ 有限值/shape/
+  joint order/time 检查，以及 `request_seq/world_version/deadline` 响应校验；
+- `LatestOnlyPlanner` 只有一个运行请求和一个可替换 pending slot，完成队列也固定
+  为 2；ROS callback 不执行 UDS、磁盘读取或 CUDA 推理，旧 generation 在发布前丢弃；
+- ROS 节点以绝对 Unix 纳秒生成跨重启单调 request sequence，支持 1 Hz 周期触发、
+  joint/pose target、`world_version` 失效、stop、future-handoff 状态插值、JSON 诊断；
+- Phase 2 强制 `plan_only=true`，输出带 future handoff `header.stamp` 的完整
+  `JointTrajectory`；控制器 goal ownership、拼接和执行在 Phase 3 才启用；
+- 新增普通 launch 和延迟启动 JTC 的 Franka fake-hardware launch；后者规避 Franka
+  bringup 先发布 vendor hardware、随后替换 GenericSystem 时的 controller spawner 竞争；
+- `colcon test`：`6 passed`；package XML schema、launch 参数解析、compile/flake8
+  基础检查通过；worker/ROS 节点重启后仍复用同一 engine instance；
+- 30 分钟 fake-hardware 结果：`submitted=1723`、`accepted=1720`、
+  `superseded=2`、结束采样时 `pending=1`，`deadline_miss/invalid/worker_error=0`；
+  512 点滑动窗口 P50/P95/P99 为约 `331/351/364 ms`；
+- 同一 worker 总处理 1806 个请求，GPU 进程显存从中点到终点均为 `1276 MiB`；
+  `/joint_states` 约 200 Hz，推理期间 ROS 图、参数服务、world-version 和 stop callback
+  均保持响应；快速连续目标更新产生的 2 个旧 generation 均被丢弃；
+- 最终故障注入确认 `world_version=9` 后只接受相同版本结果，stop 后
+  `has_target=false`、`pending_count=0`，节点 SIGINT 干净退出。
+
 交付：
 
 - `GlobalTrajectoryBackend` 的 MPD adapter；
