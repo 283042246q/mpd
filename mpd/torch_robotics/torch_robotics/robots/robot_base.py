@@ -172,6 +172,7 @@ class RobotBase(ABC):
         self,
         urdf_robot_file,
         collision_spheres_file_path,
+        collision_parent_bounds_file_path=None,
         joint_limits_file_path=None,
         link_name_ee=None,
         gripper_q_dim=0,
@@ -262,6 +263,144 @@ class RobotBase(ABC):
         assert len(self.link_collision_spheres_names) == len(self.link_collision_spheres_radii)
         self.link_collision_spheres_radii = to_torch(self.link_collision_spheres_radii, **tensor_args)
 
+        # Parent-link representation of the collision spheres. This lets the
+        # pruned guidance path request kinematics for physical links once and
+        # reconstruct every fixed sphere pose without evaluating 56 virtual
+        # sphere links independently.
+        collision_joint_by_child = {joint.child: joint for joint in self.robot_urdf.joints}
+        self.collision_sphere_parent_links = []
+        collision_sphere_local_positions = []
+        for sphere_name in self.link_collision_spheres_names:
+            fixed_joint = collision_joint_by_child[sphere_name]
+            self.collision_sphere_parent_links.append(fixed_joint.parent)
+            local_position = fixed_joint.origin.xyz if fixed_joint.origin is not None else [0.0, 0.0, 0.0]
+            collision_sphere_local_positions.append(local_position)
+        self.collision_sphere_local_positions = to_torch(collision_sphere_local_positions, **tensor_args)
+        self.collision_sphere_unique_parent_links = list(dict.fromkeys(self.collision_sphere_parent_links))
+        parent_index = {name: idx for idx, name in enumerate(self.collision_sphere_unique_parent_links)}
+        self.collision_sphere_parent_indices = torch.tensor(
+            [parent_index[name] for name in self.collision_sphere_parent_links],
+            dtype=torch.long,
+            device=tensor_args["device"],
+        )
+
+        # Conservative parent-link bounding spheres used only by the optional
+        # broad phase. The exact collision model remains the original set of
+        # fine spheres above. Bounds absent from a saved robot configuration
+        # (for example a runtime grasped object) are generated conservatively.
+        saved_parent_bounds = {}
+        if collision_parent_bounds_file_path is not None:
+            with open(collision_parent_bounds_file_path) as file:
+                bounds_config = yaml.load(file, Loader=yaml.FullLoader) or {}
+            saved_parent_bounds = bounds_config.get("parent_bounds", bounds_config)
+        parent_bound_centers = []
+        parent_bound_radii = []
+        parent_bound_parent_indices = []
+        for parent_idx, parent_name in enumerate(self.collision_sphere_unique_parent_links):
+            sphere_mask = self.collision_sphere_parent_indices == parent_idx
+            sphere_centers = self.collision_sphere_local_positions[sphere_mask]
+            sphere_radii = self.link_collision_spheres_radii[sphere_mask]
+            if parent_name in saved_parent_bounds:
+                bound_entries = saved_parent_bounds[parent_name]
+                # Accept the previous single-bound schema for reproducibility.
+                if isinstance(bound_entries, dict):
+                    bound_entries = [bound_entries]
+                configured_indices = [
+                    int(index)
+                    for bound in bound_entries
+                    for index in bound.get("source_sphere_indices", [])
+                ]
+                if configured_indices and sorted(configured_indices) != list(
+                    range(sphere_centers.shape[0])
+                ):
+                    raise ValueError(
+                        f"Parent collision bounds for {parent_name} do not partition "
+                        "the configured fine spheres exactly once."
+                    )
+            else:
+                lower = (sphere_centers - sphere_radii[:, None]).amin(dim=0)
+                upper = (sphere_centers + sphere_radii[:, None]).amax(dim=0)
+                center = (lower + upper) / 2
+                radius = (
+                    torch.linalg.norm(sphere_centers - center, dim=-1) + sphere_radii
+                ).amax()
+                bound_entries = [{"center": center, "radius": radius}]
+
+            local_centers = []
+            local_radii = []
+            for bound in bound_entries:
+                center = to_torch(bound["center"], **tensor_args)
+                radius = to_torch(float(bound["radius"]), **tensor_args)
+                local_centers.append(center)
+                local_radii.append(radius)
+                parent_bound_centers.append(center)
+                parent_bound_radii.append(radius)
+                parent_bound_parent_indices.append(parent_idx)
+            local_centers = torch.stack(local_centers)
+            local_radii = torch.stack(local_radii)
+            required_by_bound = (
+                torch.linalg.norm(
+                    sphere_centers[:, None, :] - local_centers[None, :, :], dim=-1
+                )
+                + sphere_radii[:, None]
+            )
+            tolerance = 32 * torch.finfo(required_by_bound.dtype).eps
+            covered = (required_by_bound <= local_radii[None, :] + tolerance).any(dim=1)
+            if not bool(covered.all().detach().cpu().item()):
+                missing = torch.nonzero(~covered, as_tuple=False).flatten().tolist()
+                raise ValueError(
+                    f"Parent collision bounds for {parent_name} do not contain fine "
+                    f"sphere indices {missing}."
+                )
+        self.collision_parent_bound_local_centers = torch.stack(parent_bound_centers)
+        self.collision_parent_bound_radii = torch.stack(parent_bound_radii)
+        self.collision_parent_bound_parent_indices = torch.tensor(
+            parent_bound_parent_indices,
+            dtype=torch.long,
+            device=tensor_args["device"],
+        )
+
+        if link_self_collision_tuples:
+            fine_self_pairs = torch.tensor(
+                [[pair[0], pair[1]] for pair in link_self_collision_tuples],
+                dtype=torch.long,
+                device=tensor_args["device"],
+            )
+            parent_self_pairs = self.collision_sphere_parent_indices[fine_self_pairs]
+            parent_self_pairs = torch.sort(parent_self_pairs, dim=-1).values
+            self.collision_parent_self_pairs = torch.unique(parent_self_pairs, dim=0)
+        else:
+            self.collision_parent_self_pairs = torch.empty(
+                (0, 2), dtype=torch.long, device=tensor_args["device"]
+            )
+
+        bound_self_pairs = []
+        bound_self_pair_groups = []
+        for pair_group, parent_pair in enumerate(self.collision_parent_self_pairs):
+            bounds_1 = torch.nonzero(
+                self.collision_parent_bound_parent_indices == parent_pair[0],
+                as_tuple=False,
+            ).flatten()
+            bounds_2 = torch.nonzero(
+                self.collision_parent_bound_parent_indices == parent_pair[1],
+                as_tuple=False,
+            ).flatten()
+            combinations = torch.cartesian_prod(bounds_1, bounds_2)
+            if combinations.ndim == 1:
+                combinations = combinations[None, :]
+            bound_self_pairs.append(combinations)
+            bound_self_pair_groups.extend([pair_group] * combinations.shape[0])
+        self.collision_parent_bound_self_pairs = (
+            torch.cat(bound_self_pairs, dim=0)
+            if bound_self_pairs
+            else torch.empty((0, 2), dtype=torch.long, device=tensor_args["device"])
+        )
+        self.collision_parent_bound_self_pair_groups = torch.tensor(
+            bound_self_pair_groups,
+            dtype=torch.long,
+            device=tensor_args["device"],
+        )
+
         # self collision tuples (idx_fk, other_idx_fk, margin, other_margin)
         self.link_self_collision_tuples = link_self_collision_tuples
 
@@ -315,6 +454,36 @@ class RobotBase(ABC):
         self.fk_collision_spheres = fk_collision_spheres
         self.jfk_b_collision_spheres = jfk_b_collision_spheres
         self.jfk_s_collision_spheres = jfk_s_collision_spheres
+
+        (
+            self.fk_collision_sphere_parent_links,
+            self.jfk_b_collision_sphere_parent_links,
+            self.jfk_s_collision_sphere_parent_links,
+        ) = torchkin.get_forward_kinematics_fns(
+            robot=self.robot_torchkin,
+            link_names=self.collision_sphere_unique_parent_links,
+        )
+        (
+            self.fk_collision_parent_pose_cache,
+            _,
+            collision_parent_related_link_ids,
+            collision_parent_link_ids,
+        ) = torchkin.get_forward_kinematics_pose_cache_fns(
+            robot=self.robot_torchkin,
+            link_names=self.collision_sphere_unique_parent_links,
+        )
+        self.collision_parent_related_link_ids = tuple(
+            collision_parent_related_link_ids
+        )
+        related_link_lookup = {
+            link_id: index
+            for index, link_id in enumerate(self.collision_parent_related_link_ids)
+        }
+        self.collision_parent_pose_cache_parent_indices = torch.as_tensor(
+            [related_link_lookup[link_id] for link_id in collision_parent_link_ids],
+            dtype=torch.long,
+            device=self.q_pos_min.device,
+        )
 
         # kinematic functions for end-effector link
         fk_ee, jfk_b_ee, jfk_s_ee = torchkin.get_forward_kinematics_fns(
@@ -438,6 +607,53 @@ class RobotBase(ABC):
         link_positions_th = link_pos_from_link_tensor(links_poses_th)  # (batch horizon), taskspaces, x_dim
 
         return link_positions_th
+
+    def _sphere_poses_from_parent_poses(self, parent_poses):
+        parent_poses_tensor = torch.stack(parent_poses).transpose(0, 1)
+        selected = parent_poses_tensor[:, self.collision_sphere_parent_indices]
+        rotations = selected[..., :3, :3]
+        translations = selected[..., :3, 3]
+        local = self.collision_sphere_local_positions.to(dtype=selected.dtype, device=selected.device)
+        sphere_positions = torch.einsum("...sij,sj->...si", rotations, local) + translations
+        sphere_poses = selected.clone()
+        sphere_poses[..., :3, 3] = sphere_positions
+        return list(sphere_poses.transpose(0, 1).unbind(0))
+
+    def fk_collision_spheres_parent_links(self, q):
+        parent_poses = self.fk_collision_sphere_parent_links(q)
+        return self._sphere_poses_from_parent_poses(parent_poses)
+
+    def collision_sphere_poses_from_related_pose_cache(self, related_poses):
+        """Expand fine spheres from a TorchKin related-link pose cache."""
+
+        related_poses_tensor = torch.stack(related_poses).transpose(0, 1)
+        parent_indices = self.collision_parent_pose_cache_parent_indices.to(
+            related_poses_tensor.device
+        )
+        parent_poses = related_poses_tensor.index_select(1, parent_indices)
+        return self._sphere_poses_from_parent_poses(
+            list(parent_poses.transpose(0, 1).unbind(0))
+        )
+
+    def fk_collision_parent_bounds(self, q):
+        """Return conservative parent-bound centers without expanding fine spheres."""
+
+        parent_poses = torch.stack(self.fk_collision_sphere_parent_links(q)).transpose(0, 1)
+        bound_parents = self.collision_parent_bound_parent_indices.to(q.device)
+        bound_poses = parent_poses.index_select(-3, bound_parents)
+        rotations = bound_poses[..., :3, :3]
+        translations = bound_poses[..., :3, 3]
+        local_centers = self.collision_parent_bound_local_centers.to(
+            dtype=q.dtype, device=q.device
+        )
+        return torch.einsum("...bij,bj->...bi", rotations, local_centers) + translations
+
+    def jfk_s_collision_spheres_parent_links(self, q):
+        parent_jacobians, parent_poses = self.jfk_s_collision_sphere_parent_links(q)
+        parent_jacobians_tensor = torch.stack(parent_jacobians).transpose(0, 1)
+        sphere_jacobians = parent_jacobians_tensor[:, self.collision_sphere_parent_indices]
+        sphere_poses = self._sphere_poses_from_parent_poses(parent_poses)
+        return list(sphere_jacobians.transpose(0, 1).unbind(0)), sphere_poses
 
     def cleanup(self):
         if os.path.exists(self.robot_urdf_file):

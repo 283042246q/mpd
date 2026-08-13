@@ -2,7 +2,7 @@
 
 Launch with IsaacLab's Python wrapper, for example:
 
-    /home/eric/IsaacLab_ori/isaaclab.sh -p scripts/isaaclab/replay_mpd_trajectory.py \
+    /home/eric/IsaacLab/isaaclab.sh -p scripts/isaaclab/replay_mpd_trajectory.py \
         --input scripts/inference/logs/run/isaaclab-trajectories-000.pt \
         --trajectory_index 0 \
         --output_video scripts/inference/logs/run/replay-000.mp4 \
@@ -38,10 +38,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_video", type=Path, default=None, help="Path to write an mp4 replay.")
     parser.add_argument("--screenshot_path", type=Path, default=None, help="Path to write the final RGB frame.")
     parser.add_argument("--output_json", type=Path, default=None, help="Optional replay metadata JSON path.")
+    parser.add_argument(
+        "--robot_usd",
+        default=None,
+        help="Optional Panda USD path or URL. Defaults to the Isaac Sim FrankaPanda asset.",
+    )
     parser.add_argument("--action_repeat", type=int, default=4, help="Physics steps per trajectory waypoint.")
     parser.add_argument("--video_fps", type=float, default=24.0, help="Output mp4 frame rate.")
     parser.add_argument("--width", type=int, default=960, help="Camera image width.")
     parser.add_argument("--height", type=int, default=540, help="Camera image height.")
+    parser.add_argument(
+        "--camera_eye",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=None,
+        help="Optional world-space camera position. Must be used together with --camera_target.",
+    )
+    parser.add_argument(
+        "--camera_target",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=None,
+        help="Optional world-space point observed by the camera. Must be used together with --camera_eye.",
+    )
     parser.add_argument(
         "--graceful_shutdown",
         action="store_true",
@@ -53,6 +74,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("At least one of --output_video or --screenshot_path is required.")
     if args.action_repeat < 1:
         parser.error("--action_repeat must be >= 1.")
+    if (args.camera_eye is None) != (args.camera_target is None):
+        parser.error("--camera_eye and --camera_target must be provided together.")
     args.enable_cameras = True
     return args
 
@@ -74,6 +97,7 @@ from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.camera import Camera
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
@@ -116,6 +140,9 @@ def _normalize_best_trajectory(q_trajs_pos_best: torch.Tensor) -> torch.Tensor:
 
 
 PANDA_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
+PANDA_CFG.spawn.usd_path = (
+    args_cli.robot_usd or f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
+)
 PANDA_CFG.spawn.activate_contact_sensors = True
 PANDA_CFG.spawn.rigid_props.disable_gravity = True
 
@@ -210,15 +237,20 @@ def _reset_robot(robot, scene: InteractiveScene, q_pos_start: torch.Tensor, join
     scene.reset()
 
 
-def _position_camera(camera: Camera, sim, env_name: str) -> Camera:
-    if env_name.startswith("EnvWarehouse"):
-        eye = torch.tensor([[2.0, -2.0, 1.45]], device=sim.device)
-        target = torch.tensor([[0.45, 0.0, 0.35]], device=sim.device)
+def _position_camera(camera: Camera, sim, env_name: str, camera_eye=None, camera_target=None):
+    if camera_eye is not None:
+        eye_values = camera_eye
+        target_values = camera_target
+    elif env_name.startswith("EnvWarehouse"):
+        eye_values = [2.0, -2.0, 1.45]
+        target_values = [0.45, 0.0, 0.35]
     else:
-        eye = torch.tensor([[2.4, -2.4, 1.85]], device=sim.device)
-        target = torch.tensor([[0.15, 0.0, 0.45]], device=sim.device)
+        eye_values = [2.4, -2.4, 1.85]
+        target_values = [0.15, 0.0, 0.45]
+    eye = torch.tensor([eye_values], dtype=torch.float32, device=sim.device)
+    target = torch.tensor([target_values], dtype=torch.float32, device=sim.device)
     camera.set_world_poses_from_view(eye, target)
-    return camera
+    return camera, list(eye_values), list(target_values)
 
 
 def _capture_rgb(camera: Camera, sim_dt: float) -> np.ndarray:
@@ -298,7 +330,13 @@ def run_replay() -> dict[str, Any]:
     q_pos_start = q_pos_start_cpu.reshape(1, -1).to(device=sim.device)
 
     _log("positioning camera")
-    camera = _position_camera(scene["replay_camera"], sim, env_name)
+    camera, camera_eye, camera_target = _position_camera(
+        scene["replay_camera"],
+        sim,
+        env_name,
+        camera_eye=args_cli.camera_eye,
+        camera_target=args_cli.camera_target,
+    )
     _log("resetting robot")
     _reset_robot(robot, scene, q_pos_start, joint_ids, finger_joint_ids)
     scene.write_data_to_sim()
@@ -327,11 +365,14 @@ def run_replay() -> dict[str, Any]:
         "trajectory_source": trajectory_source,
         "trajectory_index": trajectory_index,
         "env_name": env_name,
+        "robot_usd": PANDA_CFG.spawn.usd_path,
         "trajectory_horizon": int(horizon),
         "trajectory_batch": int(batch),
         "trajectory_dof": int(dof),
         "n_frames": len(frames),
         "output_video": args_cli.output_video.as_posix() if args_cli.output_video else None,
+        "camera_eye": camera_eye,
+        "camera_target": camera_target,
         "screenshot_path": args_cli.screenshot_path.as_posix() if args_cli.screenshot_path else None,
         **obstacle_summary,
     }

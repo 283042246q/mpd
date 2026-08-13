@@ -1,0 +1,36 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: narrow_2d_gradient_pruning
+seed: 0
+base_config: ../config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml
+scenarios:
+  - id: narrow_030
+    type: narrow_2d
+    difficulty: simple
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    gap_width: 0.30
+  - id: narrow_020
+    type: narrow_2d
+    difficulty: medium
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    gap_width: 0.20
+  - id: narrow_015
+    type: narrow_2d
+    difficulty: hard
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    gap_width: 0.15
+  - id: narrow_010
+    type: narrow_2d
+    difficulty: hard
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    gap_width: 0.10
+  - id: narrow_0075
+    type: narrow_2d
+    difficulty: infeasible_or_extreme
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    gap_width: 0.075

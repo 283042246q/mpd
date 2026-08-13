@@ -15,6 +15,8 @@ from mpd.utils.loaders import load_params_from_yaml
 from pb_ompl.pb_ompl import add_box, fit_bspline_to_path
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL, get_random_pose_from_region
 from mpd.inference.cost_guides import CostGuideManagerParametricTrajectory, NoCostException
+from mpd.inference.dense_trajectory_validator import DenseTrajectoryValidator
+from mpd.inference.guidance_config import resolve_dense_validation_config
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import (
     to_numpy,
@@ -45,6 +47,27 @@ DEFAULT_BEST_TRAJECTORY_METRIC_SCALES = {
 }
 
 
+def resolve_model_checkpoint_path(model_dir, use_ema, checkpoint=None):
+    """Resolve an optional checkpoint filename under ``model_dir/checkpoints``."""
+    checkpoints_dir = Path(os.path.expandvars(os.path.expanduser(str(model_dir)))) / "checkpoints"
+    checkpoint = "" if checkpoint is None else str(checkpoint).strip()
+    if checkpoint:
+        checkpoint_name = Path(checkpoint)
+        if checkpoint_name.is_absolute() or checkpoint_name.name != checkpoint:
+            raise ValueError("checkpoint must be a filename under model_dir/checkpoints")
+        if checkpoint_name.suffix != ".pth":
+            raise ValueError("checkpoint must have a .pth extension")
+        if checkpoint_name.stem.endswith("_state_dict"):
+            raise ValueError("checkpoint must be a full-model .pth, not a state_dict checkpoint")
+    else:
+        checkpoint_name = Path(f"{'ema_' if use_ema else ''}model_current.pth")
+
+    checkpoint_path = checkpoints_dir / checkpoint_name
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Model checkpoint not found: {checkpoint_path}")
+    return checkpoint_path
+
+
 def _config_value(config, key, default=None):
     if config is None:
         return default
@@ -60,6 +83,169 @@ def _normalize_best_trajectory_metric(values, configured_scale=None):
         scale = torch.as_tensor(configured_scale, dtype=values.dtype, device=values.device)
     scale = torch.clamp(scale, min=torch.finfo(values.dtype).eps)
     return values / scale, scale
+
+
+def _compute_candidate_ranking(
+    method,
+    args_inference,
+    dataset,
+    planning_task,
+    cost_guide,
+    control_points,
+    q_position,
+    q_velocity,
+    q_acceleration,
+    ee_pose_goal,
+):
+    """Score every candidate before dense validation for ranked early exit."""
+
+    metadata = {"method": method, "components": {}}
+    ee_position = ee_orientation = None
+    needs_ee = method in {
+        "weighted_metrics",
+        "lowest_ee_position_error",
+        "lowest_ee_orientation_error",
+    }
+    if needs_ee and dataset.context_ee_goal_pose:
+        achieved = planning_task.robot.get_EE_pose(q_position[..., -1, :])
+        error_position, error_orientation = compute_ee_pose_errors(
+            ee_pose_goal, achieved
+        )
+        ee_position = torch.linalg.norm(error_position, dim=-1)
+        ee_orientation = torch.rad2deg(torch.linalg.norm(error_orientation, dim=-1))
+
+    if method == "weighted_metrics":
+        metric_values = {
+            "path_length": compute_path_length(q_position, planning_task.robot),
+            "smoothness": compute_smoothness(
+                q_position, planning_task.robot, trajs_acc=q_acceleration
+            ),
+        }
+        if dataset.context_ee_goal_pose:
+            metric_values.update(
+                ee_position=ee_position,
+                ee_orientation=ee_orientation,
+            )
+        if planning_task.robot.dq_max is not None:
+            dq_max = torch.as_tensor(
+                planning_task.robot.dq_max,
+                dtype=q_velocity.dtype,
+                device=q_velocity.device,
+            )
+            metric_values["velocity_limit_utilization"] = torch.amax(
+                torch.abs(q_velocity) / dq_max, dim=(-2, -1)
+            )
+        if planning_task.robot.ddq_max is not None:
+            ddq_max = torch.as_tensor(
+                planning_task.robot.ddq_max,
+                dtype=q_acceleration.dtype,
+                device=q_acceleration.device,
+            )
+            metric_values["acceleration_limit_utilization"] = torch.amax(
+                torch.abs(q_acceleration) / ddq_max, dim=(-2, -1)
+            )
+
+        configured_weights = args_inference.get("best_trajectory_weights", {})
+        configured_scales = args_inference.get(
+            "best_trajectory_metric_scales", {}
+        )
+        active_metrics = []
+        active_weight_sum = 0.0
+        for metric_name, values in metric_values.items():
+            weight = float(
+                _config_value(
+                    configured_weights,
+                    metric_name,
+                    DEFAULT_BEST_TRAJECTORY_WEIGHTS[metric_name],
+                )
+            )
+            if weight <= 0.0:
+                continue
+            configured_scale = _config_value(
+                configured_scales,
+                metric_name,
+                DEFAULT_BEST_TRAJECTORY_METRIC_SCALES[metric_name],
+            )
+            normalized_values, scale = _normalize_best_trajectory_metric(
+                values, configured_scale
+            )
+            active_metrics.append(
+                (metric_name, values, normalized_values, scale, weight)
+            )
+            active_weight_sum += weight
+        if not active_metrics:
+            raise ValueError(
+                "weighted_metrics requires at least one available metric with a positive weight."
+            )
+        scores = torch.zeros_like(active_metrics[0][1])
+        for metric_name, values, normalized_values, scale, weight in active_metrics:
+            normalized_weight = weight / active_weight_sum
+            scores = scores + normalized_weight * normalized_values.square()
+            metadata["components"][metric_name] = {
+                "values": values,
+                "normalized_values": normalized_values,
+                "scale": scale,
+                "weight": normalized_weight,
+            }
+    elif method == "lowest_ee_position_error":
+        if not dataset.context_ee_goal_pose:
+            raise ValueError(
+                "lowest_ee_position_error requires context_ee_goal_pose=True."
+            )
+        scores = ee_position
+    elif method == "lowest_ee_orientation_error":
+        if not dataset.context_ee_goal_pose:
+            raise ValueError(
+                "lowest_ee_orientation_error requires context_ee_goal_pose=True."
+            )
+        scores = ee_orientation
+    elif method == "lowest_weighted_cost":
+        if cost_guide is None:
+            raise ValueError("lowest_weighted_cost requires an active cost guide.")
+        scores, *_ = cost_guide(control_points, return_cost=True)
+    elif method == "lowest_smoothness_cost":
+        scores = compute_smoothness(
+            q_position, planning_task.robot, trajs_acc=q_acceleration
+        )
+    elif method == "shortest_path_length":
+        scores = compute_path_length(q_position, planning_task.robot)
+    else:
+        raise ValueError(f"Unknown best_trajectory_selection={method!r}.")
+
+    scores = scores.detach()
+    scores = torch.where(
+        torch.isfinite(scores), scores, torch.full_like(scores, torch.inf)
+    )
+    metadata["scores"] = scores
+    return scores, metadata
+
+
+def _ranked_selection_details(metadata, candidate_index):
+    candidate_index = int(candidate_index)
+    scores = metadata["scores"]
+    details = {
+        "method": metadata["method"],
+        "score": float(scores[candidate_index].detach().cpu().item()),
+        "selected_candidate_index": candidate_index,
+        "ranked_before_dense_validation": True,
+    }
+    if metadata["components"]:
+        components = {}
+        for metric_name, component in metadata["components"].items():
+            value = component["values"][candidate_index]
+            normalized = component["normalized_values"][candidate_index]
+            weight = component["weight"]
+            components[metric_name] = {
+                "value": float(value.detach().cpu().item()),
+                "scale": float(component["scale"].detach().cpu().item()),
+                "weight": weight,
+                "normalized_value": float(normalized.detach().cpu().item()),
+                "weighted_term": float(
+                    (weight * normalized.square()).detach().cpu().item()
+                ),
+            }
+        details["components"] = components
+    return details
 
 
 class EvaluationSamplesGenerator:
@@ -520,13 +706,12 @@ class GenerativeOptimizationPlanner:
 
         ################################################################################################################
         # Load the generative model
-        # model_path = os.path.join(
-        #     args_inference.model_dir, 'checkpoints',
-        #     f'{"ema_" if args_train["use_ema"] else ""}model_current.pth'
-        # )
-        model_path = os.path.join(
-            args_inference.model_dir, "checkpoints", f'{"ema_" if args_train["use_ema"] else ""}model_current.pth'
+        model_path = resolve_model_checkpoint_path(
+            args_inference.model_dir,
+            args_train["use_ema"],
+            checkpoint=_config_value(args_inference, "checkpoint"),
         )
+        print(f"Loading checkpoint: {model_path}")
         self.model = torch.load(model_path, map_location=tensor_args["device"], weights_only=False)
         if tensor_args["device"].type == "cpu" and isinstance(
             getattr(self.model, "model", None), torch.nn.DataParallel
@@ -576,6 +761,29 @@ class GenerativeOptimizationPlanner:
                 )
             except NoCostException:
                 self.cost_guide = None
+
+        self.dense_validation_config = resolve_dense_validation_config(args_inference)
+        self.dense_validator = None
+        if self.dense_validation_config["enabled"]:
+            self.dense_validator = DenseTrajectoryValidator(
+                planning_task,
+                config=self.dense_validation_config,
+            )
+            ranked_cfg = self.dense_validation_config.get(
+                "ranked_early_exit", {}
+            )
+            if (
+                ranked_cfg.get("enabled", False)
+                and ranked_cfg.get("preallocate_buffers", True)
+            ):
+                control_points_template = torch.empty(
+                    (1, *self.dataset.control_points_dim),
+                    **self.tensor_args,
+                )
+                self.dense_validator.prepare_ranked_batch_workspaces(
+                    control_points_template,
+                    ranked_cfg["batch_buckets"],
+                )
 
         ################################################################################################################
         # Warmup the model and guide costs
@@ -824,11 +1032,90 @@ class GenerativeOptimizationPlanner:
         q_trajs_vel_iter_0 = q_trajs_vel_iters[-1]
         q_trajs_acc_iter_0 = q_trajs_acc_iters[-1]
         q_trajs_iter_0 = torch.cat([q_trajs_pos_iter_0, q_trajs_vel_iter_0, q_trajs_acc_iter_0], dim=-1)
-        _, _, q_trajs_final_valid, valid_idxs, collision_waypoint_mask = self.planning_task.get_trajs_unvalid_and_valid(
-            q_trajs_iter_0,
-            return_indices=True,
-            filter_joint_limits_vel_acc=True,
+        best_trajectory_selection = self.args_inference.get(
+            "best_trajectory_selection", best_trajectory_selection
         )
+        ranked_early_exit_cfg = self.dense_validation_config.get(
+            "ranked_early_exit", {}
+        )
+        ranked_early_exit_enabled = bool(
+            self.dense_validator is not None
+            and ranked_early_exit_cfg.get("enabled", False)
+        )
+        candidate_scores = candidate_ranking_metadata = ranked_candidate_indices = None
+        t_trajectory_ranking = 0.0
+        if ranked_early_exit_enabled:
+            with TimerCUDA() as ranking_timer:
+                candidate_scores, candidate_ranking_metadata = (
+                    _compute_candidate_ranking(
+                        best_trajectory_selection,
+                        self.args_inference,
+                        self.dataset,
+                        self.planning_task,
+                        self.cost_guide,
+                        control_points_iter_0,
+                        q_trajs_pos_iter_0,
+                        q_trajs_vel_iter_0,
+                        q_trajs_acc_iter_0,
+                        ee_pose_goal,
+                    )
+                )
+                ranked_candidate_indices = torch.argsort(candidate_scores)
+            t_trajectory_ranking = ranking_timer.elapsed
+        dense_validation_result = None
+        t_dense_validation = 0.0
+        if self.dense_validator is not None:
+            dense_cfg = self.dense_validation_config
+            with TimerCUDA() as dense_timer:
+                validation_kwargs = {
+                    "num_points": dense_cfg["runtime_points"],
+                    "check_environment": dense_cfg["check_environment"],
+                    "check_self_collision": dense_cfg["check_self_collision"],
+                    "check_joint_position": dense_cfg["check_joint_position"],
+                    "check_joint_velocity": dense_cfg["check_joint_velocity"],
+                    "check_joint_acceleration": dense_cfg["check_joint_acceleration"],
+                }
+                if ranked_early_exit_enabled:
+                    dense_validation_result = (
+                        self.dense_validator.validate_ranked_batches(
+                            control_points=control_points_iter_0,
+                            ranked_indices=ranked_candidate_indices,
+                            batch_buckets=ranked_early_exit_cfg["batch_buckets"],
+                            preallocate_buffers=ranked_early_exit_cfg[
+                                "preallocate_buffers"
+                            ],
+                            cuda_graph=ranked_early_exit_cfg["cuda_graph"],
+                            stop_on_first_valid=True,
+                            **validation_kwargs,
+                        )
+                    )
+                else:
+                    dense_validation_result = self.dense_validator.validate(
+                        control_points=control_points_iter_0,
+                        **validation_kwargs,
+                    )
+            t_dense_validation = dense_timer.elapsed
+            collision_waypoint_mask = (
+                dense_validation_result.environment_collision_mask
+                | dense_validation_result.self_collision_mask
+            )
+            if dense_cfg["reject_invalid"]:
+                valid_idxs = torch.nonzero(dense_validation_result.trajectory_valid_mask).flatten()
+            else:
+                _, _, _, valid_idxs, _ = self.planning_task.get_trajs_unvalid_and_valid(
+                    q_trajs_iter_0,
+                    return_indices=True,
+                    filter_joint_limits_vel_acc=True,
+                )
+            q_trajs_final_valid = q_trajs_iter_0[valid_idxs]
+        else:
+            _, _, q_trajs_final_valid, valid_idxs, collision_waypoint_mask = (
+                self.planning_task.get_trajs_unvalid_and_valid(
+                    q_trajs_iter_0,
+                    return_indices=True,
+                    filter_joint_limits_vel_acc=True,
+                )
+            )
         if valid_idxs.ndim == 2:
             valid_idxs = valid_idxs.squeeze(1)
 
@@ -843,34 +1130,39 @@ class GenerativeOptimizationPlanner:
             collision_waypoint_mask[collision_trajectory_mask].to(torch.long), dim=-1
         )
 
-        joint_position_violation_mask = (
-            torch.logical_or(
-                q_trajs_pos_iter_0 < self.planning_task.robot.q_pos_min,
-                q_trajs_pos_iter_0 > self.planning_task.robot.q_pos_max,
-            )
-            .any(dim=-1)
-            .any(dim=-1)
-        )
-        joint_velocity_violation_mask = torch.zeros_like(joint_position_violation_mask)
-        if self.planning_task.robot.dq_max is not None:
-            joint_velocity_violation_mask = (
+        if dense_validation_result is not None:
+            joint_position_violation_mask = dense_validation_result.joint_position_violation_mask
+            joint_velocity_violation_mask = dense_validation_result.joint_velocity_violation_mask
+            joint_acceleration_violation_mask = dense_validation_result.joint_acceleration_violation_mask
+        else:
+            joint_position_violation_mask = (
                 torch.logical_or(
-                    q_trajs_vel_iter_0 < -self.planning_task.robot.dq_max,
-                    q_trajs_vel_iter_0 > self.planning_task.robot.dq_max,
+                    q_trajs_pos_iter_0 < self.planning_task.robot.q_pos_min,
+                    q_trajs_pos_iter_0 > self.planning_task.robot.q_pos_max,
                 )
                 .any(dim=-1)
                 .any(dim=-1)
             )
-        joint_acceleration_violation_mask = torch.zeros_like(joint_position_violation_mask)
-        if self.planning_task.robot.ddq_max is not None:
-            joint_acceleration_violation_mask = (
-                torch.logical_or(
-                    q_trajs_acc_iter_0 < -self.planning_task.robot.ddq_max,
-                    q_trajs_acc_iter_0 > self.planning_task.robot.ddq_max,
+            joint_velocity_violation_mask = torch.zeros_like(joint_position_violation_mask)
+            if self.planning_task.robot.dq_max is not None:
+                joint_velocity_violation_mask = (
+                    torch.logical_or(
+                        q_trajs_vel_iter_0 < -self.planning_task.robot.dq_max,
+                        q_trajs_vel_iter_0 > self.planning_task.robot.dq_max,
+                    )
+                    .any(dim=-1)
+                    .any(dim=-1)
                 )
-                .any(dim=-1)
-                .any(dim=-1)
-            )
+            joint_acceleration_violation_mask = torch.zeros_like(joint_position_violation_mask)
+            if self.planning_task.robot.ddq_max is not None:
+                joint_acceleration_violation_mask = (
+                    torch.logical_or(
+                        q_trajs_acc_iter_0 < -self.planning_task.robot.ddq_max,
+                        q_trajs_acc_iter_0 > self.planning_task.robot.ddq_max,
+                    )
+                    .any(dim=-1)
+                    .any(dim=-1)
+                )
 
         valid_trajectory_mask = torch.zeros_like(collision_trajectory_mask)
         valid_idxs_flat = valid_idxs.reshape(-1).long()
@@ -890,13 +1182,15 @@ class GenerativeOptimizationPlanner:
             q_trajs_vel_best = None
             q_trajs_acc_best = None
         else:
-            best_trajectory_selection = self.args_inference.get("best_trajectory_selection", best_trajectory_selection)
             best_trajectory_selection_details = {
                 "method": best_trajectory_selection,
             }
             ee_pose_goal_error_position_norm = None
             ee_pose_goal_error_orientation_norm = None
-            if self.dataset.context_ee_goal_pose:
+            if (
+                self.dataset.context_ee_goal_pose
+                and candidate_ranking_metadata is None
+            ):
                 ee_pose_goal_achieved = self.planning_task.robot.get_EE_pose(q_trajs_pos_valid[..., -1, :])
                 error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
                     ee_pose_goal, ee_pose_goal_achieved
@@ -906,7 +1200,35 @@ class GenerativeOptimizationPlanner:
                     torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1)
                 )
 
-            if best_trajectory_selection == "weighted_metrics":
+            if candidate_ranking_metadata is not None:
+                valid_candidate_scores = candidate_scores.index_select(
+                    0, valid_idxs.reshape(-1).long()
+                )
+                idx_min_cost = torch.argmin(valid_candidate_scores)
+                selected_candidate_index = int(
+                    valid_idxs.reshape(-1).long()[idx_min_cost].detach().cpu().item()
+                )
+                best_trajectory_selection_details = _ranked_selection_details(
+                    candidate_ranking_metadata, selected_candidate_index
+                )
+                best_trajectory_selection_details.update(
+                    selected_valid_index=int(idx_min_cost.detach().cpu().item()),
+                    selected_rank=int(
+                        torch.nonzero(
+                            ranked_candidate_indices == selected_candidate_index,
+                            as_tuple=False,
+                        )[0, 0]
+                        .detach()
+                        .cpu()
+                        .item()
+                    ),
+                    dense_batches_evaluated=dense_validation_result.batches_evaluated,
+                    dense_candidates_checked=int(
+                        dense_validation_result.trajectory_checked_mask.sum().item()
+                    ),
+                    dense_validation_complete=bool(dense_validation_result.complete),
+                )
+            elif best_trajectory_selection == "weighted_metrics":
                 metric_values = {
                     "path_length": compute_path_length(q_trajs_pos_valid, self.planning_task.robot),
                     "smoothness": compute_smoothness(
@@ -1034,6 +1356,13 @@ class GenerativeOptimizationPlanner:
             else:
                 raise ValueError(f"Unknown best_trajectory_selection={best_trajectory_selection!r}.")
 
+            if "selected_candidate_index" not in best_trajectory_selection_details:
+                best_trajectory_selection_details["selected_candidate_index"] = int(
+                    valid_idxs.reshape(-1).long()[idx_min_cost]
+                    .detach()
+                    .cpu()
+                    .item()
+                )
             control_points_best = control_points_valid[idx_min_cost]
             q_trajs_pos_best = q_trajs_pos_valid[idx_min_cost]
             q_trajs_vel_best = q_trajs_vel_valid[idx_min_cost]
@@ -1063,6 +1392,61 @@ class GenerativeOptimizationPlanner:
             joint_velocity_violation_mask=joint_velocity_violation_mask,
             joint_acceleration_violation_mask=joint_acceleration_violation_mask,
             valid_trajectory_mask=valid_trajectory_mask,
+            dense_validation_enabled=dense_validation_result is not None,
+            dense_validation_points=(
+                int(dense_validation_result.q_position.shape[1]) if dense_validation_result is not None else None
+            ),
+            dense_validation_time=t_dense_validation,
+            trajectory_ranking_time=t_trajectory_ranking,
+            dense_validation_checked_mask=(
+                dense_validation_result.trajectory_checked_mask
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_candidates_checked=(
+                int(dense_validation_result.trajectory_checked_mask.sum().item())
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_batches_evaluated=(
+                int(dense_validation_result.batches_evaluated)
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_bucket_capacities=(
+                list(dense_validation_result.bucket_capacities_evaluated)
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_padding_slots=(
+                int(dense_validation_result.padding_slots_evaluated)
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_complete=(
+                bool(dense_validation_result.complete)
+                if dense_validation_result is not None
+                else None
+            ),
+            dense_validation_ranked_early_exit=ranked_early_exit_enabled,
+            dense_environment_collision_mask=(
+                dense_validation_result.environment_collision_mask if dense_validation_result is not None else None
+            ),
+            dense_self_collision_mask=(
+                dense_validation_result.self_collision_mask if dense_validation_result is not None else None
+            ),
+            dense_minimum_environment_clearance=(
+                dense_validation_result.minimum_environment_clearance if dense_validation_result is not None else None
+            ),
+            dense_minimum_self_clearance=(
+                dense_validation_result.minimum_self_clearance if dense_validation_result is not None else None
+            ),
+            dense_first_invalid_index=(
+                dense_validation_result.first_invalid_index if dense_validation_result is not None else None
+            ),
+            gradient_pruning_statistics=(
+                self.cost_guide.guidance_profiler.snapshot() if self.cost_guide is not None else []
+            ),
             # valid control points and trajectories
             control_points_valid=control_points_valid,
             q_trajs_pos_valid=q_trajs_pos_valid,
@@ -1075,7 +1459,17 @@ class GenerativeOptimizationPlanner:
             q_trajs_acc_best=q_trajs_acc_best,
             best_trajectory_selection_details=best_trajectory_selection_details,
             # trajectory time steps
-            timesteps=self.planning_task.parametric_trajectory.get_timesteps(num=q_trajs_pos_iter_0.shape[1]),
+            timesteps=(
+                torch.linspace(
+                    0.0,
+                    self.planning_task.parametric_trajectory.trajectory_duration,
+                    dense_validation_result.q_position.shape[1],
+                    dtype=q_trajs_pos_iter_0.dtype,
+                    device=q_trajs_pos_iter_0.device,
+                )
+                if dense_validation_result is not None
+                else self.planning_task.parametric_trajectory.get_timesteps(num=q_trajs_pos_iter_0.shape[1])
+            ),
         )
         return results_ns
 

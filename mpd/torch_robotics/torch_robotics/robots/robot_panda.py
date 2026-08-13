@@ -30,6 +30,9 @@ class RobotPanda(RobotBase):
         super().__init__(
             urdf_robot_file=urdf_robot_file,
             collision_spheres_file_path=os.path.join(get_configs_path(), "panda/panda_sphere_config.yaml"),
+            collision_parent_bounds_file_path=os.path.join(
+                get_configs_path(), "panda/panda_parent_collision_bounds.yaml"
+            ),
             joint_limits_file_path=os.path.join(get_configs_path(), "panda/joint_limits.yaml"),
             link_name_ee=self.link_name_ee,
             gripper_q_dim=0 if gripper else 0,  # the gripper is fixed

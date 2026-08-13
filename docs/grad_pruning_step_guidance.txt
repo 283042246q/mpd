@@ -1138,3 +1138,62 @@ AABB swept/intersection volume cost；
 stop-gradient B：忽略 UNet Jacobian；
 identity 近似：直接把 \(\hat\tau_0\) 梯度施加到 \(\tau_t\)。
 对当前项目，建议优先实现 B-stopgrad 和方式 A，再把完整 B-full 作为消融；因为 B-full 的 UNet backward 很可能增加推理时间，而当前目标是实时规划。
+
+
+2026-08-03 当前仓库实现更新
+
+1. clean-x0 已采用方式 A1。
+denoiser 在当前 DDIM step 产生原始 epsilon_theta 和 detached x0_hat；CostGuide 只直接修正 x0_hat。构造 x_(t-1) 时保留本轮原始 epsilon_theta，不通过 UNet 反向传播，也不根据 guided x0 重新计算一致噪声。对于直接预测 x0 的模型，先从未修改的 x0_hat 推导一次等价原始 epsilon，再在整个 guide iteration 内保持它不变。
+
+2. 同一 DDIM step 复用 Temporal selection。
+guide_iteration=0 执行 coarse FK/SDF/self-collision 扫描；同一 context、diffusion timestep、batch/horizon、device/dtype 下的后续 guide iteration 复用 active selection。下一 DDIM step或缓存键变化会重新扫描。默认开关为：
+
+gradient_pruning.temporal.reuse_selection_within_ddim_step: true
+
+3. selector 已改为 GPU 批量分桶。
+risk count、K0/K32/K64/K128 分配、风险点优先保留、均匀 phase 补点均使用批量 GPU 张量运算。active indices 保存为 packed [B,H] 矩阵，Jacobian 分桶直接读取该矩阵，不再对每条候选执行 Python bool/nonzero/isin/unique。
+
+4. 小规模 CUDA smoke。
+Warehouse open-clearance、1 context、4 candidates、1 repeat 中，selection cache hit 为 9/12；A3R guide 从修改前匹配 smoke 的 0.175 s 降为 0.167 s，valid 均为 100%。该结果只验证实现方向，不替代正式多场景重复计时，Temporal 继续默认关闭。
+
+5. clean-x0 已直接接在 A2P-fast 后面。
+消融配置关闭 Temporal，保留 parent-link 和 dense parent fast path。4 guide steps 的 guide 时间为 0.117 s，与 A2P-fast 的 0.118 s 基本持平，但 valid 从 4/4 降为 3/4。2 guide steps 的 guide/inference 为 0.067/0.124 s，valid 为 4/4，但 EE position/orientation mean 从 0.0134/1.295 回退到 0.0308/4.376，smoothness mean 从 38.23 增至 98.13。说明结构可行，但当前 clean-space 步长和 trust region 不适合生产启用。
+
+6. CostGuide 显式梯度链与 B-spline 映射更新。
+Legacy/Pruned guide 均在 no_grad 下执行；Velocity、Acceleration、PathLength 已改为解析梯度，零权重 cost 直接跳过。Pruned B-spline 默认将 basis 映射与 trapezoid 积分融合为一次 [B,H,D] 到 [B,K,D] contraction；设置 gradient_pruning.mapping.fused_bspline_integration: false 可回退原 [B,H,K,D] 物化路径。最终有效性筛选统一为 128 点，runtime/benchmark 不再使用不同点数。
+
+
+2026-08-07 B0--B7 四轴稀疏更新
+
+1. 候选、时间、link、控制点四个轴已经解耦，可分别独立开启：
+gradient_pruning.candidate.enabled
+gradient_pruning.temporal.enabled
+gradient_pruning.spatial.active_link_pruning
+gradient_pruning.mapping.sparse_bspline_support
+
+2. B0 固定为 A2P-fast/no-grad/原 materialized 映射。B1/B2/B3/B4 分别只打开候选/时间/link/控制点；B5 为候选+时间，B6 再加 link，B7 全开。
+
+3. 统一 100 candidates、15 DDIM、20% guide、每步 6 iterations、dense=128、seed=2、3 repeats，在 Warehouse 四档、ThreePillars、两个 drawer 方向完成 168/168 次 CUDA 推理。
+
+4. 跨 7 场景几何平均：B3 link 的 Guide/inference/含 dense 总加速为 1.668x/1.561x/1.341x，离散 valid/collision mask 与 B0 全部一致；B7 只有 1.306x/1.265x/1.173x。
+
+5. 当前 link 稀疏是非零碰撞 link 的 packed Adjoint + J^Tg 投影，不改变 FK/Jacobian/SDF 语义，也不等同于未验证的 FK 前 link broad phase。
+
+6. 候选单开几乎没有 K0，Guide 为 0.933x，属于负优化。时间稀疏在 active time 约 30% 时有 1.32--1.34x，在 86.5%--100% 时为 0.82--0.93x。控制点单开为 1.005x，近似中性。
+
+7. 当前推荐显式开启 B3 link，候选/时间/控制点保持关闭。未加入 autoset；完整结果见 docs/GRADIENT_PRUNING_B0_B7_MULTI_SCENE_RESULTS_20260807.md。
+
+
+2026-08-08 B3 默认、真正 Link broad phase 与 Conditional temporal
+
+1. Warehouse runtime/paper 配置默认改为 B3：gradient_pruning enabled、ParentLinkFast、active_link_pruning=true，temporal/candidate/control-point/broad-phase 关闭，保留原 materialized 映射。缺少整个配置仍走 legacy。
+
+2. 新开关 gradient_pruning.spatial.link_broad_phase.enabled。每个 guide DDIM step 首次对 128 点做 inflated-margin FK-only/SDF scan，按候选 parent mask 分组，随后只计算入选 parent 的 J-FK、sphere SDF、自碰撞 pair 和 J^Tg。同一 DDIM step 后续 iteration 复用 mask，最终仍独立 dense=128 校验。
+
+3. 新开关 gradient_pruning.temporal.conditional_enabled，阈值 conditional_active_ratio_threshold=0.35。先用 32 粗点+中点预测 bucket active ratio；<=35% 才启用时间稀疏，否则回退规则 B3 dense-time。
+
+4. B3/C1 broad/C2 conditional/C3 both 在 7 场景、100 candidates、15 DDIM、20% guide、每步6 iterations、seed2、3 repeats 下完成84/84次有效CUDA运行。
+
+5. Guide几何平均：C1=0.690x、C2=0.892x、C3=0.645x，全部慢于B3。C1累计保留91.9% sphere/71.5% pair；动态 parent-mask dispatch 成本高于裁剪收益。C2只在 open 的3/3和 narrow-0.20 的2/3 active DDIM step启用，但粗扫成本仍无法在B3后摊平。
+
+6. C1/C2的valid/collision mask全部与B3一致；C3在narrow-0.20有1/100条valid变collision。因此两个新开关继续默认关闭，不加入autoset。详见 docs/GRADIENT_PRUNING_B3_BROAD_PHASE_CONDITIONAL_RESULTS_20260808.md。

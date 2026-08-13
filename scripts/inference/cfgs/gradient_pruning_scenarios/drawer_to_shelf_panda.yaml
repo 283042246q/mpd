@@ -1,0 +1,9 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: drawer_to_shelf_panda_gradient_pruning
+seed: 0
+base_config: ../config_EnvOpenDrawerShelf-RobotPanda-regions-drawer-to-shelf.yaml
+scenarios:
+- id: drawer_to_shelf
+  type: panda_states
+  difficulty: hard

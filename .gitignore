@@ -1,3 +1,4 @@
+benchmark_results/
 data_public/
 Motion_Planning_Diffusion_Learning_and_Adapting_Robot_Motion_Planning_With_Diffusion_Models.pdf
 address_token.txt
@@ -60,7 +61,7 @@ coverage.xml
 *.pot
 
 # Django stuff:
-#*.log
+*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -133,17 +134,17 @@ dmypy.json
 .pyre/
 
 # pth files
-#*.pth
-#*.pt
+*.pth
+*.pt
 
 .idea
 .idea/*
-#logs/*
+logs/*
 
 **no_add/
 
-#*logs
-#logs
+*logs
+logs
 
 #*results
 
@@ -214,3 +215,4 @@ scripts/plots/planar_4_link/inference_results*
 scripts/plots/panda_front_page_thesis/plots/
 
 scripts/plots/planar_4_link/plots*
+/deps/IsaacGym_Preview_4_Package.tar.tar

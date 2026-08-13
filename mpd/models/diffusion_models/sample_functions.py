@@ -114,11 +114,16 @@ def guide_gradient_steps(
 ):
     chain = []
 
-    x_start = x.clone()
-    x_opt = x.clone()
-    x_opt.requires_grad_(True)
-    opt = torch.optim.SGD([x_opt], lr=guide_lr)
-
+    if compute_costs_with_xrecon:
+        # Optimize the denoiser's clean prediction directly.  Re-evaluating
+        # the denoiser after every geometry step would add a second expensive
+        # graph and would no longer represent the same diffusion prediction.
+        with torch.no_grad():
+            x_start = model.predict_x_recon(x, t, context_d).detach()
+        x_opt = apply_hard_conditioning(x_start.clone(), hard_conds)
+    else:
+        x_start = x.clone()
+        x_opt = x.clone()
     clip_grad_fn = lambda x: x
     if clip_grad and clip_grad_rule == "norm":
         clip_grad_fn = partial(clip_grad_by_norm, max_grad_norm=max_grad_norm)
@@ -126,30 +131,19 @@ def guide_gradient_steps(
         clip_grad_fn = partial(clip_grad_by_value, max_grad_value=max_grad_value)
 
     for _ in range(n_guide_steps):
-        if compute_costs_with_xrecon:
-            # https://arxiv.org/pdf/2407.00451 -- equation 2
-            raise NotImplementedError("compute_costs_with_xrecon is not implemented")
-            with torch.enable_grad():
-                x_opt.requires_grad_(True)
-                x_recon = model.predict_x_recon(x_opt, t, context_d)
-                grad_x_recon_wrt_x = torch.autograd.grad(x_recon.sum(), x_opt)[0]
-                g = guide(x_recon, context_d=context_d) * grad_x_recon_wrt_x
-                g = clip_grad_by_value(g, max_grad_value=0.1)
-                grad_guide = weight * g
-        else:
-            grad_guide = guide(x_opt, context_d=context_d)
+        # In clean-prediction mode x_opt is already the normalized x0 estimate.
+        # The guide returns a descent direction in that same space.
+        grad_guide = guide(x_opt, context_d=context_d, diffusion_timestep=t)
 
         if scale_grad_by_std:
             grad_guide = model_var * grad_guide
 
         grad_guide_clipped = clip_grad_fn(grad_guide)
 
-        # manually set the gradient and update x
-        # -1 because we want to maximize the guide
-        x_opt.grad = -1.0 * grad_guide_clipped
-        opt.step()
-        opt.zero_grad()
-        x_opt.grad = None
+        # CostGuide returns the descent direction (negative cost gradient).
+        # Detach after every update so stale autograd graphs and optimizer
+        # parameter references cannot accumulate across guide iterations.
+        x_opt = (x_opt + guide_lr * grad_guide_clipped).detach()
 
         # Clip the perturbation to avoid large changes from x_start
         x_delta = x_opt - x_start

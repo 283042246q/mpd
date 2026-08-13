@@ -7,13 +7,14 @@ from torch_robotics.environments.primitives import MultiBoxField, ObjectField
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
 
 
-# Two front pillars form the entrance. The offset rear pillar blocks a straight
-# continuation, leaving two arm-width diagonal routes through the cluster.
+# Coordinates are written directly in their final world frame. Two front
+# pillars form the -y entrance; the offset rear pillar leaves two arm-width
+# diagonal routes along +y and remains visible from the existing replay camera.
 THREE_PILLAR_BOXES = {
     "centers": [
-        [0.32, -0.46, 0.65],
-        [0.32, 0.46, 0.65],
-        [0.55, 0.00, 0.65],
+        [0.46, 0.32, 0.65],
+        [-0.46, 0.32, 0.65],
+        [0.00, 0.55, 0.65],
     ],
     "sizes": [
         [0.16, 0.16, 1.30],
@@ -38,7 +39,7 @@ class EnvThreePillarsPassage(EnvBase):
 
     def __init__(self, tensor_args=DEFAULT_TENSOR_ARGS, **kwargs):
         super().__init__(
-            limits=torch.tensor([[-0.45, -0.80, -0.10], [1.05, 0.80, 1.40]], **tensor_args),
+            limits=torch.tensor([[-0.80, -0.45, -0.10], [0.80, 1.05, 1.40]], **tensor_args),
             obj_fixed_list=[create_three_pillars_field(tensor_args=tensor_args)],
             tensor_args=tensor_args,
             **kwargs,

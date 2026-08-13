@@ -132,7 +132,7 @@ scripts/real_robot/
 ```bash
 cd /home/eric/MotionPlanningDiffusion/mpd-splines-public
 source set_env_variables.sh
-conda activate mpd-splines-public-cu128
+conda activate mpd-splines-public
 
 cd scripts/inference
 python inference.py \

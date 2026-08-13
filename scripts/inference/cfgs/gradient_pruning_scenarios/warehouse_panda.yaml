@@ -1,0 +1,24 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: warehouse_panda_gradient_pruning
+seed: 0
+base_config: ../config_EnvWarehouse-RobotPanda-paper_sweep.yaml
+scenarios:
+  - id: open_clearance
+    type: warehouse_extra_boxes
+    difficulty: simple
+    extra_boxes_yaml: warehouse/extra_boxes/warehouse_extra_boxes_simple.yaml
+  - id: single_obstacle
+    type: warehouse_extra_boxes
+    difficulty: medium
+    extra_boxes_yaml: warehouse/extra_boxes/warehouse_extra_boxes_v00.yaml
+  - id: narrow_020
+    type: warehouse_narrow_gap
+    difficulty: hard
+    gap_width: 0.20
+    extra_boxes_yaml: warehouse/extra_boxes/warehouse_extra_boxes_narrow_020.yaml
+  - id: narrow_014
+    type: warehouse_narrow_gap
+    difficulty: hard
+    gap_width: 0.14
+    extra_boxes_yaml: warehouse/extra_boxes/warehouse_extra_boxes_narrow_014.yaml

@@ -1,0 +1,82 @@
+# Drawer-to-shelf end-effector sampling regions in the Panda base/world frame.
+#
+# IMPORTANT:
+# - rotation_z_axis_deg is intentionally not used here. These are the final
+#   world coordinates of the current EnvOpenDrawerShelf geometry.
+# - The original generator semantics are intentionally preserved: about half
+#   joint-to-region and half unordered region-to-region.
+# - Only drawer and shelf are top-level regions. Their physical sampling areas
+#   are uniformly selected subregions inside the chosen top-level region.
+#   See the companion workflow document for the resulting data distribution.
+# - The lower and middle shelf compartments use separate xy ranges because
+#   the middle compartment permits a wider reliable sampling area.
+# - A second drawer start is inset from the front/shelf-side walls and uses a
+#   top-down orientation. The forward-facing orientation collides near the
+#   drawer walls.
+# - The current upper compartment is outside the reliable Panda workspace.
+
+env_id: EnvOpenDrawerShelf
+robot_id: RobotPanda
+move_between_pose_regions: true
+
+
+pose_regions:
+  drawer:
+    subregions:
+      # Despite the earlier "corner" name, this is a stable central band.
+      center_reachable:
+        translation:
+          x: [[-0.26, -0.18]]
+          y: [[0.50, 0.54]]
+          z: [[0.28, 0.32]]
+        rotation:
+          base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
+          x: [[-2.0, 2.0]]
+          y: [[-2.0, 2.0]]
+          z: [[-2.0, 2.0]]
+
+      # Inset from both walls and approached from above. In the 1000-task
+      # pilot, x=[-0.10, -0.07] succeeded for 159/174 tasks (91.4%), while
+      # x=[-0.06, -0.04] succeeded for 0/113. Keep the y/z coverage because
+      # neither coordinate showed a stable monotonic effect on success.
+      front_shelf_inset:
+        translation:
+          x: [[-0.10, -0.07]]
+          y: [[0.34, 0.40]]
+          z: [[0.32, 0.36]]
+        rotation:
+          base: [[0, -1, 0], [-1, 0, 0], [0, 0, -1]]
+          x: [[-2.0, 2.0]]
+          y: [[-2.0, 2.0]]
+          z: [[-2.0, 2.0]]
+
+  shelf:
+    subregions:
+      lower:
+        translation:
+          x: [[0.40, 0.46]]
+          y: [[0.52, 0.56]]
+          z: [[0.24, 0.27]]
+        rotation:
+          base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
+          x: [[-2.0, 2.0]]
+          y: [[-2.0, 2.0]]
+          z: [[-3.0, 3.0]]
+
+      middle:
+        translation:
+          x: [[0.36, 0.50]]
+          y: [[0.50, 0.60]]
+          z: [[0.53, 0.60]]
+        rotation:
+          base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
+          x: [[-2.0, 2.0]]
+          y: [[-2.0, 2.0]]
+          z: [[-3.0, 3.0]]
+
+# The upper compartment's geometric free-height interval is approximately
+# z=[0.745, 1.040]. A nominal end-effector candidate would be:
+#   x=[0.36, 0.50], y=[0.50, 0.60], z=[0.80, 0.84]
+# It is intentionally absent from pose_regions: tested IK samples failed in
+# the current scene. Move/lower the shelf, then re-run IK/OMPL validation
+# before adding that z interval.

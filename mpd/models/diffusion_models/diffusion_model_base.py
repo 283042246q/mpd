@@ -148,7 +148,7 @@ class GaussianDiffusionModel(nn.Module, ABC):
         if self.clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
         else:
-            assert RuntimeError()
+            raise RuntimeError("clip_denoised=False is unsupported for bounded control points")
         return x_recon
 
     def q_posterior(self, x_start, x_t, t):
@@ -172,7 +172,7 @@ class GaussianDiffusionModel(nn.Module, ABC):
         if self.clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
         else:
-            assert RuntimeError()
+            raise RuntimeError("clip_denoised=False is unsupported for bounded control points")
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
         return model_mean, posterior_variance, posterior_log_variance, x_recon
@@ -315,11 +315,18 @@ class GaussianDiffusionModel(nn.Module, ABC):
                 if self.clip_denoised:
                     _x_recon.clamp_(-1.0, 1.0)
                 else:
-                    assert RuntimeError()
+                    raise RuntimeError("clip_denoised=False is unsupported for bounded control points")
                 _pred_noise = self.predict_noise_from_start(_x, t=t, x0=_grad_prior)
                 _x = _x_recon * alpha_next.sqrt() + c * _pred_noise
                 _x = apply_hard_conditioning(_x, hard_conds)
                 return _x, _x_recon
+
+            def update_x_from_x0_a1(_x0, _original_noise):
+                """Build the next DDIM state while preserving denoiser noise (A1)."""
+                _x0 = _x0.clamp(-1.0, 1.0) if self.clip_denoised else _x0
+                _next = _x0 * alpha_next.sqrt() + c * _original_noise
+                _next = apply_hard_conditioning(_next, hard_conds)
+                return _next, _x0
 
             # Modify the noise if guidance is active
             # https://arxiv.org/pdf/2105.05233.pdf - Algorithm 2
@@ -387,37 +394,81 @@ class GaussianDiffusionModel(nn.Module, ABC):
                         }
                     )
                 with TimerCUDA() as t_guide:
-                    x_start = x.clone()
-                    for k_gd in range(n_guide_steps):
-                        grad_prior_weighted = grad_prior * prior_weight_step
-                        if compute_costs_with_xrecon:
-                            raise NotImplementedError("compute_costs_with_xrecon is not implemented")
-                        else:
+                    if compute_costs_with_xrecon:
+                        # Guide the clean trajectory predicted by this denoising
+                        # step.  The denoiser is deliberately kept out of the
+                        # autograd graph; the guide gradient is already defined
+                        # in normalized control-point space.
+                        # Restore the denoiser prediction with its original noise.
+                        # ddim_scale_grad_prior belongs to legacy noise-space
+                        # blending; applying it here corrupts x0 (and makes a
+                        # prior weight of zero discard the denoiser entirely).
+                        x0_start = self.predict_start_from_noise(
+                            x, t=t, noise=grad_prior
+                        ).detach()
+                        if self.clip_denoised:
+                            x0_start = x0_start.clamp(-1.0, 1.0)
+                        # A1 keeps the denoiser's original noise direction. If
+                        # this model predicts x0 directly, derive the equivalent
+                        # original epsilon once from the unguided prediction.
+                        original_noise = (
+                            grad_prior.detach()
+                            if self.predict_epsilon
+                            else self.predict_noise_from_start(x, t=t, x0=x0_start).detach()
+                        )
+                        x0_opt = apply_hard_conditioning(x0_start.clone(), hard_conds)
+                        for k_gd in range(n_guide_steps):
+                            grad_guide = guide(
+                                x0_opt,
+                                context_d=context_d,
+                                cost_weight_overrides=cost_weight_overrides,
+                                diffusion_timestep=t,
+                                guide_iteration=k_gd,
+                            )
+                            grad_guide = clip_grad_fn(grad_guide)
+                            # Legacy DDIM applies guidance to epsilon. Map that
+                            # perturbation into x0 space so the configured guide
+                            # learning rate keeps the same scale.
+                            guide_scale = (1 - alpha).sqrt() / alpha.sqrt() if self.predict_epsilon else 1.0
+                            if scale_grad_by_one_minus_alpha:
+                                guide_scale = guide_scale * (1 - alpha).sqrt()
+                            # CostGuide returns the descent direction (negative
+                            # cost gradient), so add it in clean-control-point space.
+                            x0_opt = x0_opt + guide_lr * guide_scale * grad_guide
+                            x0_opt = torch.maximum(
+                                torch.minimum(x0_opt, x0_start + max_perturb_x),
+                                x0_start - max_perturb_x,
+                            )
+                            if self.clip_denoised:
+                                x0_opt = x0_opt.clamp(-1.0, 1.0)
+                            x0_opt = apply_hard_conditioning(x0_opt, hard_conds)
+                        x, x_recon = update_x_from_x0_a1(x0_opt, original_noise)
+                    else:
+                        x_start = x.clone()
+                        for k_gd in range(n_guide_steps):
+                            grad_prior_weighted = grad_prior * prior_weight_step
                             grad_guide = guide(
                                 x,
                                 context_d=context_d,
                                 cost_weight_overrides=cost_weight_overrides,
+                                diffusion_timestep=t,
+                                guide_iteration=k_gd,
                             )
 
-                        grad_guide_clipped = clip_grad_fn(grad_guide)
-                        grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
+                            grad_guide_clipped = clip_grad_fn(grad_guide)
+                            grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
 
-                        # grad_prior_weighted_norm = torch.linalg.norm(grad_prior_weighted, dim=-1)
-                        # grad_guide_clipped_weighted_norm = torch.linalg.norm(grad_guide_clipped_weighted, dim=-1)
-                        # print(f'denoising epsilon (norm): {grad_prior_weighted_norm.mean():.4f} +- {grad_prior_weighted_norm.std():.4f}')
-                        # print(f'guide grad (norm): {grad_guide_clipped_weighted_norm.mean():.4f} +- {grad_guide_clipped_weighted_norm.std():.4f}')
+                            if scale_grad_by_one_minus_alpha:
+                                # by default we skip it, because (1-alpha) -> 0 when t -> 0
+                                grad_total = grad_prior_weighted - (1 - alpha).sqrt() * grad_guide_clipped_weighted
+                            else:
+                                grad_total = grad_prior_weighted - grad_guide_clipped_weighted
 
-                        if scale_grad_by_one_minus_alpha:
-                            # by default we skip it, because (1-alpha) -> 0 when t -> 0
-                            grad_total = grad_prior_weighted - (1 - alpha).sqrt() * grad_guide_clipped_weighted
-                        else:
-                            grad_total = grad_prior_weighted - grad_guide_clipped_weighted
-
-                        x_tmp, x_recon = update_x(x, grad_total)
-                        # Clip the perturbation to avoid large changes from x_start_opt
-                        x_delta = x_tmp - x_start
-                        x_delta_clipped = torch.clip(x_delta, -max_perturb_x, max_perturb_x)
-                        x = x_start + x_delta_clipped
+                            x_tmp, x_recon = update_x(x, grad_total)
+                            # Clip the perturbation to avoid large changes from x_start_opt
+                            x_delta = x_tmp - x_start
+                            x_delta_clipped = torch.clip(x_delta, -max_perturb_x, max_perturb_x)
+                            x = x_start + x_delta_clipped
 
                     if results_ns is not None:
                         results_ns.t_guide += t_guide.elapsed

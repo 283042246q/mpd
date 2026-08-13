@@ -91,6 +91,47 @@ class BsplineBoundaryConditionsTest(unittest.TestCase):
         torch.testing.assert_close(result["vel"][:, -1], torch.zeros(2, 2, dtype=torch.float64), atol=1e-9, rtol=0)
         torch.testing.assert_close(result["acc"][:, -1], torch.zeros(2, 2, dtype=torch.float64), atol=1e-8, rtol=0)
 
+    def test_derivative_control_points_bound_sampled_phase_velocity(self):
+        trajectory = ParametricTrajectoryBspline(
+            n_control_points=12,
+            degree=5,
+            zero_vel_at_start_and_goal=True,
+            zero_acc_at_start_and_goal=True,
+            remove_outer_control_points=True,
+            num_T_pts=257,
+            trajectory_duration=4.0,
+            tensor_args={"device": "cpu", "dtype": torch.float64},
+        )
+        q_start = torch.tensor([0.1, -0.2], dtype=torch.float64)
+        q_goal = torch.tensor([0.8, 0.4], dtype=torch.float64)
+        inner = torch.randn(4, 6, 2, dtype=torch.float64)
+        phase_velocity = trajectory.get_q_trajectory(
+            inner, q_start, q_goal, get_type=("vel",), get_time_representation=False
+        )["vel"]
+        derivative_cps = trajectory.get_control_points_derivatives(
+            inner,
+            q_pos_start=q_start,
+            q_pos_goal=q_goal,
+            get_type="vel",
+            get_time_repr=False,
+        )
+        bound = derivative_cps.abs().amax(dim=-2)
+        self.assertTrue(
+            (phase_velocity.abs().amax(dim=-2) <= bound + 1e-10).all().item()
+        )
+
+        time_derivative_cps = trajectory.get_control_points_derivatives(
+            inner,
+            q_pos_start=q_start,
+            q_pos_goal=q_goal,
+            get_type="vel",
+            get_time_repr=True,
+        )
+        torch.testing.assert_close(
+            time_derivative_cps,
+            derivative_cps * trajectory.phase_time.rs[0],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,40 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: simple_2d_gradient_pruning
+seed: 0
+base_config: ../config_EnvSimple2D-RobotPointMass2D_00.yaml
+scenarios:
+  - id: open_clearance
+    type: simple_2d
+    difficulty: simple
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    obstacles: []
+  - id: single_obstacle
+    type: simple_2d
+    difficulty: medium
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    obstacles:
+      - shape: circle
+        center: [0.0, 0.0]
+        radius: 0.18
+  - id: between_coarse_points
+    type: simple_2d
+    difficulty: hard
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    obstacles:
+      - shape: circle
+        center: [-0.258268, 0.0]
+        radius: 0.006
+    assertion: dense_collision_and_coarse_endpoints_clear
+  - id: near_margin
+    type: simple_2d
+    difficulty: medium
+    q_pos_start: [-0.8, 0.0]
+    q_pos_goal: [0.8, 0.0]
+    obstacles:
+      - shape: circle
+        center: [0.0, 0.09]
+        radius: 0.04

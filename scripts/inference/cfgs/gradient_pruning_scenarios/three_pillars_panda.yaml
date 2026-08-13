@@ -1,0 +1,9 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: three_pillars_panda_gradient_pruning
+seed: 0
+base_config: ../config_EnvThreePillarsPassage-RobotPanda-regions.yaml
+scenarios:
+- id: three_pillars_regions
+  type: panda_regions
+  difficulty: hard

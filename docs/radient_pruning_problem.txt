@@ -1,0 +1,539 @@
+
+已完成 Warehouse/Panda 三档难度、五阶段逐步开启消融测试。结论是：风险分布符合
+  场景难度，但当前完整裁剪路径没有实现净加速，因此不建议默认开启。
+
+   功能阶段                   平均增量效果    结论
+  ━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━
+   A1 新路径/全量 Jacobian          0.984×    约 1.6% 框架开销
+  ─────────────────────────  ──────────────  ──────────────────────
+   A2 EE 仅末端                     1.022×    guidance 约加速 2.2%
+  ─────────────────────────  ──────────────  ──────────────────────
+   A3 时间选择与分桶                0.502×    约慢 2 倍
+  ─────────────────────────  ──────────────  ──────────────────────
+   A4 Parent-link                   1.138×    相对 A3 加速约 13.8%
+  ─────────────────────────  ──────────────  ──────────────────────
+   完整 A4 相对 Legacy              0.573×    整体约慢 1.75 倍
+
+  风险分配本身符合逻辑：
+
+   难度                      Active 点    K128 占比      Valid rate
+  ━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━  ━━━━━━━━━━━  ━━━━━━━━━━━━━━
+   Simple/open                   48.2%         5.2%    各阶段均 90%
+  ────────────────────────  ───────────  ───────────  ──────────────
+   Medium/single obstacle        59.3%        18.7%    各阶段均 92%
+  ────────────────────────  ───────────  ───────────  ──────────────
+   Hard/narrow 0.14              85.0%        70.1%    各阶段均 66%
+
+  主要瓶颈是 selector 先扫描完整 128 点 FK/SDF，随后又为 active 点计算
+  FK+Jacobian，造成重复 FK；同时三个场景的 K32 占比都是 0，大多数低风险候选直接
+  进入 K64。Parent-link 可以追回部分性能，但无法抵消这些开销。
+
+  测试条件为 RTX 4090 D、每场景 100 candidates、3 次独立重复、同 seed/start-
+  goal、512 点 dense checker。安全指标与 collision rate 在五阶段完全一致。正式计
+  时关闭了会引入 CUDA 同步偏差的分段 profiler，autoset 未加入。
+
+  完整 15 行结果、原因和启用建议见：
+
+  - MotionPlanningDiffusion/mpd/docs/
+    GRADIENT_PRUNING_ABLATION_RESULTS_20260729.md
+
+  - MotionPlanningDiffusion/mpd/scripts/inference/
+    benchmark_gradient_pruning_ablation.py
+
+  - /tmp/mpd-ablation-warehouse-timing-20260729/reports/ablation-summary.csv
+
+  建议目前保持 gradient_pruning.enabled: false；保留 EE endpoint 与 parent-link
+  实现，下一步优先把风险扫描改成真正的 32→64→128 coarse-to-fine，并复用 coarse
+  FK。完整回归测试为 36/36 通过。
+
+
+› 时间分桶还有意义吗？jacobian应不应该全部计算？jacobian和fk存在计算重复吗？怎
+  么优化
+
+
+• 我会沿当前实际调用链核对三件事：fk_collision_spheres 与
+  jfk_s_collision_spheres 是否共享计算、时间分桶减少的是哪些张量、以及当前为什么
+  出现“点数减少但更慢”。然后给出是否保留分桶、是否全算 Jacobian，以及按收益排序
+  的优化方案。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 调用链已经确认：TorchKin 的 jfk_s_* 不是“只算 Jacobian”，它内部先执行一次
+  selected-link FK，再由完整 ancestor poses 构造 spatial Jacobian并同时返回
+  poses。当前 selector 先对全部 128 点调用 FK，active 阶段再调用 jfk_s_*，所以
+  active 点的 FK 确实重复；环境 SDF/self-distance 也会在筛选和 active cost 中各
+  算一次。独立 512 点 dense checker 的 FK 重算则是有意的安全隔离，不属于应复用的
+  guidance 重复。
+
+────────────────────────────────────────────────────────────────────────────────
+
+• 结论：
+
+  - 时间分桶在算法上有意义，但当前实现对“降低延迟”没有意义，应该暂时关闭。
+  - 以当前代码而言，完整计算 collision Jacobian 反而更快。
+  - FK 确实存在重复：active 点先在 selector 中算 FK，随后 jfk_s_* 内部又算一次
+    FK。
+
+  - 优化重点不是删除分桶，而是把它改成真正的 32→64→128 增量计算，并复用 FK。
+
+  ## 当前重复在哪里
+
+   路径             FK                                  Jacobian
+  ━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━
+   Legacy           jfk_s_* 内部计算一次全 128 点 FK    全 128 点
+  ───────────────  ──────────────────────────────────  ───────────────────────
+   当前分桶         先对全 128 点算 FK/SDF              active 点调用 jfk_s_*
+  ───────────────  ──────────────────────────────────  ───────────────────────
+   jfk_s_* 内部     active 点再次算 FK                  active Jacobian
+  ───────────────  ──────────────────────────────────  ───────────────────────
+   Dense checker    独立 512 点 FK                      不算 Jacobian
+
+  selector 当前直接对全部轨迹点调用 FK：MotionPlanningDiffusion/mpd/mpd/
+  inference/collision_risk_selector.py:93。
+
+  active 阶段随后调用 jfk_s_collision_spheres：MotionPlanningDiffusion/mpd/mpd/
+  inference/active_jacobian.py:24。
+
+  而 TorchKin 的 forward_kinematics_spatial_jacobian() 会先执行
+  SelectedForwardKinematics.apply()，再根据 poses 构造 Jacobian：
+  MotionPlanningDiffusion/mpd/deps/theseus/torchkin/torchkin/
+  forward_kinematics.py:147。
+
+  如果 active 比例为 (r)，当前路径大约执行：
+
+  [
+  128B + 128Br = 128B(1+r)
+  ]
+
+  次 FK 状态计算，而 Legacy 约为 (128B)。实测：
+
+   难度      Active 比例    当前 FK 工作量近似
+  ━━━━━━━━  ━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━
+   Simple          48.2%     Legacy 的 1.48 倍
+  ────────  ─────────────  ────────────────────
+   Medium          59.3%     Legacy 的 1.59 倍
+  ────────  ─────────────  ────────────────────
+   Hard            85.0%     Legacy 的 1.85 倍
+
+  此外，SDF/self-distance 也重复：selector 为筛选计算一次，active collision cost
+  又计算一次距离及梯度。
+
+  独立 dense checker 的 FK 重算不要复用 guidance active set，这是安全隔离的设计
+  要求。
+
+  ## Jacobian 是否应该全部计算
+
+  当前版本：应该。
+
+  正式 benchmark 中：
+
+  - 时间分桶 A3 相对 A2 只有约 0.502×，即慢接近两倍。
+  - Parent-link 能让 A4 相对 A3 加速约 1.138×。
+  - 但完整 A4 相对 Legacy 仍只有 0.573×，约慢 1.75 倍。
+
+  因此当前 runtime 建议：
+
+  gradient_pruning:
+    enabled: false
+
+  但长期不应该固定全部计算，应采用混合策略：
+
+   候选类型               建议
+  ━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   明确远离障碍物         K0，不算 collision Jacobian
+  ─────────────────────  ───────────────────────────────
+   低风险                 K32
+  ─────────────────────  ───────────────────────────────
+   一般风险               K64
+  ─────────────────────  ───────────────────────────────
+   窄通道/高风险          K128，直接走完整批量 J-FK
+  ─────────────────────  ───────────────────────────────
+   大部分候选已是 K128    整批短路回 Legacy full-J 路径
+
+  EE Jacobian 不需要全算，继续保持 endpoint-only。Joint limits、速度和加速度也不
+  需要 collision Jacobian。
+
+  ## 推荐优化顺序
+
+  ### 1. 真正实现增量 coarse-to-fine
+
+  现在是“先算满 128 点，再决定用多少点”，应改为：
+
+  固定 32 点 FK + clearance
+          ↓
+  只找危险区间
+          ↓
+  只计算危险区间中点，扩展到 64
+          ↓
+  仍危险的区间再扩展到 128
+
+  伪代码：
+
+  indices_32 = fixed_indices(128, 32)
+  cache = evaluate_fk_clearance(q[:, indices_32])
+
+  risk_intervals = find_risky_intervals(cache)
+
+  indices_64_new = midpoints(risk_intervals)
+  cache.update(evaluate_fk_clearance(q[:, indices_64_new]))
+
+  risk_intervals = refine_risk(cache)
+  indices_128_new = midpoints(risk_intervals)
+  cache.update(evaluate_fk_clearance(q[:, indices_128_new]))
+
+  每一级只计算新增点，不能重新计算前一级。
+
+  ### 2. 修复 K32 永远用不上的问题
+
+  当前代码把 coarse 和完整 128 点 risk_mask 合并；只要风险点不恰好落在 coarse
+  index 上，点数就超过 32，直接进入 K64：MotionPlanningDiffusion/mpd/mpd/
+  inference/collision_risk_selector.py:124。
+
+  实测三个场景 K32 都是 0。应改成：
+
+  - K32：只使用固定 coarse 点；
+  - K64：只加入危险区间中点；
+  - K128：高风险或保守 fallback；
+  - bucket 按风险等级决定，而不是按 coarse ∪ 所有风险点 的数量决定。
+
+  ### 3. 扩展 TorchKin API，复用 poses
+
+  将 TorchKin 拆成两个接口：
+
+  poses_cache = forward_kinematics_with_cache(q)
+  jacobians = spatial_jacobian_from_cached_poses(poses_cache)
+
+  需要缓存的不只是碰撞球最终 pose，还包括 related_link_ids 的 ancestor poses，因
+  为 backward_helper() 依赖它们。
+
+  这样 active coarse 点已经计算过 FK 时，只补 Jacobian，不再重新执行 FK。
+
+  ### 4. K128 直接走 Legacy 快路径
+
+  当前每个 bucket 还会进行 Python 循环、gather、cost、scatter：
+  MotionPlanningDiffusion/mpd/mpd/inference/cost_guides.py:516。
+
+  对于 K128：
+
+  if all_or_most_candidates_are_k128:
+      return legacy_collision_kinematics_and_cost(...)
+
+  不要把完整候选放进稀疏 gather/scatter 框架。
+
+  切换阈值应通过离线 microbenchmark 固定，例如比较：
+
+  full batch J-FK 时间
+  vs
+  coarse selector + sparse J-FK + scatter 时间
+
+  当前数据表明 active=48.2% 仍未达到 break-even，因此不能简单设置为 50%。
+
+  ### 5. 减少 bucket kernel 和 Python 循环
+
+  可尝试两种方式：
+
+  - 将所有 active q 拼成一个扁平 tensor，一次调用 TorchKin，再用 offsets 做
+    segment scatter；
+
+  - 或保留 K32/K64/K128，但只对非空且足够大的 bucket 发起 kernel，小 bucket 合并
+    到下一档。
+
+  同时应张量化 candidate bucket assignment，移除逐候选 Python 循环。
+
+  ### 6. 复用距离结果
+
+  selector 可缓存：
+
+  sphere positions
+  environment signed distance
+  self-pair distance
+
+  active cost 复用 signed distance，只补算：
+
+  environment SDF gradient
+  self-distance position gradient
+  Jacobian chain rule
+
+  对于环境距离，还可以先做 parent-link bounding volume broad phase，再展开细球。
+
+  ## 推荐最终结构
+
+  32点 parent-link FK
+          ↓
+  保守区间风险判断
+          ↓
+  候选分组
+  ├── K0：collision gradient = 0
+  ├── K32/K64：复用 FK cache，只补 Jacobian
+  └── K128：Legacy full-J 快路径
+          ↓
+  统一映射到控制点梯度
+          ↓
+  独立 256/512 点 dense checker
+
+  所以，时间分桶值得保留，但当前版本应视为“功能正确的原型”，不是性能优化。下一步
+  最关键的是“只计算 32 点进行初筛”和“从 cached poses 计算 Jacobian”；完成这两项
+  后再讨论是否默认开启。完整实测依据见 MotionPlanningDiffusion/mpd/docs/
+  GRADIENT_PRUNING_ABLATION_RESULTS_20260729.md:51。
+
+
+› 当前分桶为负优化的原因
+
+
+• 当前分桶是负优化，核心原因是：省下的部分 Jacobian 计算，小于新增的全量风险扫
+  描、重复 FK 和分桶调度成本。
+
+   原因                      当前行为                   影响
+  ━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━
+   风险扫描仍是全量          先对所有候选的 128 点做    分桶前已经支付一遍主要
+                             FK、环境 SDF 和 self-      计算
+                             distance
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   Active 点重复 FK          随后调用 jfk_s_*，其内     Active 48%/59%/85% 时，
+                             部再次计算 active 点 FK    FK 工作量约为 Legacy 的
+                                                        1.48/1.59/1.85 倍
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   SDF/self-distance 重复    selector 算 clearance，    距离查询没有随 Jacobian
+                             collision cost 又算距离    点数同比下降
+                             和梯度
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   K32 实际为空              coarse ∪ risk_mask 通常    简单场景 86% 候选进入
+                             超过 32 点，直接升级       K64，未获得预期 K32 收
+                             K64                        益
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   难场景退化为 K128         narrow 场景 70.1% 候选     几乎全量计算，还额外承
+                             进入 K128                  担 selector 开销
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   GPU batch 被拆散          按 K0/K64/K128 分开调用    更多小 kernel、同步点、
+                             TorchKin 和 cost           gather/scatter
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   Python 调度增加           逐候选分桶、逐 bucket、    GPU 计算减少后，CPU 调
+                             逐 cost 循环               度占比反而上升
+  ────────────────────────  ─────────────────────────  ─────────────────────────
+   Legacy 调用更融合         Legacy 的 jfk_s_* 一次     全量规则 batch 对 GPU
+                             返回 FK poses 和           更友好
+                             Jacobian
+
+  当前计算量可近似理解为：
+
+  # [
+  T_{\text{bucket}}
+
+  T_{\text{FK128}}
+  +T_{\text{SDF128}}
+  +T_{\text{FK-active}}
+  +T_{\text{J-active}}
+  +T_{\text{SDF-active}}
+  +T_{\text{dispatch}}
+  ]
+
+  而 Legacy 是：
+
+  # [
+  T_{\text{legacy}}
+
+  T_{\text{FK128+J128}}
+  +T_{\text{SDF128}}
+  ]
+
+  虽然 (J_{\text{active}} < J_{128})，但其他新增项更大。
+
+  实测结果也一致：
+
+   场景      Active 比例    时间分桶 A3/A2
+  ━━━━━━━━  ━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━
+   Simple          48.2%            0.490×
+  ────────  ─────────────  ────────────────
+   Medium          59.3%            0.499×
+  ────────  ─────────────  ────────────────
+   Hard            85.0%            0.516×
+
+  这里小于 1× 表示变慢，约为原来的两倍时间。
+
+  直接触发负优化的代码位置：
+
+  - 全量 128 点 FK/clearance：MotionPlanningDiffusion/mpd/mpd/inference/
+    collision_risk_selector.py:93
+
+  - Active 阶段再次调用 J-FK：MotionPlanningDiffusion/mpd/mpd/inference/
+    active_jacobian.py:24
+
+  - TorchKin 的 Jacobian 接口内部先计算 FK：MotionPlanningDiffusion/mpd/deps/
+    theseus/torchkin/torchkin/forward_kinematics.py:147
+
+  - 分 bucket 重复执行 cost/scatter：MotionPlanningDiffusion/mpd/mpd/inference/
+    cost_guides.py:516
+
+  因此问题不是“时间分桶理论上无效”，而是当前实现属于“全量扫描后再稀疏计算”。要变
+  成正优化，必须改为真正的 32 点 coarse FK、增量加入危险区间点、复用 FK poses，
+  并让 K128 直接走 Legacy 快路径。
+
+
+› 一开始只计算32点fk的话，得到的危险区间会不会不够全
+
+
+• 会。只计算固定 32 点 FK，再根据这 32 个点是否接近障碍物决定危险区间，不能保证
+  覆盖所有碰撞。
+
+  最典型的是短时碰撞发生在两个 coarse 点之间：
+
+  coarse k                 coarse k+1
+  安全点 -------- 障碍物 -------- 安全点
+
+  两个端点 clearance 都为正，但中间的 link 或碰撞球可能穿过障碍物。小障碍、快速
+  关节运动、高曲率轨迹、窄通道和自碰撞都容易出现这种情况。
+
+  因此“32 点初筛”不能等于“只检查 32 个点”。
+
+  ## 应采用保守的区间判断
+
+  对相邻 coarse 点 (k,k+1)，除了端点 clearance，还要判断区间内碰撞球最大可能移动
+  量。
+
+  设：
+
+  - 端点最小 clearance 为 (c_k,c_{k+1})；
+  - 碰撞球在区间内的保守运动上界为 (\Delta x_{\max})；
+  - safety margin 为 (m)。
+
+  只有满足：
+
+  [
+  \min(c_k,c_{k+1})-\Delta x_{\max}>m
+  ]
+
+  时，才能安全地跳过该区间。否则必须计算中点并继续细分。
+
+  一个不依赖 Jacobian 的粗略上界是：
+
+  [
+  \Delta x_{\max}
+  \le
+  \sum_j L_j |\Delta q_j|
+  ]
+
+  其中 (L_j) 是关节 (j) 到碰撞球的最大运动半径。对于旋转关节，角度变化乘以最大臂
+  长可以得到保守位移界。
+
+  也可以加入轨迹导数界：
+
+  [
+  \Delta x_{\max}
+  \le
+  \Delta s,
+  \sup_{s\in[s_k,s_{k+1}]}
+  \left|
+  J(q(s)),q'(s)
+  \right|
+  ]
+
+  但如果没有严格的区间 Jacobian 上界，这只能作为启发式，不能作为安全证明。
+
+  ## 推荐的 32→64→128 流程
+
+  32 点 FK + clearance
+          ↓
+  逐区间计算保守位移上界
+          ↓
+  明确安全的区间停止
+          ↓
+  其余区间加入中点
+          ↓
+  重新计算新点 FK + clearance
+          ↓
+  继续细分，最多到 128 点
+
+  区间应在以下任一条件成立时继续细分：
+
+  - 任一端点 clearance 小于 refine_margin；
+  - min(clearance) - movement_bound <= safety_margin；
+  - 两端 SDF 差异过大；
+  - ||q[k+1]-q[k]|| 过大；
+  - B-spline 速度或曲率过大；
+  - self-collision pair 距离接近阈值；
+  - 环境 SDF 不可靠、越界或包含不连续几何；
+  - 场景被标记为窄通道或高风险。
+
+  ## 最可靠的实现：区间证书
+
+  可以为每个区间生成三态结果：
+
+   状态              处理
+  ━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   CERTIFIED_SAFE    保守下界仍高于 margin，停止细分
+  ────────────────  ───────────────────────────────────────────
+   RISKY             已碰撞或接近阈值，加入 active Jacobian
+  ────────────────  ───────────────────────────────────────────
+   UNCERTAIN         无法证明安全，继续细分；最终退化到 128 点
+
+  关键原则是：
+
+  > 不能证明安全，不等于安全；应升级采样级别。
+
+  这样简单场景大部分区间可以停在 32 点，窄通道会自然升级到 64/128 点。
+
+  ## 仍然需要 dense checker
+
+  即便采用保守区间证书，最终生成轨迹仍应由独立 256/512 点 checker 验证。两者职责
+  不同：
+
+  - coarse-to-fine selector：减少 guidance 计算，允许保守地多选；
+  - dense checker：决定轨迹能否被接受，不能使用 selector 的 active mask。
+
+  所以答案是：固定 32 点直接选危险区间确实可能漏；32 点应该只是递归区间验证的起
+  点，并且所有无法证明安全的区间都必须升级到 64/128。
+
+
+› fk可以复用吗 有必要吗
+
+
+⚠ Heads up, you have less than 5% of your weekly limit left. Run /status for a
+  breakdown.
+
+■ Conversation interrupted - tell the model what to do differently. Something
+went wrong? Hit `/feedback` to report the issue.
+
+• Model changed to gpt-5.6-terra medium
+
+
+› fk可以复用吗 有必要吗
+
+
+• 可以复用，而且很有必要。它是当前分桶负优化最重要的修复点之一。
+
+  当前流程是：
+
+  全 128 点 FK → clearance/risk
+                  ↓
+            active 点 J-FK
+                  ↓
+        J-FK 内部又做一次 FK
+
+  因此 active 点的 FK 被重复计算。即使只激活 48% 的点，也先付了全量 FK，再付 48%
+  的 FK；这直接吞掉了省下的 Jacobian 时间。
+
+  但不能只缓存“最终碰撞球 pose”。计算 spatial Jacobian 还需要运动链上各 ancestor
+  link 的 pose、关节轴等中间运动学状态。正确复用方式是让 TorchKin 暴露两步接口：
+
+  kin_cache = fk_with_related_link_poses(q_active)
+  jacobians = spatial_jacobian_from_cache(kin_cache)
+
+  selector 缓存：
+
+  - active/coarse 点的 related-link poses；
+  - sphere poses；
+  - environment signed distance、self-distance。
+
+  之后 guidance 阶段：
+
+  - 对已缓存的 coarse 点：只补 Jacobian，不再 FK；
+  - 对新增中点：只算一次 FK，并在确定需要梯度后从该 cache 算 Jacobian；
+  - 对 K128 候选：直接走一次 fused jfk_s_* 的 Legacy 快路径，避免 cache/gather
+    开销。
+
+  不该复用的是最终 256/512 点 dense checker 的 FK：它必须独立于 guidance active
+  set，才能承担安全 oracle 的职责。
+
+  所以优先级上，FK cache 比继续调 refine margin 更重要。没有 FK 复用，时间分桶很
+  难成为正优化。
+

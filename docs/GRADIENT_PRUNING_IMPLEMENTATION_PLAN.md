@@ -1,5 +1,8 @@
 # MPD 梯度剪枝与自适应碰撞 Guidance 分阶段实施方案
 
+> 当前实现、配置、验证命令和明确边界见
+> [`GRADIENT_PRUNING_IMPLEMENTATION_STATUS.md`](GRADIENT_PRUNING_IMPLEMENTATION_STATUS.md)。
+
 本文档将 `docs/grad_pruning_step_guidance.txt` 中的梯度剪枝设想拆分为可独立实现、验证和回退的阶段。
 
 目标是在不重新训练 diffusion model 的前提下，减少 Warehouse/Panda 推理期间的碰撞梯度计算量，同时保持输出轨迹的安全性、困难场景覆盖率和末端位姿精度。
@@ -466,6 +469,8 @@ gradient_pruning:
 
   temporal:
     coarse_points: 32
+    probe_midpoints: true
+    reuse_selection_within_ddim_step: true
     buckets: [32, 64, 128]
     environment_refine_margin: 0.08
     self_refine_margin: 0.06
@@ -929,6 +934,7 @@ gradient_pruning:
 
   temporal:
     coarse_points: 32
+    probe_midpoints: true
     buckets: [32, 64, 128]
     environment_refine_margin: 0.08
     self_refine_margin: 0.06
@@ -936,6 +942,7 @@ gradient_pruning:
 
   spatial:
     parent_link_kinematics: false
+    dense_parent_fast_path: true
     environment_link_broad_phase: false
     self_link_pair_broad_phase: false
 

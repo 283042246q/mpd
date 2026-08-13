@@ -3,6 +3,8 @@ import pathlib
 import pickle
 import random
 import time
+import multiprocessing as mp
+import traceback
 from copy import deepcopy, copy
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
@@ -12,7 +14,6 @@ import numpy as np
 import pybullet as p
 import torch
 import yaml
-from joblib import Parallel, delayed
 from pybullet_utils import bullet_client
 from tqdm import tqdm
 
@@ -294,10 +295,35 @@ class GenerateDataOMPL:
         return results_dict
 
     def terminate(self):
-        self.pybullet_client.disconnect()
+        pybullet_client = getattr(self, "pybullet_client", None)
+        if pybullet_client is None:
+            return
+        self.pybullet_client = None
+        pybullet_client.disconnect()
 
 
 def get_random_pose_from_region(pose_region):
+    """Sample an end-effector pose from a region or one of its subregions.
+
+    A top-level region may either define ``translation`` and ``rotation``
+    directly (the legacy schema), or contain a non-empty ``subregions``
+    mapping. Subregions are sampled uniformly and use the legacy pose schema.
+    Keeping subregions below a top-level region means the existing
+    joint-to-region versus unordered region-to-region selection logic still
+    operates on the top-level regions only.
+    """
+    if "subregions" in pose_region:
+        if "translation" in pose_region or "rotation" in pose_region:
+            raise ValueError("A pose region must define either subregions or translation/rotation, not both.")
+        subregions = pose_region["subregions"]
+        if not isinstance(subregions, dict) or not subregions:
+            raise ValueError("pose_region['subregions'] must be a non-empty mapping.")
+        subregion_id = np.random.choice(list(subregions.keys()))
+        pose_region = subregions[subregion_id]
+
+    if "translation" not in pose_region or "rotation" not in pose_region:
+        raise ValueError("A pose region must define translation and rotation.")
+
     ee_pose_target = np.eye(4)
     # random position
     ee_pose_target[0, 3] = np.random.choice(
@@ -336,6 +362,10 @@ def get_random_ee_pose_from_cfg_file(env_id, robot_id, cfg_file_path):
     with open(cfg_file_path, "r") as f:
         cfg_ee = yaml.load(f, Loader=yaml.Loader)
 
+    return get_random_ee_pose_from_cfg(env_id, robot_id, cfg_ee)
+
+
+def get_random_ee_pose_from_cfg(env_id, robot_id, cfg_ee):
     assert (
         env_id == cfg_ee["env_id"] or env_id == cfg_ee["env_id"] + "ExtraObjects"
     ), f"env_id mismatch: {env_id} != {cfg_ee['env_id']}"
@@ -383,51 +413,272 @@ def generate_trajectories_run(
     pybullet_mode="DIRECT",
     debug=False,
 ):
-    if generate_data_ompl_worker is None:
-        # For multi-threading, create a new worker
-        generate_data_ompl_worker = GenerateDataOMPL(
-            env_id,
-            robot_id,
-            planner=planner,
-            min_distance_robot_env=min_distance_robot_env,
-            tensor_args=tensor_args,
-            gripper=True,  # By default, to generate data, add the gripper to the robot
-            pybullet_mode=pybullet_mode,
+    owns_worker = generate_data_ompl_worker is None
+    try:
+        if owns_worker:
+            generate_data_ompl_worker = GenerateDataOMPL(
+                env_id,
+                robot_id,
+                planner=planner,
+                min_distance_robot_env=min_distance_robot_env,
+                tensor_args=tensor_args,
+                gripper=True,  # By default, to generate data, add the gripper to the robot
+                pybullet_mode=pybullet_mode,
+                debug=debug,
+            )
+
+        start_planning_time = time.time()  # start the timer only after the worker is created
+        results_dict = generate_data_ompl_worker.run(
+            num_trajectories=num_trajectories,  # each worker generates one trajectory
+            max_tries=max_tries,
+            joint_position_start=joint_position_start,
+            joint_position_goal=joint_position_goal,
+            planner_allowed_time=planner_allowed_time,
+            interpolate_num=interpolate_num,
+            fit_bspline=fit_bspline,
+            simplify_path=simplify_path,
+            bspline_num_control_points=bspline_num_control_points,
+            bspline_degree=bspline_degree,
+            bspline_zero_vel_at_start_and_goal=bspline_zero_vel_at_start_and_goal,
+            bspline_zero_acc_at_start_and_goal=bspline_zero_acc_at_start_and_goal,
             debug=debug,
         )
+        end_planning_time = time.time()
 
-    start_planning_time = time.time()  # start the timer only after the worker is created
-    results_dict = generate_data_ompl_worker.run(
-        num_trajectories=num_trajectories,  # each worker generates one trajectory
-        max_tries=max_tries,
-        joint_position_start=joint_position_start,
-        joint_position_goal=joint_position_goal,
-        planner_allowed_time=planner_allowed_time,
-        interpolate_num=interpolate_num,
-        fit_bspline=fit_bspline,
-        simplify_path=simplify_path,
-        bspline_num_control_points=bspline_num_control_points,
-        bspline_degree=bspline_degree,
-        bspline_zero_vel_at_start_and_goal=bspline_zero_vel_at_start_and_goal,
-        bspline_zero_acc_at_start_and_goal=bspline_zero_acc_at_start_and_goal,
-        debug=debug,
-    )
-    end_planning_time = time.time()
+        # Add the task_id to all the results
+        for k, v in results_dict.items():
+            results_dict[k]["task_id"] = task_id
 
-    # Add the task_id to all the results
-    for k, v in results_dict.items():
-        results_dict[k]["task_id"] = task_id
+        # Update timing information
+        results_dict.update(
+            {
+                "run_planning_time": end_planning_time - start_planning_time,
+                "start_planning_time": start_planning_time,
+                "end_planning_time": end_planning_time,
+            }
+        )
 
-    # Update timing information
-    results_dict.update(
-        {
-            "run_planning_time": end_planning_time - start_planning_time,
-            "start_planning_time": start_planning_time,
-            "end_planning_time": end_planning_time,
+        return results_dict
+    finally:
+        if owns_worker and generate_data_ompl_worker is not None:
+            generate_data_ompl_worker.terminate()
+
+
+def generate_trajectories_batch_run(
+    task_ids,
+    seed,
+    cfg_ee,
+    worker_kwargs,
+    task_kwargs,
+    planning_kwargs,
+):
+    generate_data_ompl_worker = None
+    results_dict_l = []
+    try:
+        generate_data_ompl_worker = GenerateDataOMPL(**worker_kwargs)
+
+        for task_id in task_ids:
+            task_seed = int(np.random.SeedSequence([seed, task_id]).generate_state(1)[0])
+            fix_random_seed(task_seed)
+
+            ee_pose_start = None
+            ee_pose_goal = None
+            if cfg_ee is not None:
+                ee_pose_start, ee_pose_goal = get_random_ee_pose_from_cfg(
+                    worker_kwargs["env_id"], worker_kwargs["robot_id"], cfg_ee
+                )
+
+            try:
+                joint_position_start_l, joint_position_goal_l = (
+                    generate_data_ompl_worker.get_start_and_goal_states(
+                        q_pos_start=None,
+                        ee_pose_start=ee_pose_start,
+                        q_pos_goal=None,
+                        ee_pose_goal=ee_pose_goal,
+                        n_joint_position_goal=task_kwargs["num_trajectories_per_task"],
+                        sample_joint_position_goals_with_same_ee_pose=task_kwargs[
+                            "sample_joint_position_goals_with_same_ee_pose"
+                        ],
+                        min_distance_q_pos_start_goal=task_kwargs["min_distance_q_pos_start_goal"],
+                        debug=planning_kwargs["debug"],
+                    )
+                )
+            except Exception as error:
+                print(f"Task {task_id}: sampling/IK failed: {error}")
+                continue
+
+            for joint_position_start, joint_position_goal in zip(
+                joint_position_start_l, joint_position_goal_l
+            ):
+                results_dict_l.append(
+                    generate_trajectories_run(
+                        generate_data_ompl_worker=generate_data_ompl_worker,
+                        task_id=task_id,
+                        joint_position_start=joint_position_start,
+                        joint_position_goal=joint_position_goal,
+                        **planning_kwargs,
+                    )
+                )
+
+        return results_dict_l
+    finally:
+        if generate_data_ompl_worker is not None:
+            generate_data_ompl_worker.terminate()
+
+
+def generate_trajectories_process_worker(command_connection, result_connection):
+    try:
+        while True:
+            command = command_connection.recv()
+            if command is None:
+                return
+
+            task_index, batch_args = command
+            try:
+                result = generate_trajectories_batch_run(*batch_args)
+                result_connection.send(("result", task_index, result))
+            except BaseException:
+                result_connection.send(("error", task_index, traceback.format_exc()))
+    finally:
+        command_connection.close()
+        result_connection.close()
+
+
+def run_trajectory_batches_resilient(batch_args_l, n_parallel_jobs, task_timeout_seconds):
+    if n_parallel_jobs == 1:
+        return [generate_trajectories_batch_run(*batch_args) for batch_args in batch_args_l], 0
+
+    process_context = mp.get_context("spawn")
+    results_dict_batches = [[] for _ in batch_args_l]
+    workers = {}
+    next_task_index = 0
+    num_tasks_finished = 0
+    num_worker_failures = 0
+
+    def start_worker(worker_index):
+        command_recv, command_send = process_context.Pipe(duplex=False)
+        result_recv, result_send = process_context.Pipe(duplex=False)
+        process = process_context.Process(
+            target=generate_trajectories_process_worker,
+            args=(command_recv, result_send),
+        )
+        process.start()
+        command_recv.close()
+        result_send.close()
+        workers[worker_index] = {
+            "process": process,
+            "command": command_send,
+            "result": result_recv,
+            "task_index": None,
+            "task_start_time": None,
         }
-    )
 
-    return results_dict
+    def assign_next_task(worker):
+        nonlocal next_task_index
+        if next_task_index >= len(batch_args_l):
+            return False
+
+        task_index = next_task_index
+        worker["command"].send((task_index, batch_args_l[task_index]))
+        worker["task_index"] = task_index
+        worker["task_start_time"] = time.monotonic()
+        next_task_index += 1
+        return True
+
+    def close_worker(worker, terminate=False):
+        process = worker["process"]
+        if terminate and process.is_alive():
+            process.terminate()
+        process.join(timeout=5.0)
+        if process.is_alive():
+            process.kill()
+            process.join()
+        worker["command"].close()
+        worker["result"].close()
+
+    def replace_worker(worker_index):
+        old_worker = workers[worker_index]
+        close_worker(old_worker)
+        start_worker(worker_index)
+        assign_next_task(workers[worker_index])
+
+    num_workers = min(n_parallel_jobs, len(batch_args_l))
+    for worker_index in range(num_workers):
+        start_worker(worker_index)
+        assign_next_task(workers[worker_index])
+
+    try:
+        while num_tasks_finished < len(batch_args_l):
+            made_progress = False
+
+            for worker_index in list(workers):
+                worker = workers[worker_index]
+                process = worker["process"]
+                task_index = worker["task_index"]
+
+                if task_index is not None and worker["result"].poll():
+                    try:
+                        status, result_task_index, payload = worker["result"].recv()
+                    except EOFError:
+                        pass
+                    else:
+                        if result_task_index != task_index:
+                            raise RuntimeError(
+                                f"Worker result task mismatch: expected {task_index}, got {result_task_index}"
+                            )
+
+                        if status == "result":
+                            results_dict_batches[task_index] = payload
+                        else:
+                            print(f"Task batch {task_index} failed with a Python exception:\n{payload}")
+
+                        worker["task_index"] = None
+                        worker["task_start_time"] = None
+                        num_tasks_finished += 1
+                        made_progress = True
+                        assign_next_task(worker)
+                        continue
+
+                if task_index is not None and not process.is_alive():
+                    print(
+                        f"Task batch {task_index} lost because worker {process.pid} exited "
+                        f"with code {process.exitcode}; restarting the worker."
+                    )
+                    num_tasks_finished += 1
+                    num_worker_failures += 1
+                    made_progress = True
+                    replace_worker(worker_index)
+                    continue
+
+                task_elapsed = (
+                    time.monotonic() - worker["task_start_time"]
+                    if worker["task_start_time"] is not None
+                    else 0.0
+                )
+                if task_index is not None and task_elapsed > task_timeout_seconds:
+                    print(
+                        f"Task batch {task_index} exceeded {task_timeout_seconds:.1f} seconds; "
+                        f"terminating worker {process.pid} and continuing."
+                    )
+                    num_tasks_finished += 1
+                    num_worker_failures += 1
+                    made_progress = True
+                    close_worker(worker, terminate=True)
+                    start_worker(worker_index)
+                    assign_next_task(workers[worker_index])
+
+            if not made_progress:
+                time.sleep(0.05)
+    finally:
+        for worker in workers.values():
+            if worker["process"].is_alive():
+                try:
+                    worker["command"].send(None)
+                except (BrokenPipeError, EOFError, OSError):
+                    pass
+            close_worker(worker)
+
+    return results_dict_batches, num_worker_failures
 
 
 @single_experiment_yaml
@@ -480,6 +731,8 @@ def experiment(
     interpolate_num: int = 128,  # number of waypoints to interpolate the path
     #######################################
     n_parallel_jobs: int = 1,  # Set to 1 to debug with pybullet GUI
+    task_batch_size: int = 1,  # PbOMPL planner instances cannot be reused safely across tasks
+    task_timeout_seconds: float = 300.0,
     # n_parallel_jobs: int = os.cpu_count(),
     debug: bool = True,
     #######################################
@@ -500,104 +753,97 @@ def experiment(
     print(f"num_trajectories_per_task:  {num_trajectories_per_task}")
     print(f"\n\n--------------------------------------------------------")
 
+    if n_parallel_jobs < 1:
+        raise ValueError(f"n_parallel_jobs must be positive, got {n_parallel_jobs}")
+    if task_batch_size != 1:
+        raise ValueError(
+            "task_batch_size must be 1: reusing one PbOMPL planner across tasks can cause "
+            f"a native SIGSEGV, got {task_batch_size}"
+        )
+    if task_timeout_seconds <= 0:
+        raise ValueError(f"task_timeout_seconds must be positive, got {task_timeout_seconds}")
+
     tensor_args = {"device": "cpu", "dtype": torch.float32}
 
     ####################################################################################################################
-    # Create the tasks - start and goal joint positions or end-effector poses
-    q_pos_start = None
-    ee_pose_start = None
-    q_pos_goal = None
-    ee_pose_goal = None
-
-    # pybullet can only run one GUI client
+    # Sample tasks, solve IK, and plan in process-based batches. PyBullet clients
+    # are not shared across processes, and each batch owns exactly one client.
     pybullet_mode = "GUI" if debug and n_parallel_jobs == 1 else "DIRECT"
-    generate_data_ompl_worker = GenerateDataOMPL(
-        env_id,
-        robot_id,
-        planner=planner,
-        min_distance_robot_env=min_distance_robot_env,
-        tensor_args=tensor_args,
-        gripper=True,  # By default, to generate data, add the gripper to the robot
-        pybullet_mode=pybullet_mode,
-        debug=debug,
+    cfg_ee = None
+    if cfg_file != "None":
+        cfg_file_path = os.path.join(DATA_GENERATION_CFGS_PATH, cfg_file)
+        with open(cfg_file_path, "r") as file:
+            cfg_ee = yaml.load(file, Loader=yaml.Loader)
+
+    task_id_batches = [
+        range(task_batch_start, min(task_batch_start + task_batch_size, start_task_id + num_tasks))
+        for task_batch_start in range(start_task_id, start_task_id + num_tasks, task_batch_size)
+    ]
+    worker_kwargs = {
+        "env_id": env_id,
+        "robot_id": robot_id,
+        "planner": planner,
+        "min_distance_robot_env": min_distance_robot_env,
+        "tensor_args": tensor_args,
+        "gripper": True,
+        "pybullet_mode": pybullet_mode,
+        "debug": debug,
+    }
+    task_kwargs = {
+        "num_trajectories_per_task": num_trajectories_per_task,
+        "sample_joint_position_goals_with_same_ee_pose": sample_joint_position_goals_with_same_ee_pose,
+        "min_distance_q_pos_start_goal": min_distance_q_pos_start_goal,
+    }
+    planning_kwargs = {
+        "env_id": env_id,
+        "robot_id": robot_id,
+        "planner": planner,
+        "min_distance_robot_env": min_distance_robot_env,
+        "planner_allowed_time": planner_allowed_time,
+        "interpolate_num": interpolate_num,
+        "simplify_path": simplify_path,
+        "fit_bspline": fit_bspline,
+        "bspline_num_control_points": bspline_num_control_points,
+        "bspline_degree": bspline_degree,
+        "bspline_zero_vel_at_start_and_goal": bspline_zero_vel_at_start_and_goal,
+        "bspline_zero_acc_at_start_and_goal": bspline_zero_acc_at_start_and_goal,
+        "tensor_args": tensor_args,
+        "num_trajectories": 1,
+        "max_tries": 1,
+        "pybullet_mode": pybullet_mode,
+        "debug": debug,
+    }
+
+    print(
+        f"\nGenerating tasks and trajectories in {len(task_id_batches)} batches "
+        f"with {n_parallel_jobs} workers..."
     )
-
-    print("\nGenerating tasks...")
-    task_id_l = []
-    joint_position_start_l = []
-    joint_position_goal_l = []
-    for i in tqdm(range(start_task_id, start_task_id + num_tasks)):
-
-        if cfg_file != "None":
-            # generate start and goal poses based on a config file
-            cfg_file_path = os.path.join(DATA_GENERATION_CFGS_PATH, cfg_file)
-            ee_pose_start, ee_pose_goal = get_random_ee_pose_from_cfg_file(env_id, robot_id, cfg_file_path)
-
-        # print(f'joint_position_start: {joint_position_start}')
-        # print(f'ee_pose_start: {ee_pose_start}')
-        # print(f'joint_position_goal: {joint_position_goal}')
-        # print(f'ee_pose_target: {ee_pose_goal}')
-
-        # Sample start and goal states (joint positions or end-effector poses)
-        try:
-            # IK might fail to find a solution
-            joint_position_start_l_tmp, joint_position_goal_l_tmp = generate_data_ompl_worker.get_start_and_goal_states(
-                q_pos_start=q_pos_start,
-                ee_pose_start=ee_pose_start,
-                q_pos_goal=q_pos_goal,
-                ee_pose_goal=ee_pose_goal,
-                n_joint_position_goal=num_trajectories_per_task,
-                sample_joint_position_goals_with_same_ee_pose=sample_joint_position_goals_with_same_ee_pose,
-                min_distance_q_pos_start_goal=min_distance_q_pos_start_goal,
-                debug=debug,
-            )
-        except Exception as e:
-            print(e)
-            continue
-
-        task_id_l.extend([i] * len(joint_position_start_l_tmp))
-        joint_position_start_l.extend(joint_position_start_l_tmp)
-        joint_position_goal_l.extend(joint_position_goal_l_tmp)
-
-    assert (
-        len(task_id_l) == len(joint_position_start_l) == len(joint_position_goal_l)
-    ), f"len(task_id_l)={len(task_id_l)} != len(joint_position_start_l)={len(joint_position_start_l)}"
-    print(f"\n----------\nGenerated {len(task_id_l)}/{num_tasks} tasks successfully\n----------\n")
-
-    ####################################################################################################################
-    # Generate data
-    # Generate data in parallel with joblib
     with TimerCUDA() as t_generate_data:
-        results_dict_l = Parallel(n_jobs=n_parallel_jobs)(
-            delayed(generate_trajectories_run)(
-                generate_data_ompl_worker if n_parallel_jobs == 1 else None,
-                env_id,
-                robot_id,
-                planner,
-                min_distance_robot_env,
-                task_id,
-                joint_position_start,
-                joint_position_goal,
-                planner_allowed_time,
-                interpolate_num,
-                simplify_path,
-                fit_bspline,
-                bspline_num_control_points,
-                bspline_degree,
-                bspline_zero_vel_at_start_and_goal,
-                bspline_zero_acc_at_start_and_goal,
-                tensor_args,
-                1,
-                1,
-                pybullet_mode,
-                debug,
+        batch_args_l = [
+            (
+                task_ids,
+                seed,
+                cfg_ee,
+                worker_kwargs,
+                task_kwargs,
+                planning_kwargs,
             )
-            for task_id, joint_position_start, joint_position_goal in zip(
-                task_id_l, joint_position_start_l, joint_position_goal_l
-            )
+            for task_ids in task_id_batches
+        ]
+        results_dict_batches, num_worker_failures = run_trajectory_batches_resilient(
+            batch_args_l,
+            n_parallel_jobs=n_parallel_jobs,
+            task_timeout_seconds=task_timeout_seconds,
         )
-
-    generate_data_ompl_worker.terminate()
+    results_dict_l = [
+        results_dict_run
+        for results_dict_batch in results_dict_batches
+        for results_dict_run in results_dict_batch
+    ]
+    print(
+        f"\n----------\nGenerated valid states for {len(results_dict_l)}/"
+        f"{num_tasks * num_trajectories_per_task} planning requests\n----------\n"
+    )
 
     ####################################################################################################################
     # Save timing information stats
@@ -607,25 +853,33 @@ def experiment(
     run_times = [r["run_planning_time"] for r in results_dict_l]
 
     # this is the window when actual planning computation happened
-    planning_computation_time = max(end_times) - min(start_times)
+    planning_computation_time = max(end_times) - min(start_times) if start_times else 0.0
+    ideal_parallel_time = max(run_times) if run_times else 0.0
+    total_compute_time = sum(run_times)
+    parallel_speedup = (
+        total_compute_time / planning_computation_time if planning_computation_time > 0 else 0.0
+    )
 
     print("-" * 80)
-    print(f"Total joblib wall time (incl. overhead): {t_generate_data.elapsed:.4f} sec")
+    print(f"Total parallel wall time (incl. overhead): {t_generate_data.elapsed:.4f} sec")
     print(f"Actual parallel compute window: {planning_computation_time:.4f} sec")
-    print(f"Ideal parallel time (max individual runtime): {max(run_times):.4f} sec")
-    print(f"Total compute time (sum of all workers): {sum(run_times):.4f} sec")
-    print(f"Parallel speedup: {sum(run_times) / planning_computation_time:.2f}x")
+    print(f"Ideal parallel time (max individual runtime): {ideal_parallel_time:.4f} sec")
+    print(f"Total compute time (sum of all workers): {total_compute_time:.4f} sec")
+    print(f"Parallel speedup: {parallel_speedup:.2f}x")
 
     with open(pathlib.Path(results_dir) / "timing_stats.pkl", "wb") as fp:
         pickle.dump(
             {
-                "num_plans": len(task_id_l),
+                "num_plans": len(results_dict_l),
                 "num_parallel_jobs": n_parallel_jobs,
+                "task_batch_size": task_batch_size,
+                "task_timeout_seconds": task_timeout_seconds,
+                "num_worker_failures": num_worker_failures,
                 "joblib_wall_time": t_generate_data.elapsed,
                 "planning_computation_time": planning_computation_time,
-                "ideal_parallel_time": max(run_times),
-                "total_compute_time": sum(run_times),
-                "parallel_speedup": sum(run_times) / planning_computation_time,
+                "ideal_parallel_time": ideal_parallel_time,
+                "total_compute_time": total_compute_time,
+                "parallel_speedup": parallel_speedup,
             },
             fp,
         )

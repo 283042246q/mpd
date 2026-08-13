@@ -14,12 +14,17 @@ Expected input is a `torch.save` file containing either a tensor `q_trajs_pos` o
 Example:
 
 ```bash
-/home/eric/IsaacLab_ori/isaaclab.sh -p scripts/isaaclab/evaluate_mpd_trajectories.py \
+/home/eric/IsaacLab/isaaclab.sh -p scripts/isaaclab/evaluate_mpd_trajectories.py \
   --input logs/trajectories.pt \
   --output logs/isaaclab_statistics.json \
   --headless
 ```
 
-The first implementation replays Panda joint-space trajectories with IsaacLab's built-in Panda asset and writes a
-statistics JSON compatible with the old IsaacGym result fields. Full MPD obstacle export, videos, and batch launch
-integration are handled by later migration stages.
+By default the evaluator uses Isaac Sim's current
+`Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd` asset. This avoids the obsolete IsaacLab
+`Robots/FrankaEmika/panda_instanceable.usd` URL, which is unavailable in the Isaac 6.0 asset bundle. Pass
+`--robot_usd /absolute/path/to/franka.usd` to use a local or mirrored asset instead.
+
+The first implementation replays Panda joint-space trajectories and writes a statistics JSON compatible with the old
+IsaacGym result fields. Full MPD obstacle export, videos, and batch launch integration are handled by later migration
+stages.

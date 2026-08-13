@@ -51,7 +51,7 @@ def create_doubled_dataset(f_path):
 
 if __name__ == "__main__":
     # create datasets in parallel with joblib
-    PATH_TO_DATASETS = "/home/carvalho/Projects/MotionPlanningDiffusion/mpd-splines/data_trajectories/EnvEmpty2D-RobotPointMass2D-joint_joint-many-GPPrior/**/*dataset_merged.hdf5"
+    PATH_TO_DATASETS = "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trajectories/EnvOpenDrawerShelf-RobotPanda-drawer-to-shelf-reachable-levels-joint_joint-one-RRTConnect/EnvOpenDrawerShelf/dataset_merged.hdf5"
     N_JOBS = 5
     Parallel(n_jobs=N_JOBS)(
         delayed(create_doubled_dataset)(f_path) for f_path in glob.glob(PATH_TO_DATASETS, recursive=True)

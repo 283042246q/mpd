@@ -26,12 +26,21 @@ numpy_monkey_patch()
 import numpy as np
 
 DEFAULT_CONFIG_PATH = REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml"
-EXPECTED_JOINT_NAMES = tuple(f"panda_joint{index}" for index in range(1, 8))
+EXPECTED_JOINT_NAMES = tuple(f"fr3_joint{index}" for index in range(1, 8))
 EXPECTED_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 1
 DEFAULT_REQUEST_ID = "diffusion_planner_example"
 DEFAULT_SCENE_ID = "EnvWarehouseExtraObjectsV00"
 DEFAULT_SEED = 0
+GOAL_TYPES = ("cartesian", "joint")
+DEFAULT_IK_CANDIDATES = 0
+DEFAULT_IK_MAX_ITERS = 300
+MIN_IK_CANDIDATES = 0
+MAX_IK_CANDIDATES = 256
+MIN_IK_MAX_ITERS = 1
+MAX_IK_MAX_ITERS = 2000
+IK_POSITION_TOLERANCE_M = 0.015
+IK_ORIENTATION_TOLERANCE_DEG = 3.0
 
 
 class RuntimeContractError(RuntimeError):
@@ -188,6 +197,40 @@ def _require_vector(
     return value
 
 
+def _require_pose_xyzw(request: dict[str, Any], key: str) -> np.ndarray:
+    try:
+        pose = np.asarray(request[key], dtype=np.float64)
+    except KeyError as error:
+        raise RequestValidationError(f"Missing required field: {key}.") from error
+    except (TypeError, ValueError) as error:
+        raise RequestValidationError(f"{key} must contain numeric values.") from error
+    if pose.shape != (7,):
+        raise RequestValidationError(f"{key} must have shape [7], got {list(pose.shape)}.")
+    if not np.isfinite(pose).all():
+        raise RequestValidationError(f"{key} contains NaN or Inf.")
+    quaternion_norm = float(np.linalg.norm(pose[3:]))
+    if not 0.99 <= quaternion_norm <= 1.01:
+        raise RequestValidationError(f"{key} quaternion xyzw must have unit norm, got {quaternion_norm:.6f}.")
+    pose[3:] /= quaternion_norm
+    return pose
+
+
+def _bounded_integer(
+    request: dict[str, Any],
+    key: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = request.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RequestValidationError(f"{key} must be an integer.")
+    if not minimum <= value <= maximum:
+        raise RequestValidationError(f"{key} must be in [{minimum}, {maximum}], got {value}.")
+    return value
+
+
 def validate_request(request: dict[str, Any]) -> dict[str, Any]:
     schema_version = request.get("schema_version", EXPECTED_SCHEMA_VERSION)
     if isinstance(schema_version, bool) or schema_version != EXPECTED_SCHEMA_VERSION:
@@ -203,7 +246,7 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
     joint_names = request.get("joint_names")
     if not isinstance(joint_names, list) or tuple(joint_names) != EXPECTED_JOINT_NAMES:
         raise RequestValidationError(
-            "joint_names must exactly match the ordered Panda joints: " f"{list(EXPECTED_JOINT_NAMES)}."
+            "joint_names must exactly match the ordered FR3 joints: " f"{list(EXPECTED_JOINT_NAMES)}."
         )
 
     seed = request.get("seed", DEFAULT_SEED)
@@ -211,14 +254,36 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
         raise RequestValidationError("seed must be an integer in [0, 2**32).")
 
     robot_model = request.get("robot_model")
-    if robot_model is not None and robot_model != "franka_panda":
-        raise RequestValidationError("robot_model must be 'franka_panda' when provided.")
+    if robot_model is not None and robot_model != "franka_fr3":
+        raise RequestValidationError("robot_model must be 'franka_fr3' when provided.")
     planning_frame = request.get("planning_frame")
-    if planning_frame is not None and planning_frame != "panda_link0":
-        raise RequestValidationError("planning_frame must be 'panda_link0' when provided.")
+    if planning_frame is not None and planning_frame != "fr3_link0":
+        raise RequestValidationError("planning_frame must be 'fr3_link0' when provided.")
     scene_hash = request.get("scene_hash")
     if scene_hash is not None and (not isinstance(scene_hash, str) or not scene_hash.strip()):
         raise RequestValidationError("scene_hash must be a non-empty string when provided.")
+
+    goal_type = request.get("goal_type")
+    if goal_type is None:
+        if "ee_pose_goal" in request:
+            goal_type = "cartesian"
+        elif "q_pos_goal" in request:
+            goal_type = "joint"
+        else:
+            goal_type = "cartesian"
+    if goal_type not in GOAL_TYPES:
+        raise RequestValidationError(f"goal_type must be one of {list(GOAL_TYPES)}, got {goal_type!r}.")
+
+    if goal_type == "cartesian":
+        if "q_pos_goal" in request:
+            raise RequestValidationError("q_pos_goal cannot be provided when goal_type is 'cartesian'.")
+        ee_pose_goal = _require_pose_xyzw(request, "ee_pose_goal")
+        q_pos_goal = None
+    else:
+        if "ee_pose_goal" in request:
+            raise RequestValidationError("ee_pose_goal cannot be provided when goal_type is 'joint'.")
+        q_pos_goal = _require_vector(request, "q_pos_goal")
+        ee_pose_goal = None
 
     zero_boundary = np.zeros(len(EXPECTED_JOINT_NAMES), dtype=np.float64)
     return {
@@ -227,14 +292,30 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
         "scene_id": scene_id,
         "joint_names": list(joint_names),
         "seed": seed,
+        "goal_type": goal_type,
         "q_pos_start": _require_vector(request, "q_pos_start"),
-        "q_pos_goal": _require_vector(request, "q_pos_goal"),
+        "q_pos_goal": q_pos_goal,
+        "ee_pose_goal": ee_pose_goal,
+        "ik_candidates": _bounded_integer(
+            request,
+            "ik_candidates",
+            default=DEFAULT_IK_CANDIDATES,
+            minimum=MIN_IK_CANDIDATES,
+            maximum=MAX_IK_CANDIDATES,
+        ),
+        "ik_max_iters": _bounded_integer(
+            request,
+            "ik_max_iters",
+            default=DEFAULT_IK_MAX_ITERS,
+            minimum=MIN_IK_MAX_ITERS,
+            maximum=MAX_IK_MAX_ITERS,
+        ),
         "q_vel_start": _require_vector(request, "q_vel_start", default=zero_boundary),
         "q_vel_goal": _require_vector(request, "q_vel_goal", default=zero_boundary),
         "q_acc_start": _require_vector(request, "q_acc_start", default=zero_boundary),
         "q_acc_goal": _require_vector(request, "q_acc_goal", default=zero_boundary),
-        "robot_model": robot_model or "franka_panda",
-        "planning_frame": planning_frame or "panda_link0",
+        "robot_model": robot_model or "franka_fr3",
+        "planning_frame": planning_frame or "fr3_link0",
         "joint_state_stamp": request.get("joint_state_stamp"),
         "scene_hash": scene_hash,
     }
@@ -303,7 +384,7 @@ def _validate_runtime_config(args_inference: Any) -> None:
         )
     configured_joint_names = tuple(_runtime_config_value(args_inference, "joint_names", EXPECTED_JOINT_NAMES))
     if configured_joint_names != EXPECTED_JOINT_NAMES:
-        raise ConfigurationError("runtime.joint_names does not match the Panda runtime contract.")
+        raise ConfigurationError("runtime.joint_names does not match the FR3 runtime contract.")
 
     runtime_schema_version = _runtime_config_value(args_inference, "schema_version", None)
     if runtime_schema_version != EXPECTED_SCHEMA_VERSION:
@@ -330,18 +411,149 @@ def _validate_device(device_text: str):
     return device
 
 
+def _pose_xyzw_to_transform(pose: np.ndarray) -> np.ndarray:
+    px, py, pz, qx, qy, qz, qw = pose
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = [
+        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+        [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+        [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ]
+    transform[:3, 3] = [px, py, pz]
+    return transform
+
+
+def _cartesian_poses_xyzw(robot: Any, q_positions: Any) -> Any:
+    return robot.get_EE_pose(q_positions, flatten_pos_quat=True, quat_xyzw=True)
+
+
 def _validate_robot_state(planning_task: Any, q_pos: Any, state_name: str) -> None:
     import torch
 
     robot = planning_task.robot
     if bool(torch.any(q_pos < robot.q_pos_min).item()) or bool(torch.any(q_pos > robot.q_pos_max).item()):
-        raise RequestValidationError(f"{state_name} is outside the MPD Panda joint position limits.")
+        raise RequestValidationError(f"{state_name} is outside the planning backend joint position limits.")
     collisions = planning_task.compute_collision(
         q_pos,
         margin=planning_task.margin_for_dense_collision_checking,
     )
     if bool(torch.as_tensor(collisions).any().item()):
         raise RequestValidationError(f"{state_name} is in collision in the configured MPD scene.")
+
+
+def _solve_cartesian_goal(
+    planning_task: Any,
+    q_pos_start: Any,
+    ee_pose_goal: Any,
+    *,
+    ik_candidates: int,
+    ik_max_iters: int,
+) -> tuple[Any, dict[str, Any]]:
+    import torch
+
+    from torch_robotics.trajectory.metrics import compute_ee_pose_errors
+
+    if ik_candidates == 0:
+        return q_pos_start.clone(), {
+            "skipped": True,
+            "skip_reason": "ik_candidates=0; q_pos_goal uses q_pos_start as the legacy planner API placeholder.",
+            "candidates_generated": 0,
+            "candidates_valid": 0,
+            "max_iters": ik_max_iters,
+            "elapsed_sec": 0.0,
+            "selected_index": None,
+            "selected_position_error_m": None,
+            "selected_orientation_error_deg": None,
+        }
+
+    robot = planning_task.robot
+    target_transform = torch.eye(4, dtype=q_pos_start.dtype, device=q_pos_start.device)
+    target_transform[:3, :4] = ee_pose_goal
+
+    q_min = robot.q_pos_min.to(q_pos_start)
+    q_max = robot.q_pos_max.to(q_pos_start)
+    q_span = torch.clamp(q_max - q_min, min=1e-6)
+    if q_pos_start.is_cuda:
+        torch.cuda.synchronize(q_pos_start.device)
+    started_at = time.perf_counter()
+
+    q_initial = q_pos_start.repeat(ik_candidates, 1)
+    q_initial += torch.randn_like(q_initial) * 0.6
+    q_initial = torch.clamp(q_initial, q_min, q_max)
+
+    uniform_count = ik_candidates // 4
+    q_initial[-uniform_count:] = q_min + torch.rand_like(q_initial[-uniform_count:]) * q_span
+    q_initial[0] = q_pos_start
+
+    q_candidates, _ = robot.diff_panda.inverse_kinematics(
+        target_transform,
+        link_name=robot.link_name_ee,
+        batch_size=ik_candidates,
+        max_iters=ik_max_iters,
+        lr=0.05,
+        se3_eps=1e-4,
+        q0=q_initial,
+        q0_noise=0.0,
+        eps_joint_lim=torch.pi / 100,
+        print_freq=-1,
+        debug=False,
+    )
+    q_candidates = q_candidates.detach()
+
+    with torch.no_grad():
+        achieved_poses = robot.get_EE_pose(q_candidates)
+        position_error_vectors, orientation_error_vectors = compute_ee_pose_errors(
+            ee_pose_goal,
+            achieved_poses,
+        )
+        position_errors = torch.linalg.norm(position_error_vectors, dim=-1)
+        orientation_errors_rad = torch.linalg.norm(orientation_error_vectors, dim=-1)
+        orientation_errors_deg = torch.rad2deg(orientation_errors_rad)
+        collisions = (
+            torch.as_tensor(
+                planning_task.compute_collision(
+                    q_candidates,
+                    margin=planning_task.margin_for_dense_collision_checking,
+                )
+            )
+            .reshape(ik_candidates, -1)
+            .any(dim=-1)
+        )
+        within_limits = torch.all((q_candidates >= q_min) & (q_candidates <= q_max), dim=-1)
+        finite = torch.isfinite(q_candidates).all(dim=-1)
+        accurate = (position_errors <= IK_POSITION_TOLERANCE_M) & (
+            orientation_errors_deg <= IK_ORIENTATION_TOLERANCE_DEG
+        )
+        valid = finite & within_limits & ~collisions & accurate
+
+        if not bool(valid.any().item()):
+            best_index = torch.argmin(position_errors + orientation_errors_rad)
+            raise RequestValidationError(
+                "Cartesian goal has no collision-free IK condition within tolerances; "
+                f"best position error={position_errors[best_index].item():.6f} m, "
+                f"orientation error={orientation_errors_deg[best_index].item():.6f} deg."
+            )
+
+        normalized_distance = torch.linalg.norm((q_candidates - q_pos_start) / q_span, dim=-1)
+        score = normalized_distance + 10.0 * position_errors + orientation_errors_rad
+        score[~valid] = torch.inf
+        selected_index = int(torch.argmin(score).item())
+        selected = q_candidates[selected_index]
+
+    if q_pos_start.is_cuda:
+        torch.cuda.synchronize(q_pos_start.device)
+    elapsed_sec = time.perf_counter() - started_at
+
+    return selected, {
+        "skipped": False,
+        "candidates_generated": ik_candidates,
+        "candidates_valid": int(valid.sum().item()),
+        "max_iters": ik_max_iters,
+        "elapsed_sec": elapsed_sec,
+        "selected_index": selected_index,
+        "selected_position_error_m": float(position_errors[selected_index].item()),
+        "selected_orientation_error_deg": float(orientation_errors_deg[selected_index].item()),
+    }
 
 
 def _validate_boundary_derivative(values: Any, limits: Any, field_name: str) -> None:
@@ -352,7 +564,9 @@ def _validate_boundary_derivative(values: Any, limits: Any, field_name: str) -> 
     utilization = torch.abs(values) / limits
     if bool(torch.any(utilization > 1.0).item()):
         max_utilization = float(torch.amax(utilization).item())
-        raise RequestValidationError(f"{field_name} exceeds the MPD Panda limit (utilization={max_utilization:.6f}).")
+        raise RequestValidationError(
+            f"{field_name} exceeds the planning backend limit (utilization={max_utilization:.6f})."
+        )
 
 
 def _validate_best_trajectory(
@@ -449,7 +663,7 @@ def _run_inference(
     import torch
     from dotmap import DotMap
 
-    from mpd.inference.inference import GenerativeOptimizationPlanner
+    from mpd.inference.inference import GenerativeOptimizationPlanner, resolve_model_checkpoint_path
     from mpd.metrics.metrics import PlanningMetricsCalculator
     from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml
     from scripts.isaaclab.scene_payload import export_isaaclab_scene_payload
@@ -480,10 +694,14 @@ def _run_inference(
     if not args_path.is_file():
         raise ConfigurationError(f"Model args file not found: {args_path}.")
     args_train = DotMap(load_params_from_yaml(args_path))
-    checkpoint_name = f"{'ema_' if args_train.get('use_ema') else ''}model_current.pth"
-    checkpoint_path = model_dir / "checkpoints" / checkpoint_name
-    if not checkpoint_path.is_file():
-        raise ConfigurationError(f"Model checkpoint not found: {checkpoint_path}.")
+    try:
+        checkpoint_path = resolve_model_checkpoint_path(
+            model_dir,
+            args_train.get("use_ema"),
+            checkpoint=_runtime_config_value(args_inference, "checkpoint", None),
+        )
+    except (FileNotFoundError, ValueError) as error:
+        raise ConfigurationError(str(error)) from error
 
     args_inference.model_dir = model_dir.as_posix()
     args_train.update(
@@ -497,7 +715,7 @@ def _run_inference(
 
     planning_task, train_subset, _, _, _ = get_planning_task_and_dataset(**args_train)
     if not isinstance(planning_task.robot, RobotPanda) or planning_task.robot.q_dim != 7:
-        raise ConfigurationError("Runtime config must load the 7-DoF RobotPanda model.")
+        raise ConfigurationError("Runtime config must load the configured 7-DoF planning backend.")
     actual_scene_id = getattr(planning_task.env, "name", type(planning_task.env).__name__)
     if actual_scene_id != expected_scene_id:
         raise ConfigurationError(
@@ -505,20 +723,35 @@ def _run_inference(
         )
 
     q_pos_start = to_torch(request["q_pos_start"], **tensor_args)
-    q_pos_goal = to_torch(request["q_pos_goal"], **tensor_args)
     q_vel_start = to_torch(request["q_vel_start"], **tensor_args)
     q_vel_goal = to_torch(request["q_vel_goal"], **tensor_args)
     q_acc_start = to_torch(request["q_acc_start"], **tensor_args)
     q_acc_goal = to_torch(request["q_acc_goal"], **tensor_args)
     _validate_robot_state(planning_task, q_pos_start, "q_pos_start")
-    _validate_robot_state(planning_task, q_pos_goal, "q_pos_goal")
+
+    ik_metadata = None
+    if request["goal_type"] == "joint":
+        q_pos_goal = to_torch(request["q_pos_goal"], **tensor_args)
+        _validate_robot_state(planning_task, q_pos_goal, "q_pos_goal")
+        ee_pose_goal = planning_task.robot.get_EE_pose(q_pos_goal)[0, :3, :4]
+        target_pose_xyzw = _cartesian_poses_xyzw(planning_task.robot, q_pos_goal)[0]
+    else:
+        target_transform = _pose_xyzw_to_transform(request["ee_pose_goal"])
+        ee_pose_goal = to_torch(target_transform[:3, :4], **tensor_args)
+        target_pose_xyzw = to_torch(request["ee_pose_goal"], **tensor_args)
+        q_pos_goal, ik_metadata = _solve_cartesian_goal(
+            planning_task,
+            q_pos_start,
+            ee_pose_goal,
+            ik_candidates=request["ik_candidates"],
+            ik_max_iters=request["ik_max_iters"],
+        )
+        _validate_robot_state(planning_task, q_pos_goal, "cartesian_goal_ik_condition")
+
     _validate_boundary_derivative(q_vel_start, planning_task.robot.dq_max, "q_vel_start")
     _validate_boundary_derivative(q_vel_goal, planning_task.robot.dq_max, "q_vel_goal")
     _validate_boundary_derivative(q_acc_start, planning_task.robot.ddq_max, "q_acc_start")
     _validate_boundary_derivative(q_acc_goal, planning_task.robot.ddq_max, "q_acc_goal")
-
-    ee_pose_goal_full = planning_task.robot.get_EE_pose(q_pos_goal)
-    ee_pose_goal = ee_pose_goal_full[0, :3, :4]
 
     planner = GenerativeOptimizationPlanner(
         planning_task,
@@ -541,7 +774,7 @@ def _run_inference(
         debug=False,
     )
 
-    valid_trajectory_count = int(results.q_trajs_pos_valid.shape[0])
+    valid_trajectory_count = int(results.valid_trajectory_mask.sum().item())
     if valid_trajectory_count == 0 or results.q_trajs_pos_best is None:
         raise NoValidTrajectoryError("MPD produced no valid trajectory for this request.")
 
@@ -563,10 +796,17 @@ def _run_inference(
 
     metrics_best = results.metrics.trajs_best
     generated_trajectory_count = int(results.q_trajs_pos_iter_0.shape[0])
+    dense_checked_count = (
+        int(results.dense_validation_candidates_checked)
+        if results.dense_validation_candidates_checked is not None
+        else generated_trajectory_count
+    )
     collision_trajectory_count = int(results.collision_trajectory_mask.sum().item())
     joint_position_violation_count = int(results.joint_position_violation_mask.sum().item())
     joint_velocity_violation_count = int(results.joint_velocity_violation_mask.sum().item())
     joint_acceleration_violation_count = int(results.joint_acceleration_violation_mask.sum().item())
+
+    terminal_cartesian_pose_xyzw = _cartesian_poses_xyzw(planning_task.robot, results.q_trajs_pos_best[-1])[0]
 
     result_payload = {
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -581,6 +821,13 @@ def _run_inference(
             "robot_model": request["robot_model"],
             "planning_frame": request["planning_frame"],
             "joint_state_stamp": request["joint_state_stamp"],
+        },
+        "goal": {
+            "input_type": request["goal_type"],
+            "target_pose_xyzw": target_pose_xyzw,
+            "q_pos_goal_condition": q_pos_goal,
+            "ik": ik_metadata,
+            "end_effector_frame": "fr3_hand",
         },
         "scene": {
             "scene_id": actual_scene_id,
@@ -605,10 +852,19 @@ def _run_inference(
             "position_unit": "rad",
             "velocity_unit": "rad/s",
             "acceleration_unit": "rad/s^2",
+            "cartesian_pose_format": "[x, y, z, qx, qy, qz, qw]",
+            "cartesian_position_unit": "m",
+            "cartesian_reference_frame": request["planning_frame"],
             **trajectory_validation,
         },
         "candidates": {
             "generated": generated_trajectory_count,
+            "dense_checked": dense_checked_count,
+            "dense_unchecked": generated_trajectory_count - dense_checked_count,
+            "dense_complete": bool(results.dense_validation_complete),
+            "dense_batches_evaluated": int(results.dense_validation_batches_evaluated),
+            "dense_bucket_capacities": results.dense_validation_bucket_capacities,
+            "dense_padding_slots": int(results.dense_validation_padding_slots),
             "valid": valid_trajectory_count,
             "colliding": collision_trajectory_count,
             "joint_position_violations": joint_position_violation_count,
@@ -621,11 +877,14 @@ def _run_inference(
             "ee_orientation_error_deg": metrics_best.ee_pose_goal_error_orientation_norm,
             "path_length": metrics_best.path_length,
             "smoothness": metrics_best.smoothness,
+            "terminal_cartesian_pose_xyzw": terminal_cartesian_pose_xyzw,
         },
         "timing": {
             "inference_total_sec": results.t_inference_total,
             "generator_sec": results.t_generator,
             "guide_sec": results.t_guide,
+            "trajectory_ranking_sec": results.trajectory_ranking_time,
+            "dense_validation_sec": results.dense_validation_time,
         },
         "created_unix_time": time.time(),
     }
@@ -635,6 +894,7 @@ def _run_inference(
         "accelerations": to_numpy(results.q_trajs_acc_best, dtype=np.float64),
         "time_from_start": to_numpy(results.timesteps, dtype=np.float64),
         "joint_names": np.asarray(request["joint_names"], dtype=np.str_),
+        "terminal_cartesian_pose_xyzw": to_numpy(terminal_cartesian_pose_xyzw, dtype=np.float64),
     }
     return _jsonable(result_payload), trajectory_arrays
 

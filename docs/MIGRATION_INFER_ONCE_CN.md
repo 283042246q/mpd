@@ -16,7 +16,7 @@ scripts/runtime/infer_once.py
    中选中模型的 `model_dir_ddpm_bspline`。当前值指向旧目录
    `${HOME}/Projects/MotionPlanningDiffusion/mpd-splines/...`，并不指向本仓库。
 3. `data_public/`、`data_trained_models`、`data_trajectories` 和 `deps/isaacgym` 都不会随 Git 克隆。模型和数据必须单独复制/下载，再重建两个相对符号链接。
-4. `address_token.txt` 指定当前实际 MPD 环境名为 `mpd-splines-public-cu128`。实机检查得到：
+4. `address_token.txt` 指定当前实际 MPD 环境名为 `mpd-splines-public`。实机检查得到：
 
    | 项目 | 当前值 |
    |---|---|
@@ -28,7 +28,7 @@ scripts/runtime/infer_once.py
    | SciPy | 1.15.2 |
    | CUDA runtime used by PyTorch | 12.8 |
 
-5. 根目录旧 `environment.yml` 是另一套老环境：Python 3.8.19、Torch 2.0.0+cu118、Isaac Gym Preview 4。它与当前已验证的 `mpd-splines-public-cu128` 不一致。
+5. 根目录旧 `environment.yml` 是另一套老环境：Python 3.8.19、Torch 2.0.0+cu118、Isaac Gym Preview 4。它与当前已验证的 `mpd-splines-public` 不一定一致。
 6. 只运行当前未重构的 `infer_once.py`：
 
    - **需要 PyBullet、OMPL 和仓库内的 `pb_ompl`**，但不会启动 PyBullet GUI 或用 PyBullet 做本次碰撞检测；

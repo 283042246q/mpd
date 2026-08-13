@@ -1,0 +1,422 @@
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ journalctl -b -1 -p 0..3 --no-pager
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS09._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS06._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._UPC due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS09._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS09._UPC due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS09._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS01._UPC due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS06._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS06._UPC due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.SS06._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI BIOS Error (bug): Could not resolve symbol [\_SB.UBTC.RUCC], AE_NOT_FOUND (20251212/psargs-332)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: ACPI Error: Aborting method \_SB.PC00.XHCI.RHUB.HS01._PLD due to previous error (AE_NOT_FOUND) (20251212/psparse-529)
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: 
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: Bluetooth: hci0: Opcode 0xfc1e failed: -16
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN bluetoothd[1406]: profiles/sap/server.c:sap_server_register() Sap driver initialization failed.
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN bluetoothd[1406]: sap-server: Operation not permitted (1)
+7月 31 18:17:44 eric-CVN-Z790D5-GAMING-FROZEN gdm-password][2409]: gkr-pam: unable to locate daemon control file
+7月 31 18:17:44 eric-CVN-Z790D5-GAMING-FROZEN gdm3[1739]: Gdm: on_display_added: assertion 'GDM_IS_REMOTE_DISPLAY (display)' failed
+7月 31 18:17:46 eric-CVN-Z790D5-GAMING-FROZEN systemd[2425]: Failed to start app-gnome-gnome\x2dkeyring\x2dsecrets-2752.scope - Application launched by gnome-session-binary.
+7月 31 18:17:46 eric-CVN-Z790D5-GAMING-FROZEN systemd[2425]: Failed to start app-gnome-gnome\x2dkeyring\x2dssh-2753.scope - Application launched by gnome-session-binary.
+7月 31 18:17:47 eric-CVN-Z790D5-GAMING-FROZEN systemd[2425]: Failed to start app-gnome-user\x2ddirs\x2dupdate\x2dgtk-3001.scope - Application launched by gnome-session-binary.
+7月 31 18:17:48 eric-CVN-Z790D5-GAMING-FROZEN gdm3[1739]: Gdm: on_display_removed: assertion 'GDM_IS_REMOTE_DISPLAY (display)' failed
+7月 31 19:36:38 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 000000000000000f
+7月 31 19:36:38 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:36:38 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:36:57 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:36:57 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:36:57 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:07 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:07 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:07 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel: pstore: backend (efi_pstore) writing error (-12)
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ journalctl -k -b -1 --no-pager | grep -iE \
+"xid|nvrm|gpu|oom|lockup|watchdog|hung|nvme|i/o error|ext4"
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: NMI watchdog: Enabled. Permanently consumes one hw-PMU counter.
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: nvme 0000:02:00.0: platform quirk: setting simple suspend
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: nvme nvme0: pci function 0000:02:00.0
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: r8169 0000:03:00.0 eth0: RTL8125B, 8c:32:23:13:6a:b0, XID 641, IRQ 135
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: nvme nvme0: allocated 64 MiB host memory buffer (1 segment).
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: nvme nvme0: 16/0/0 default/read/poll queues
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel:  nvme0n1: p1 p2 p3
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: EXT4-fs (nvme0n1p1): mounted filesystem 2e652038-6658-4c2a-9111-e3d6f2a66c96 ro with ordered data mode. Quota mode: none.
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN systemd[1]: Listening on systemd-oomd.socket - Userspace Out-Of-Memory (OOM) Killer Socket.
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: EXT4-fs (nvme0n1p1): re-mounted 2e652038-6658-4c2a-9111-e3d6f2a66c96 r/w.
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  580.173.02  Release Build  (dvs-builder@U22-I3-AK02-24-4)  Tue Jun 23 08:17:01 UTC 2026
+7月 31 18:17:33 eric-CVN-Z790D5-GAMING-FROZEN kernel: [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN kernel: EXT4-fs (nvme0n1p3): mounted filesystem 41036256-6199-4bee-826f-722573d84916 r/w with ordered data mode. Quota mode: none.
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN kernel: EXT4-fs (sda1): mounted filesystem ab2f61ea-7d08-436c-a421-0d125b0ab98c r/w with ordered data mode. Quota mode: none.
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN kernel: nvme nvme0: using unchecked data buffer
+7月 31 18:17:35 eric-CVN-Z790D5-GAMING-FROZEN kernel: block nvme0n1: No UUID available providing old NGUID
+7月 31 19:36:38 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:36:57 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:07 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:19 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:21 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:44 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ last -x | head -30
+eric     :1           :1               Fri Jul 31 19:48   still logged in
+eric     seat0        login screen     Fri Jul 31 19:48   still logged in
+runlevel (to lvl 5)   7.0.0-28-generic Fri Jul 31 19:48   still running
+reboot   system boot  7.0.0-28-generic Fri Jul 31 19:48   still running
+eric     :1           :1               Fri Jul 31 18:17 - crash  (01:30)
+eric     seat0        login screen     Fri Jul 31 18:17 - crash  (01:30)
+runlevel (to lvl 5)   7.0.0-28-generic Fri Jul 31 18:17 - 19:48  (01:30)
+reboot   system boot  7.0.0-28-generic Fri Jul 31 18:17   still running
+shutdown system down  7.0.0-28-generic Fri Jul 31 18:17 - 18:17  (00:00)
+eric     :1           :1               Fri Jul 31 18:06 - down   (00:10)
+eric     seat0        login screen     Fri Jul 31 18:06 - down   (00:10)
+runlevel (to lvl 5)   7.0.0-28-generic Fri Jul 31 18:06 - 18:17  (00:11)
+reboot   system boot  7.0.0-28-generic Fri Jul 31 18:06 - 18:17  (00:11)
+eric     :1           :1               Thu Jul 30 14:40 - crash (1+03:25)
+eric     seat0        login screen     Thu Jul 30 14:40 - crash (1+03:25)
+runlevel (to lvl 5)   7.0.0-28-generic Thu Jul 30 14:40 - 18:06 (1+03:25)
+reboot   system boot  7.0.0-28-generic Thu Jul 30 14:40 - 18:17 (1+03:37)
+eric     :1           :1               Thu Jul 30 04:34 - crash  (10:06)
+eric     seat0        login screen     Thu Jul 30 04:34 - crash  (10:06)
+runlevel (to lvl 5)   7.0.0-28-generic Thu Jul 30 04:31 - 14:40  (10:08)
+reboot   system boot  7.0.0-28-generic Thu Jul 30 04:31 - 18:17 (1+13:45)
+shutdown system down  7.0.0-28-generic Thu Jul 30 04:31 - 04:31  (00:00)
+eric     :1           :1               Tue Jul 28 16:20 - down  (1+12:10)
+eric     seat0        login screen     Tue Jul 28 16:20 - down  (1+12:10)
+runlevel (to lvl 5)   7.0.0-28-generic Tue Jul 28 16:20 - 04:31 (1+12:11)
+reboot   system boot  7.0.0-28-generic Tue Jul 28 16:20 - 04:31 (1+12:11)
+shutdown system down  7.0.0-28-generic Tue Jul 28 16:19 - 16:20  (00:00)
+runlevel (to lvl 5)   7.0.0-28-generic Tue Jul 28 12:11 - 16:19  (04:08)
+eric     :1           :1               Tue Jul 28 12:10 - down   (04:09)
+eric     seat0        login screen     Tue Jul 28 12:10 - down   (04:09)
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ journalctl -k -b -1 \
+  --since "2026-07-31 19:36:30" \
+  --until "2026-07-31 19:38:00" \
+  -o short-precise \
+  --no-pager > ~/kernel-oops-20260731.txt
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ sed -n '/BUG: kernel NULL pointer dereference/,$p' \
+  ~/kernel-oops-20260731.txt | head -n 180
+7月 31 19:36:38.701748 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 000000000000000f
+7月 31 19:36:38.701841 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:36:38.702752 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:36:38.702798 eric-CVN-Z790D5-GAMING-FROZEN kernel: PGD 0 P4D 0 
+7月 31 19:36:38.703435 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#1] SMP NOPTI
+7月 31 19:36:38.703457 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 2 UID: 1000 PID: 159492 Comm: python Tainted: G           O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+7月 31 19:36:38.703469 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [O]=OOT_MODULE
+7月 31 19:36:38.703478 eric-CVN-Z790D5-GAMING-FROZEN kernel: Hardware name: Colorful Technology And Development Co.,LTD CVN Z790D5 GAMING FROZEN /CVN Z790D5 GAMING FROZEN , BIOS 1012 11/29/2023
+7月 31 19:36:38.703497 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+7月 31 19:36:38.703507 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: 08 81 ea 00 00 00 40 79 b5 be 03 00 00 00 89 45 d4 e8 cd a7 4f 00 8b 45 d4 eb a3 0f b6 5d e5 80 fb 01 0f 87 8c 35 ae ff 83 e3 <01> 74 91 0f 0b eb 8d 0f 0b eb 89 0f 0b e9 4a ff ff ff e8 22 be f4
+7月 31 19:36:38.703520 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f38be18 EFLAGS: 00010282
+7月 31 19:36:38.703530 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 00000000e383ffae RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:36:38.703541 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:36:38.703550 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f38bea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:36:38.703558 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:36:38.703567 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735187e5d000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:36:38.703576 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  000073528090b6c0(0000) GS:ffff8ed9a30e3000(0000) knlGS:0000000000000000
+7月 31 19:36:38.703585 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:36:38.703593 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 000000000000000f CR3: 00000004722e5005 CR4: 0000000000f72ef0
+7月 31 19:36:38.703601 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:36:38.703609 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+7月 31 19:36:38.703618 eric-CVN-Z790D5-GAMING-FROZEN kernel:  <TASK>
+7月 31 19:36:38.703627 eric-CVN-Z790D5-GAMING-FROZEN kernel:  do_user_addr_fault+0x14c/0x8c0
+7月 31 19:36:38.703634 eric-CVN-Z790D5-GAMING-FROZEN kernel:  exc_page_fault+0x81/0x1c0
+7月 31 19:36:38.703643 eric-CVN-Z790D5-GAMING-FROZEN kernel:  asm_exc_page_fault+0x27/0x30
+7月 31 19:36:38.703651 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+7月 31 19:36:38.703659 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: fb 4d 0f af c4 48 0f af d0 4c 01 d7 4d 01 c8 48 01 d1 0f 1f 44 00 00 c4 c1 7a 10 00 c5 fa 59 07 48 83 c0 01 4d 01 e0 48 01 df <c5> fa 11 01 4c 01 d9 48 39 c6 75 e1 c5 f8 77 48 8d 65 f0 5b 41 5c
+7月 31 19:36:38.703667 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 002b:000073528090abe0 EFLAGS: 00010206
+7月 31 19:36:38.703675 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000002 RBX: 0000000000000000 RCX: 0000735187e5d000
+7月 31 19:36:38.703683 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 0000000000000003 RDI: 0000735257be2ad4
+7月 31 19:36:38.703691 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: 000073528090abf0 R08: 000073519312e004 R09: 000073519312dffc
+7月 31 19:36:38.703699 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000735257be2ad4 R11: 0000000000000004 R12: 0000000000000004
+7月 31 19:36:38.703707 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 000073528090ac60 R14: 0000000000000003 R15: 000000000009ef21
+7月 31 19:36:38.703715 eric-CVN-Z790D5-GAMING-FROZEN kernel:  </TASK>
+7月 31 19:36:38.703722 eric-CVN-Z790D5-GAMING-FROZEN kernel: Modules linked in: ccm rfcomm snd_seq_dummy snd_hrtimer qrtr cmac algif_hash algif_skcipher af_alg bnep nvidia_uvm(O) binfmt_misc nls_iso8859_1 intel_rapl_msr intel_rapl_common snd_sof_pci_intel_tgl snd_sof_pci_intel_cnl snd_sof_intel_hda_generic intel_uncore_frequency intel_uncore_frequency_common soundwire_intel snd_sof_intel_hda_sdw_bpt snd_sof_intel_hda_common snd_soc_hdac_hda snd_sof_intel_hda_mlink snd_sof_intel_hda soundwire_cadence snd_sof_pci snd_sof_xtensa_dsp snd_sof snd_sof_utils snd_soc_acpi_intel_match snd_soc_acpi_intel_sdca_quirks soundwire_generic_allocation snd_soc_sdw_utils snd_soc_acpi snd_hda_codec_alc662 soundwire_bus snd_hda_codec_realtek_lib snd_hda_codec_nvhdmi snd_hda_codec_generic snd_soc_sdca snd_hda_codec_hdmi crc8 iwlmvm x86_pkg_temp_thermal snd_soc_avs nvidia_drm(O) intel_powerclamp snd_soc_hda_codec snd_hda_intel coretemp snd_hda_ext_core snd_hda_codec nvidia_modeset(O) snd_soc_core mac80211 snd_hda_core kvm_intel snd_compress snd_intel_dspcfg ac97_bus snd_intel_sdw_acpi
+7月 31 19:36:38.703755 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:36:38.703778 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 000000000000000f
+7月 31 19:36:38.703786 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+7月 31 19:36:38.703793 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+7月 31 19:36:38.703800 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: 08 81 ea 00 00 00 40 79 b5 be 03 00 00 00 89 45 d4 e8 cd a7 4f 00 8b 45 d4 eb a3 0f b6 5d e5 80 fb 01 0f 87 8c 35 ae ff 83 e3 <01> 74 91 0f 0b eb 8d 0f 0b eb 89 0f 0b e9 4a ff ff ff e8 22 be f4
+7月 31 19:36:38.703807 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f38be18 EFLAGS: 00010282
+7月 31 19:36:38.703814 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 00000000e383ffae RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:36:38.703821 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:36:38.703828 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f38bea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:36:38.703834 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:36:38.703840 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735187e5d000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:36:38.703845 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  000073528090b6c0(0000) GS:ffff8ed9a30e3000(0000) knlGS:0000000000000000
+7月 31 19:36:38.703851 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:36:38.703857 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 000000000000000f CR3: 00000004722e5005 CR4: 0000000000f72ef0
+7月 31 19:36:38.703865 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:36:38.703870 eric-CVN-Z790D5-GAMING-FROZEN kernel: note: python[159492] exited with irqs disabled
+7月 31 19:36:57.321356 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:36:57.321457 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:36:57.322442 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:36:57.322469 eric-CVN-Z790D5-GAMING-FROZEN kernel: PGD 0 P4D 0 
+7月 31 19:36:57.322485 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#2] SMP NOPTI
+7月 31 19:36:57.322495 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159477 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+7月 31 19:36:57.322504 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+7月 31 19:36:57.322511 eric-CVN-Z790D5-GAMING-FROZEN kernel: Hardware name: Colorful Technology And Development Co.,LTD CVN Z790D5 GAMING FROZEN /CVN Z790D5 GAMING FROZEN , BIOS 1012 11/29/2023
+7月 31 19:36:57.322519 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+7月 31 19:36:57.322529 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: ff 48 8d ba c8 01 00 00 31 db e8 2c d6 c5 ff e8 37 f8 d5 ff e9 b4 fe ff ff 31 db e9 ad fe ff ff 48 83 fb f5 0f 85 e5 fe ff ff <c7> 45 c0 01 00 00 00 48 c7 45 90 00 00 00 00 4c 89 6d 80 4c 89 6d
+7月 31 19:36:57.322538 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f313e18 EFLAGS: 00010246
+7月 31 19:36:57.322547 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000000 RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:36:57.322555 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:36:57.322561 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f313ea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:36:57.322570 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:36:57.322576 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735180fad000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:36:57.322584 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  000073528811a6c0(0000) GS:ffff8ed9a2fe3000(0000) knlGS:0000000000000000
+7月 31 19:36:57.322590 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:36:57.322596 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000 CR3: 00000004722e5005 CR4: 0000000000f72ef0
+7月 31 19:36:57.322605 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:36:57.322612 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+7月 31 19:36:57.322618 eric-CVN-Z790D5-GAMING-FROZEN kernel:  <TASK>
+7月 31 19:36:57.322624 eric-CVN-Z790D5-GAMING-FROZEN kernel:  do_user_addr_fault+0x14c/0x8c0
+7月 31 19:36:57.322631 eric-CVN-Z790D5-GAMING-FROZEN kernel:  exc_page_fault+0x81/0x1c0
+7月 31 19:36:57.322638 eric-CVN-Z790D5-GAMING-FROZEN kernel:  asm_exc_page_fault+0x27/0x30
+7月 31 19:36:57.322644 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+7月 31 19:36:57.322650 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: fb 4d 0f af c4 48 0f af d0 4c 01 d7 4d 01 c8 48 01 d1 0f 1f 44 00 00 c4 c1 7a 10 00 c5 fa 59 07 48 83 c0 01 4d 01 e0 48 01 df <c5> fa 11 01 4c 01 d9 48 39 c6 75 e1 c5 f8 77 48 8d 65 f0 5b 41 5c
+7月 31 19:36:57.322657 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 002b:0000735288119be0 EFLAGS: 00010202
+7月 31 19:36:57.322664 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000001 RBX: 0000000000000000 RCX: 0000735180fad000
+7月 31 19:36:57.322672 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 0000000000000003 RDI: 00007352556fd580
+7月 31 19:36:57.322683 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: 0000735288119bf0 R08: 000073518c27e004 R09: 000073518c27e000
+7月 31 19:36:57.322689 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 00007352556fd580 R11: 0000000000000004 R12: 0000000000000004
+7月 31 19:36:57.322696 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735288119c60 R14: 0000000000000003 R15: 000000000009ef21
+7月 31 19:36:57.322704 eric-CVN-Z790D5-GAMING-FROZEN kernel:  </TASK>
+7月 31 19:36:57.322710 eric-CVN-Z790D5-GAMING-FROZEN kernel: Modules linked in: ccm rfcomm snd_seq_dummy snd_hrtimer qrtr cmac algif_hash algif_skcipher af_alg bnep nvidia_uvm(O) binfmt_misc nls_iso8859_1 intel_rapl_msr intel_rapl_common snd_sof_pci_intel_tgl snd_sof_pci_intel_cnl snd_sof_intel_hda_generic intel_uncore_frequency intel_uncore_frequency_common soundwire_intel snd_sof_intel_hda_sdw_bpt snd_sof_intel_hda_common snd_soc_hdac_hda snd_sof_intel_hda_mlink snd_sof_intel_hda soundwire_cadence snd_sof_pci snd_sof_xtensa_dsp snd_sof snd_sof_utils snd_soc_acpi_intel_match snd_soc_acpi_intel_sdca_quirks soundwire_generic_allocation snd_soc_sdw_utils snd_soc_acpi snd_hda_codec_alc662 soundwire_bus snd_hda_codec_realtek_lib snd_hda_codec_nvhdmi snd_hda_codec_generic snd_soc_sdca snd_hda_codec_hdmi crc8 iwlmvm x86_pkg_temp_thermal snd_soc_avs nvidia_drm(O) intel_powerclamp snd_soc_hda_codec snd_hda_intel coretemp snd_hda_ext_core snd_hda_codec nvidia_modeset(O) snd_soc_core mac80211 snd_hda_core kvm_intel snd_compress snd_intel_dspcfg ac97_bus snd_intel_sdw_acpi
+7月 31 19:36:57.322740 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:36:57.322753 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000
+7月 31 19:36:57.322761 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+7月 31 19:36:57.322767 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+7月 31 19:36:57.322774 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: 08 81 ea 00 00 00 40 79 b5 be 03 00 00 00 89 45 d4 e8 cd a7 4f 00 8b 45 d4 eb a3 0f b6 5d e5 80 fb 01 0f 87 8c 35 ae ff 83 e3 <01> 74 91 0f 0b eb 8d 0f 0b eb 89 0f 0b e9 4a ff ff ff e8 22 be f4
+7月 31 19:36:57.322780 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f38be18 EFLAGS: 00010282
+7月 31 19:36:57.322786 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 00000000e383ffae RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:36:57.322791 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:36:57.322797 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f38bea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:36:57.322805 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:36:57.322811 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735187e5d000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:36:57.322817 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  000073528811a6c0(0000) GS:ffff8ed9a2fe3000(0000) knlGS:0000000000000000
+7月 31 19:36:57.322823 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:36:57.322829 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000 CR3: 00000004722e5005 CR4: 0000000000f72ef0
+7月 31 19:36:57.322834 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:36:57.322840 eric-CVN-Z790D5-GAMING-FROZEN kernel: note: python[159477] exited with irqs disabled
+7月 31 19:37:06.659418 eric-CVN-Z790D5-GAMING-FROZEN kernel: traps: python[159753] general protection fault ip:7667e0ae7684 sp:7ffe694d6b60 error:0 in pybullet.cpython-38-x86_64-linux-gnu.so[4e7684,7667e06b0000+501000]
+7月 31 19:37:07.456009 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:07.456088 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:07.457422 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:07.460423 eric-CVN-Z790D5-GAMING-FROZEN kernel: PGD 0 P4D 0 
+7月 31 19:37:07.464409 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#3] SMP NOPTI
+7月 31 19:37:07.464422 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 1 UID: 1000 PID: 159481 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+7月 31 19:37:07.464434 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+7月 31 19:37:07.464443 eric-CVN-Z790D5-GAMING-FROZEN kernel: Hardware name: Colorful Technology And Development Co.,LTD CVN Z790D5 GAMING FROZEN /CVN Z790D5 GAMING FROZEN , BIOS 1012 11/29/2023
+7月 31 19:37:07.464449 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+7月 31 19:37:07.464457 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: ff 48 8d ba c8 01 00 00 31 db e8 2c d6 c5 ff e8 37 f8 d5 ff e9 b4 fe ff ff 31 db e9 ad fe ff ff 48 83 fb f5 0f 85 e5 fe ff ff <c7> 45 c0 01 00 00 00 48 c7 45 90 00 00 00 00 4c 89 6d 80 4c 89 6d
+7月 31 19:37:07.464465 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f333e18 EFLAGS: 00010246
+7月 31 19:37:07.464476 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000000 RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:37:07.464483 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:37:07.464491 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f333ea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:37:07.464502 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:37:07.464510 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735182d34000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:37:07.464518 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  00007352861166c0(0000) GS:ffff8ed9a3063000(0000) knlGS:0000000000000000
+7月 31 19:37:07.464527 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:37:07.464533 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000 CR3: 00000004722e5001 CR4: 0000000000f72ef0
+7月 31 19:37:07.464541 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:37:07.464549 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+7月 31 19:37:07.464556 eric-CVN-Z790D5-GAMING-FROZEN kernel:  <TASK>
+7月 31 19:37:07.464562 eric-CVN-Z790D5-GAMING-FROZEN kernel:  do_user_addr_fault+0x14c/0x8c0
+7月 31 19:37:07.464568 eric-CVN-Z790D5-GAMING-FROZEN kernel:  exc_page_fault+0x81/0x1c0
+7月 31 19:37:07.464573 eric-CVN-Z790D5-GAMING-FROZEN kernel:  asm_exc_page_fault+0x27/0x30
+7月 31 19:37:07.464580 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+7月 31 19:37:07.464588 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: fb 4d 0f af c4 48 0f af d0 4c 01 d7 4d 01 c8 48 01 d1 0f 1f 44 00 00 c4 c1 7a 10 00 c5 fa 59 07 48 83 c0 01 4d 01 e0 48 01 df <c5> fa 11 01 4c 01 d9 48 39 c6 75 e1 c5 f8 77 48 8d 65 f0 5b 41 5c
+7月 31 19:37:07.464626 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 002b:0000735286115be0 EFLAGS: 00010206
+7月 31 19:37:07.464632 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000003 RBX: 0000000000000000 RCX: 0000735182d34000
+7月 31 19:37:07.464638 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 0000000000000003 RDI: 00007352560d5028
+7月 31 19:37:07.464644 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: 0000735286115bf0 R08: 000073518e005004 R09: 000073518e004ff8
+7月 31 19:37:07.464650 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 00007352560d5028 R11: 0000000000000004 R12: 0000000000000004
+7月 31 19:37:07.464656 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735286115c60 R14: 0000000000000003 R15: 000000000009ef21
+7月 31 19:37:07.464663 eric-CVN-Z790D5-GAMING-FROZEN kernel:  </TASK>
+7月 31 19:37:07.464669 eric-CVN-Z790D5-GAMING-FROZEN kernel: Modules linked in: ccm rfcomm snd_seq_dummy snd_hrtimer qrtr cmac algif_hash algif_skcipher af_alg bnep nvidia_uvm(O) binfmt_misc nls_iso8859_1 intel_rapl_msr intel_rapl_common snd_sof_pci_intel_tgl snd_sof_pci_intel_cnl snd_sof_intel_hda_generic intel_uncore_frequency intel_uncore_frequency_common soundwire_intel snd_sof_intel_hda_sdw_bpt snd_sof_intel_hda_common snd_soc_hdac_hda snd_sof_intel_hda_mlink snd_sof_intel_hda soundwire_cadence snd_sof_pci snd_sof_xtensa_dsp snd_sof snd_sof_utils snd_soc_acpi_intel_match snd_soc_acpi_intel_sdca_quirks soundwire_generic_allocation snd_soc_sdw_utils snd_soc_acpi snd_hda_codec_alc662 soundwire_bus snd_hda_codec_realtek_lib snd_hda_codec_nvhdmi snd_hda_codec_generic snd_soc_sdca snd_hda_codec_hdmi crc8 iwlmvm x86_pkg_temp_thermal snd_soc_avs nvidia_drm(O) intel_powerclamp snd_soc_hda_codec snd_hda_intel coretemp snd_hda_ext_core snd_hda_codec nvidia_modeset(O) snd_soc_core mac80211 snd_hda_core kvm_intel snd_compress snd_intel_dspcfg ac97_bus snd_intel_sdw_acpi
+7月 31 19:37:07.464689 eric-CVN-Z790D5-GAMING-FROZEN kernel:  snd_hwdep snd_pcm_dmaengine snd_pcm libarc4 snd_seq_midi snd_seq_midi_event kvm btusb snd_rawmidi cmdlinepart btmtk snd_seq iwlwifi btrtl spi_nor irqbypass btbcm snd_seq_device ghash_clmulni_intel btintel nvidia(O) aesni_intel snd_timer mtd i2c_i801 rapl i2c_smbus drm_ttm_helper spi_intel_pci snd mei_hdcp mei_pxp cfg80211 bluetooth intel_cstate joydev input_leds serio_raw wmi_bmof i2c_mux spi_intel soundcore ttm intel_pmc_core pmt_telemetry pmt_discovery pmt_class intel_pmc_ssram_telemetry intel_vsec acpi_pad acpi_tad mei_me mac_hid mei sch_fq_codel msr parport_pc ppdev lp parport efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 hid_generic usbhid hid spi_pxa2xx_platform dw_dmac dw_dmac_core spi_pxa2xx_core 8250_dw nvme nvme_core intel_lpss_pci psmouse r8169 nvme_keyring ahci video intel_lpss nvme_auth realtek libahci idma64 hkdf wmi
+7月 31 19:37:07.464698 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000
+7月 31 19:37:07.464704 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+7月 31 19:37:07.464709 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+7月 31 19:37:07.464714 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: 08 81 ea 00 00 00 40 79 b5 be 03 00 00 00 89 45 d4 e8 cd a7 4f 00 8b 45 d4 eb a3 0f b6 5d e5 80 fb 01 0f 87 8c 35 ae ff 83 e3 <01> 74 91 0f 0b eb 8d 0f 0b eb 89 0f 0b e9 4a ff ff ff e8 22 be f4
+7月 31 19:37:07.464719 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0000:ffffd1fc3f38be18 EFLAGS: 00010282
+7月 31 19:37:07.464726 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 00000000e383ffae RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:37:07.464732 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:37:07.464736 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f38bea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:37:07.464741 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:37:07.464745 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 0000735187e5d000 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:37:07.464750 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  00007352861166c0(0000) GS:ffff8ed9a3063000(0000) knlGS:0000000000000000
+7月 31 19:37:07.464755 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:37:07.464760 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000 CR3: 00000004722e5001 CR4: 0000000000f72ef0
+7月 31 19:37:07.464765 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:37:07.464769 eric-CVN-Z790D5-GAMING-FROZEN kernel: note: python[159481] exited with irqs disabled
+7月 31 19:37:19.010299 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+7月 31 19:37:19.010384 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: supervisor write access in kernel mode
+7月 31 19:37:19.010469 eric-CVN-Z790D5-GAMING-FROZEN kernel: #PF: error_code(0x0002) - not-present page
+7月 31 19:37:19.013445 eric-CVN-Z790D5-GAMING-FROZEN kernel: PGD 0 P4D 0 
+7月 31 19:37:19.016418 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#4] SMP NOPTI
+7月 31 19:37:19.016445 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159491 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+7月 31 19:37:19.016458 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+7月 31 19:37:19.016469 eric-CVN-Z790D5-GAMING-FROZEN kernel: Hardware name: Colorful Technology And Development Co.,LTD CVN Z790D5 GAMING FROZEN /CVN Z790D5 GAMING FROZEN , BIOS 1012 11/29/2023
+7月 31 19:37:19.016482 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+7月 31 19:37:19.016493 eric-CVN-Z790D5-GAMING-FROZEN kernel: Code: ff 48 8d ba c8 01 00 00 31 db e8 2c d6 c5 ff e8 37 f8 d5 ff e9 b4 fe ff ff 31 db e9 ad fe ff ff 48 83 fb f5 0f 85 e5 fe ff ff <c7> 45 c0 01 00 00 00 48 c7 45 90 00 00 00 00 4c 89 6d 80 4c 89 6d
+7月 31 19:37:19.016505 eric-CVN-Z790D5-GAMING-FROZEN kernel: RSP: 0018:ffffd1fc3f383e18 EFLAGS: 00010246
+7月 31 19:37:19.016514 eric-CVN-Z790D5-GAMING-FROZEN kernel: RAX: 0000000000000000 RBX: ffff8ecda5d9db00 RCX: 0000000000000000
+7月 31 19:37:19.016525 eric-CVN-Z790D5-GAMING-FROZEN kernel: RDX: 0000000000000000 RSI: 000000003fffffff RDI: 0000000000000000
+7月 31 19:37:19.016535 eric-CVN-Z790D5-GAMING-FROZEN kernel: RBP: ffffd1fc3f383ea0 R08: 0000000000000000 R09: 0000000000000000
+7月 31 19:37:19.016548 eric-CVN-Z790D5-GAMING-FROZEN kernel: R10: 0000000000000000 R11: 0000000000000000 R12: ffff8ecda5d9db80
+7月 31 19:37:19.016557 eric-CVN-Z790D5-GAMING-FROZEN kernel: R13: 000073518745a564 R14: ffff8eca31861500 R15: 0000000000000215
+7月 31 19:37:19.016565 eric-CVN-Z790D5-GAMING-FROZEN kernel: FS:  000073528110c6c0(0000) GS:ffff8ed9a2fe3000(0000) knlGS:0000000000000000
+7月 31 19:37:19.016576 eric-CVN-Z790D5-GAMING-FROZEN kernel: CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+7月 31 19:37:19.016585 eric-CVN-Z790D5-GAMING-FROZEN kernel: CR2: 0000000000000000 CR3: 00000004722e5001 CR4: 0000000000f72ef0
+7月 31 19:37:19.016595 eric-CVN-Z790D5-GAMING-FROZEN kernel: PKRU: 55555554
+7月 31 19:37:19.016603 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+7月 31 19:37:19.016614 eric-CVN-Z790D5-GAMING-FROZEN kernel:  <TASK>
+7月 31 19:37:19.016625 eric-CVN-Z790D5-GAMING-FROZEN kernel:  do_user_addr_fault+0x14c/0x8c0
+7月 31 19:37:19.016635 eric-CVN-Z790D5-GAMING-FROZEN kernel:  exc_page_fault+0x81/0x1c0
+7月 31 19:37:19.016644 eric-CVN-Z790D5-GAMING-FROZEN kernel:  asm_exc_page_fault+0x27/0x30
+7月 31 19:37:19.016655 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+eric@eric-CVN-Z790D5-GAMING-FROZEN:~$ grep -nE \
+'BUG:|Oops:|CPU:|PID:|Comm:|Tainted:|RIP:|Call Trace:|end trace' \
+~/kernel-oops-20260731.txt
+4:7月 31 19:36:38.701748 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 000000000000000f
+8:7月 31 19:36:38.703435 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#1] SMP NOPTI
+9:7月 31 19:36:38.703457 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 2 UID: 1000 PID: 159492 Comm: python Tainted: G           O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+10:7月 31 19:36:38.703469 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [O]=OOT_MODULE
+12:7月 31 19:36:38.703497 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+24:7月 31 19:36:38.703609 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+29:7月 31 19:36:38.703651 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+41:7月 31 19:36:38.703786 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+42:7月 31 19:36:38.703793 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+55:7月 31 19:36:57.321356 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+59:7月 31 19:36:57.322485 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#2] SMP NOPTI
+60:7月 31 19:36:57.322495 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159477 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+61:7月 31 19:36:57.322504 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+63:7月 31 19:36:57.322519 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+75:7月 31 19:36:57.322612 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+80:7月 31 19:36:57.322644 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+92:7月 31 19:36:57.322761 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+93:7月 31 19:36:57.322767 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+107:7月 31 19:37:07.456009 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+111:7月 31 19:37:07.464409 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#3] SMP NOPTI
+112:7月 31 19:37:07.464422 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 1 UID: 1000 PID: 159481 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+113:7月 31 19:37:07.464434 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+115:7月 31 19:37:07.464449 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+127:7月 31 19:37:07.464549 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+132:7月 31 19:37:07.464580 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+144:7月 31 19:37:07.464704 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+145:7月 31 19:37:07.464709 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+158:7月 31 19:37:19.010299 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+162:7月 31 19:37:19.016418 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#4] SMP NOPTI
+163:7月 31 19:37:19.016445 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159491 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+164:7月 31 19:37:19.016458 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+166:7月 31 19:37:19.016482 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+178:7月 31 19:37:19.016603 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+183:7月 31 19:37:19.016655 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+195:7月 31 19:37:19.016801 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+196:7月 31 19:37:19.016808 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+209:7月 31 19:37:19.328990 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+213:7月 31 19:37:19.350418 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#5] SMP NOPTI
+214:7月 31 19:37:19.350440 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159416 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+215:7月 31 19:37:19.350452 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+217:7月 31 19:37:19.350473 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+229:7月 31 19:37:19.350610 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+234:7月 31 19:37:19.350659 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+246:7月 31 19:37:19.350799 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+247:7月 31 19:37:19.350807 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+260:7月 31 19:37:19.991416 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+264:7月 31 19:37:19.999417 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#6] SMP NOPTI
+265:7月 31 19:37:19.999430 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 1 UID: 1000 PID: 159483 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+266:7月 31 19:37:19.999444 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+268:7月 31 19:37:19.999464 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+280:7月 31 19:37:19.999590 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+285:7月 31 19:37:19.999635 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+297:7月 31 19:37:19.999773 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+299:7月 31 19:37:19.999801 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+312:7月 31 19:37:21.094979 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+316:7月 31 19:37:21.099412 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#7] SMP NOPTI
+317:7月 31 19:37:21.099425 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 1 UID: 1000 PID: 159473 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+318:7月 31 19:37:21.099436 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+320:7月 31 19:37:21.099452 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+332:7月 31 19:37:21.099532 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+337:7月 31 19:37:21.099563 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+349:7月 31 19:37:21.099673 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+350:7月 31 19:37:21.099680 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+363:7月 31 19:37:21.232202 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+367:7月 31 19:37:21.247579 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#8] SMP NOPTI
+368:7月 31 19:37:21.247595 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 0 UID: 1000 PID: 159488 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+369:7月 31 19:37:21.247605 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+371:7月 31 19:37:21.247624 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+383:7月 31 19:37:21.247733 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+388:7月 31 19:37:21.247769 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+400:7月 31 19:37:21.247890 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+401:7月 31 19:37:21.247897 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+414:7月 31 19:37:21.342962 eric-CVN-Z790D5-GAMING-FROZEN kernel: BUG: kernel NULL pointer dereference, address: 0000000000000000
+418:7月 31 19:37:21.343502 eric-CVN-Z790D5-GAMING-FROZEN kernel: Oops: Oops: 0002 [#9] SMP NOPTI
+419:7月 31 19:37:21.343515 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 1 UID: 1000 PID: 159475 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+420:7月 31 19:37:21.343527 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+422:7月 31 19:37:21.343545 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:lock_vma_under_rcu+0x25f/0x2c0
+434:7月 31 19:37:21.343639 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+439:7月 31 19:37:21.343675 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x7352efdd4163
+451:7月 31 19:37:21.343789 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+452:7月 31 19:37:21.343798 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:__vma_start_write+0xd7/0xf0
+469:7月 31 19:37:44.062529 eric-CVN-Z790D5-GAMING-FROZEN kernel: CPU: 2 UID: 1000 PID: 160299 Comm: python Tainted: G      D    O        7.0.0-28-generic #28~24.04.1-Ubuntu PREEMPT(lazy) 
+470:7月 31 19:37:44.062536 eric-CVN-Z790D5-GAMING-FROZEN kernel: Tainted: [D]=DIE, [O]=OOT_MODULE
+472:7月 31 19:37:44.062551 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0010:fpregs_assert_state_consistent+0x35/0x60
+484:7月 31 19:37:44.062633 eric-CVN-Z790D5-GAMING-FROZEN kernel: Call Trace:
+490:7月 31 19:37:44.062669 eric-CVN-Z790D5-GAMING-FROZEN kernel: RIP: 0033:0x75827ae18b21
+499:7月 31 19:37:44.062722 eric-CVN-Z790D5-GAMING-FROZEN kernel: ---[ end trace 0000000000000000 ]---
+

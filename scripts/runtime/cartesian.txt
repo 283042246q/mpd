@@ -1,0 +1,230 @@
+ - 默认输入为笛卡尔位姿：[x,y,z,qx,qy,qz,qw]
+  - 可选关节输入：goal_type:=joint
+  - 两种输入都会打印：
+      - TARGET_CARTESIAN_POSE_XYZW
+      - BEST_TRAJECTORY_TERMINAL_CARTESIAN_POSE_XYZW
+
+  - trajectory.npz 不保存整条笛卡尔轨迹，只新增：
+      - terminal_cartesian_pose_xyzw，形状 [7]
+
+  - 完整关节轨迹仍保留，用于 JTC 执行。
+主要实现位置：
+
+  - MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py:245
+  - MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py:732
+  - physical_ai_runtime/src/apps/franka_trajectory_jtc_test/franka_trajectory_jtc_test/
+    send_mpd_trajectory.py:231
+
+  - physical_ai_runtime/src/apps/franka_trajectory_jtc_test/franka_trajectory_jtc_test/
+    send_mpd_trajectory.py:434
+
+  默认笛卡尔输入：
+
+  ros2 run franka_trajectory_jtc_test send_mpd_trajectory --ros-args \
+    -p ee_pose_goal:="[0.4322543,0.1637504,0.6717085,0.8765521,0.4711762,0.0645563,-0.0740393]"
+
+  关节角输入：
+
+  ros2 run franka_trajectory_jtc_test send_mpd_trajectory --ros-args \
+    -p goal_type:=joint \
+    -p q_pos_goal:="[0.2,-0.3,0.1,-1.8,0.2,1.6,0.1]"
+
+
+
+
+ ### 当前 IK 怎么算
+
+  笛卡尔输入时，补丁执行：
+
+  1. 将 [x,y,z,qx,qy,qz,qw] 转成齐次变换矩阵。
+  2. 生成 64 个 IK 初值：
+      - 大部分在当前 q_start 周围加入标准差 0.6 rad 的扰动；
+      - 16 个在关节范围内均匀随机；
+      - 第一个初值就是 q_start。
+
+  3. 调用 Torch Robotics 的可微 IK：
+      - 最多 600 次迭代
+      - 学习率 0.05
+
+  4. 筛选：
+      - 位置误差 ≤ 15 mm
+      - 姿态误差 ≤ 3°
+      - 在规划后端关节范围内
+      - 在 Warehouse 场景中无碰撞
+
+  5. 对有效解按“离起点距离 + 位姿误差”评分，选择一个 IK 解。
+
+  实现位于 MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py:409。
+
+  ### 为什么当前模型不依赖 q_pos_goal
+
+  当前模型同时配置了：
+
+  context_qs: true
+  context_ee_goal_pose: true
+
+  见 MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/
+  generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-
+  joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/
+  unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/
+  context_combined_out_dim___128/bspline_num_control_points_desired___18/
+  parametric_trajectory_class___ParametricTrajectoryBspline/0/args.yaml:7。
+
+  这种组合下，模型的关节 context 只有：
+
+  context_qs = q_start
+
+  不是：
+
+  context_qs = [q_start, q_goal]
+
+  见 MotionPlanningDiffusion/mpd/mpd/datasets/trajectories_dataset_bspline.py:314。
+
+  同时，由于 context_ee_goal_pose=true：
+
+  - B-spline 最后一个关节控制点由扩散模型预测；
+  - 末端不会被强制固定成传入的 q_pos_goal；
+  - EE position/orientation guide 把最后时刻推向目标笛卡尔位姿；
+  - best trajectory 也是按末端笛卡尔误差等指标选择。
+
+  因此当前实际条件可以概括为：
+
+  扩散模型条件 = 当前 q_start + 目标 EE pose
+  优化目标      = 碰撞、关节限制、平滑度、目标 EE pose
+  最终 q_goal   = 模型自己找到的一个 IK 分支
+
+  ### 那能不能“不输入或随便输入”？
+
+  外部笛卡尔接口：确实不需要输入 q_pos_goal，现在也已经禁止同时输入。
+
+  内部 plan_trajectory()：旧 API 仍要求传一个 [7] 的 q_pos_goal 张量，见 MotionPlanningDiffusion/mpd/mpd/
+  inference/inference.py:594。对于当前配置，如果传入另一个合法有限的关节状态，在固定随机种子的情况下，核心 MPD
+  输出理论上应基本不受它影响。
+
+  但不建议“随便输入”，原因是：
+
+  - 非法形状、NaN、超限或碰撞状态可能触发外围检查；
+  - 换成 gp_prior、knn_prior、RRTConnect 或其他 checkpoint 后，q_pos_goal 可能会真正参与规划；
+  - 关节输入模式中，q_pos_goal 会先通过 FK 定义目标笛卡尔位姿，当然不能随便填。
+
+  ### 当前 IK 的真实作用
+
+  严格来说，我之前将它描述成“扩散模型的关节目标 condition”不够准确。对当前 checkpoint，它主要是：
+
+  - 目标可达性预检查；
+  - 寻找至少一个满足误差和碰撞条件的 IK；
+  - 给旧 plan_trajectory(q_start, q_goal, ee_goal) API 提供合理占位值；
+  - 为未来可能使用 q_goal 的 planner/checkpoint 保持兼容。
+
+  如果只针对当前 MPD 配置，可以进一步简化为：
+
+  q_pos_goal_placeholder = q_pos_start
+
+  然后完全依靠 EE pose context 和 guide 做规划。但这样会失去规划前的 IK 可达性与目标碰撞检查。更合理的处理是保留
+  IK，但把变量和文档称为 validated_ik_reference，明确它是“验证/兼容参考”，不是当前扩散模型真正的 goal context。
+
+
+
+
+
+已完成参数暴露，并跑了实际 CUDA 测试。默认值已从 64×600 改为 24×300。
+
+  ros2 run franka_trajectory_jtc_test send_mpd_trajectory --ros-args \
+    -p ik_candidates:=24 \
+    -p ik_max_iters:=300
+
+  基准结果
+
+  使用相同起点、目标笛卡尔位姿和 seed，每组运行一次：
+
+   candidates    max_iters    IK 耗时    有效解    有效率
+  ━━━━━━━━━━━━  ━━━━━━━━━━━  ━━━━━━━━━  ━━━━━━━━  ━━━━━━━━
+            8          300    3.536 s         7     87.5%
+  ────────────  ───────────  ─────────  ────────  ────────
+           16          300    3.618 s        13     81.3%
+  ────────────  ───────────  ─────────  ────────  ────────
+           24          300    3.534 s        18     75.0%
+  ────────────  ───────────  ─────────  ────────  ────────
+           24          600    7.242 s        20     83.3%
+  ────────────  ───────────  ─────────  ────────  ────────
+           24          150    1.807 s        18     75.0%
+
+  结论：
+
+  - 候选数从 24 降到 8，耗时几乎不变，因为 GPU 是批量并行计算。
+  - max_iters 对耗时影响明显：
+      - 150 次约 1.81 秒
+      - 300 次约 3.53 秒
+      - 600 次约 7.24 秒
+
+  - 当前目标下，24×150 和 24×300 都得到 18 个有效解。
+  - 但这只是一个起点和目标的一次测试；复杂或接近奇异位姿时，150 次可能不够。
+
+  因此保留较稳妥的默认值：
+
+  ik_candidates = 24
+  ik_max_iters  = 300
+
+  空旷环境追求速度时可以使用：
+
+  -p ik_candidates:=24 \
+  -p ik_max_iters:=150
+
+  实现位置：
+
+  - MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py:36
+  - MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py:444
+  - physical_ai_runtime/src/apps/franka_trajectory_jtc_test/franka_trajectory_jtc_test/
+    send_mpd_trajectory.py:231
+
+  - physical_ai_runtime/src/apps/franka_trajectory_jtc_test/franka_trajectory_jtc_test/
+    send_mpd_trajectory.py:369
+
+  每次笛卡尔规划的 result.json 现在包含：
+
+  {
+    "goal": {
+      "ik": {
+        "candidates_generated": 24,
+        "candidates_valid": 18,
+        "max_iters": 300,
+        "elapsed_sec": 3.6165
+      }
+    }
+  }
+
+
+
+已修改完成。
+
+  现在默认行为：
+
+  ik_candidates = 0
+  q_pos_goal = q_pos_start
+
+  笛卡尔目标仍正常传给扩散模型和 EE guide，只是跳过规划前 IK。
+
+  结果 JSON 会记录：
+
+  {
+    "goal": {
+      "ik": {
+        "skipped": true,
+        "candidates_generated": 0,
+        "candidates_valid": 0,
+        "elapsed_sec": 0.0
+      }
+    }
+  }
+
+  ROS 默认运行不需要额外参数：
+
+  ros2 run franka_trajectory_jtc_test send_mpd_trajectory
+
+  需要重新启用 IK 时：
+
+  ros2 run franka_trajectory_jtc_test send_mpd_trajectory --ros-args \
+    -p ik_candidates:=24 \
+    -p ik_max_iters:=300
+
+

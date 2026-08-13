@@ -170,10 +170,83 @@ class CollisionSelfField(EmbodimentDistanceFieldBase):
 
     def compute_distance_field_cost_and_gradient(self, link_pos, **kwargs):
         # position link_pos tensor # batch x num_links x env_dim (2D or 3D)
-        distances_minus_radii = self.compute_embodiment_signed_distances(None, link_pos, **kwargs)
-        cost = torch.max(torch.relu(-distances_minus_radii), dim=-1)[0]
-        # TODO - implement gradient computation
-        return cost, None
+        link_indices = kwargs.get("link_indices")
+        pair_indices = kwargs.get("self_pair_indices")
+        if link_indices is None:
+            local_idx_1 = torch.as_tensor(
+                self.link_idx_1, dtype=torch.long, device=link_pos.device
+            )
+            local_idx_2 = torch.as_tensor(
+                self.link_idx_2, dtype=torch.long, device=link_pos.device
+            )
+        else:
+            link_indices = torch.as_tensor(
+                link_indices, dtype=torch.long, device=link_pos.device
+            )
+            if pair_indices is None:
+                pair_indices = torch.arange(
+                    len(self.link_idx_1), dtype=torch.long, device=link_pos.device
+                )
+            else:
+                pair_indices = torch.as_tensor(
+                    pair_indices, dtype=torch.long, device=link_pos.device
+                )
+            if pair_indices.numel() == 0:
+                return (
+                    torch.zeros(link_pos.shape[:-2], dtype=link_pos.dtype, device=link_pos.device),
+                    torch.zeros_like(link_pos),
+                )
+            original_idx_1 = torch.as_tensor(
+                self.link_idx_1, dtype=torch.long, device=link_pos.device
+            ).index_select(0, pair_indices)
+            original_idx_2 = torch.as_tensor(
+                self.link_idx_2, dtype=torch.long, device=link_pos.device
+            ).index_select(0, pair_indices)
+            inverse = torch.full(
+                (len(self.robot.link_collision_spheres_names),),
+                -1,
+                dtype=torch.long,
+                device=link_pos.device,
+            )
+            inverse[link_indices] = torch.arange(
+                link_indices.numel(), dtype=torch.long, device=link_pos.device
+            )
+            local_idx_1 = inverse.index_select(0, original_idx_1)
+            local_idx_2 = inverse.index_select(0, original_idx_2)
+        link_pos_1 = link_pos[..., local_idx_1, :]
+        link_pos_2 = link_pos[..., local_idx_2, :]
+        difference = link_pos_1 - link_pos_2
+        distance = torch.linalg.norm(difference, dim=-1)
+        radii = self.link_radii_1 + self.link_radii_2
+        if pair_indices is not None:
+            radii = radii.index_select(0, pair_indices)
+        penetration = torch.relu(radii - distance)
+        cost, active_pair = torch.max(penetration, dim=-1)
+
+        # Match torch.max/autograd semantics: one deepest pair contributes at
+        # each batch/time point. A coincident pair has no unique direction, so
+        # its stable subgradient is defined as zero.
+        direction = difference / distance.clamp_min(torch.finfo(link_pos.dtype).eps).unsqueeze(-1)
+        active_direction = torch.gather(
+            direction,
+            dim=-2,
+            index=active_pair[..., None, None].expand(*active_pair.shape, 1, link_pos.shape[-1]),
+        ).squeeze(-2)
+        active_direction = torch.where((cost > 0)[..., None], active_direction, torch.zeros_like(active_direction))
+        pair_1 = local_idx_1[active_pair]
+        pair_2 = local_idx_2[active_pair]
+        gradient = torch.zeros_like(link_pos)
+        gradient.scatter_add_(
+            -2,
+            pair_1[..., None, None].expand(*pair_1.shape, 1, link_pos.shape[-1]),
+            -active_direction.unsqueeze(-2),
+        )
+        gradient.scatter_add_(
+            -2,
+            pair_2[..., None, None].expand(*pair_2.shape, 1, link_pos.shape[-1]),
+            active_direction.unsqueeze(-2),
+        )
+        return cost, gradient
 
 
 def reshape_q(q):
@@ -233,6 +306,17 @@ class CollisionObjectDistanceField(CollisionObjectBase):
             return torch.inf
         df_obj_list = self.df_obj_list_fn()
         link_dim = link_pos.shape[:-1]
+        if not df_obj_list:
+            sdf_shape = (*link_dim[:-1], 1, link_dim[-1])
+            sdf_values = torch.full(sdf_shape, torch.inf, dtype=link_pos.dtype, device=link_pos.device)
+            if get_gradient:
+                sdf_gradient = torch.zeros(
+                    (*sdf_shape, link_pos.shape[-1]),
+                    dtype=link_pos.dtype,
+                    device=link_pos.device,
+                )
+                return sdf_values, sdf_gradient
+            return sdf_values
         link_pos = link_pos.reshape(-1, link_pos.shape[-1])  # flatten batch_dim and links
         dfs = []
         if get_gradient:
@@ -253,6 +337,34 @@ class CollisionObjectDistanceField(CollisionObjectBase):
             dfs_th = torch.stack(dfs, dim=-2)  # batch_dim x num_sdfs x links
             return dfs_th
 
+    def object_signed_distance_gradients(self, link_pos, **kwargs):
+        """Query only task-space SDF gradients, preserving the object axis."""
+
+        if self.df_obj_list_fn is None:
+            return torch.zeros_like(link_pos).unsqueeze(-3)
+        df_obj_list = self.df_obj_list_fn()
+        link_dim = link_pos.shape[:-1]
+        if not df_obj_list:
+            return torch.zeros(
+                (*link_dim[:-1], 1, link_dim[-1], link_pos.shape[-1]),
+                dtype=link_pos.dtype,
+                device=link_pos.device,
+            )
+        flat_link_pos = link_pos.reshape(-1, link_pos.shape[-1])
+        gradients = []
+        for df in df_obj_list:
+            gradient_fn = getattr(df, "compute_signed_distance_gradient", None)
+            if gradient_fn is None:
+                _, sdf_gradient = df.compute_signed_distance(
+                    flat_link_pos, get_gradient=True
+                )
+            else:
+                sdf_gradient = gradient_fn(flat_link_pos)
+            gradients.append(
+                sdf_gradient.view(link_dim + (sdf_gradient.shape[-1],))
+            )
+        return torch.stack(gradients, dim=-3)
+
     def compute_distance_field_cost_and_gradient(self, link_pos, **kwargs):
         # position link_pos tensor # batch x num_links x env_dim (2D or 3D)
         embodiment_cost, embodiment_cost_gradient = self.compute_embodiment_taskspace_sdf_and_gradient(
@@ -261,9 +373,25 @@ class CollisionObjectDistanceField(CollisionObjectBase):
         return embodiment_cost, embodiment_cost_gradient
 
     def compute_embodiment_taskspace_sdf_and_gradient(self, link_pos, **kwargs):
-        margin = self.collision_margins + self.cutoff_margin
+        collision_margins = self.collision_margins
+        link_indices = kwargs.get("link_indices")
+        if link_indices is not None:
+            collision_margins = collision_margins.index_select(
+                0,
+                torch.as_tensor(link_indices, dtype=torch.long, device=link_pos.device),
+            )
+        margin = collision_margins + self.cutoff_margin
         # returns all distances from each link to the environment
-        sdf_vals, sdf_gradient = self.object_signed_distances(link_pos, get_gradient=True, **kwargs)
+        precomputed_sdf_values = kwargs.pop("precomputed_sdf_values", None)
+        if precomputed_sdf_values is None:
+            sdf_vals, sdf_gradient = self.object_signed_distances(
+                link_pos, get_gradient=True, **kwargs
+            )
+        else:
+            sdf_vals = precomputed_sdf_values
+            sdf_gradient = self.object_signed_distance_gradients(
+                link_pos, **kwargs
+            )
         margin_minus_sdf = -(sdf_vals - margin)
         if self.clamp_sdf:
             margin_minus_sdf_clamped = torch.relu(margin_minus_sdf)

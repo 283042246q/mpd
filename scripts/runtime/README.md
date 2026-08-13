@@ -8,7 +8,7 @@
 
 - 读取一个不可变的 JSON 规划请求；
 - 在独立 MPD Python/Conda 环境中加载 Warehouse Panda 模型；
-- 使用当前 Panda 模型从 `q_pos_goal` 计算 `ee_pose_goal`；
+- 默认接受 `ee_pose_goal=[x,y,z,qx,qy,qz,qw]`，求解碰撞自由 IK 条件；也可显式接受 `q_pos_goal` 并通过 FK 得到目标；
 - 调用一次 `GenerativeOptimizationPlanner.plan_trajectory()`；
 - 验证最佳轨迹的形状、有限值、时间轴、起点连续性、关节限位和 MPD 场景碰撞；
 - 导出不依赖 pickle、PyTorch 类或 ROS 消息的 `NPZ + JSON` 中性结果。
@@ -51,8 +51,8 @@ scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml
 
 ```bash
 conda run --no-capture-output \
-  -n mpd-splines-public-cu128 \
-  python /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/runtime/infer_once.py \
+  -n mpd-splines-public \
+  python /home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py \
   --request /absolute/path/to/request.json \
   --output-dir /absolute/path/to/request_output \
   --device cuda:0
@@ -62,11 +62,11 @@ conda run --no-capture-output \
 
 ```bash
 conda run --no-capture-output \
-  -n mpd-splines-public-cu128 \
-  python /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/runtime/infer_once.py \
+  -n mpd-splines-public \
+  python /home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/runtime/infer_once.py \
   --request /absolute/path/to/request.json \
   --output-dir /absolute/path/to/request_output \
-  --config /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml \
+  --config /home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml \
   --device cuda:0
 ```
 
@@ -99,21 +99,39 @@ python scripts/runtime/infer_once.py --help
 
 脚本不会修改或复制该输入文件，但会计算原始文件内容的 SHA-256 并写入 `result.json`。
 
-### 4.2 最小请求示例
+### 4.2 默认笛卡尔请求
+
+默认目标格式是 `fr3_link0` 下 `fr3_hand` 的位姿，位置单位为 m，四元数采用 ROS `xyzw` 顺序：
 
 ```json
 {
   "schema_version": 1,
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "joint_names": [
-    "panda_joint1",
-    "panda_joint2",
-    "panda_joint3",
-    "panda_joint4",
-    "panda_joint5",
-    "panda_joint6",
-    "panda_joint7"
+    "fr3_joint1", "fr3_joint2", "fr3_joint3", "fr3_joint4",
+    "fr3_joint5", "fr3_joint6", "fr3_joint7"
   ],
+  "goal_type": "cartesian",
+  "q_pos_start": [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0],
+  "ee_pose_goal": [0.4322543, 0.1637504, 0.6717085, 0.8765521, 0.4711762, 0.0645563, -0.0740393],
+  "scene_id": "EnvWarehouseExtraObjectsV00",
+  "seed": 12345
+}
+```
+
+`goal_type` 缺省时默认按笛卡尔模式处理。脚本默认 `ik_candidates=0`，不运行 IK，内部直接令 `q_pos_goal=q_pos_start` 作为旧规划器 API 的兼容占位。将 `ik_candidates` 设为正数时，脚本才会用同一 MPD 运动学模型求解多个 IK 候选，并筛掉超出后端限位、误差过大或在 Warehouse 场景中碰撞的解。当前 checkpoint 的扩散条件实际是 `q_pos_start + ee_pose_goal`，规划优化的真实目标仍是请求中的 `ee_pose_goal`。
+
+### 4.3 可选关节目标请求
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "550e8400-e29b-41d4-a716-446655440001",
+  "joint_names": [
+    "fr3_joint1", "fr3_joint2", "fr3_joint3", "fr3_joint4",
+    "fr3_joint5", "fr3_joint6", "fr3_joint7"
+  ],
+  "goal_type": "joint",
   "q_pos_start": [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0],
   "q_pos_goal": [0.2, -0.3, 0.1, -1.8, 0.2, 1.6, 0.1],
   "scene_id": "EnvWarehouseExtraObjectsV00",
@@ -121,59 +139,31 @@ python scripts/runtime/infer_once.py --help
 }
 ```
 
-这里不传 `ee_pose_goal`。脚本加载 MPD Panda 后，通过同一套正运动学从 `q_pos_goal` 计算末端目标，避免上层运行时与 MPD 使用不同 FK 实现。
-
-### 4.3 完整请求示例
-
-```json
-{
-  "schema_version": 1,
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "robot_model": "franka_panda",
-  "planning_frame": "panda_link0",
-  "joint_names": [
-    "panda_joint1",
-    "panda_joint2",
-    "panda_joint3",
-    "panda_joint4",
-    "panda_joint5",
-    "panda_joint6",
-    "panda_joint7"
-  ],
-  "q_pos_start": [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0],
-  "q_pos_goal": [0.2, -0.3, 0.1, -1.8, 0.2, 1.6, 0.1],
-  "q_vel_start": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "q_vel_goal": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "q_acc_start": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "q_acc_goal": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "joint_state_stamp": "ROS timestamp or adapter-defined timestamp",
-  "scene_id": "EnvWarehouseExtraObjectsV00",
-  "scene_hash": "adapter-scene-snapshot-sha256",
-  "seed": 12345
-}
-```
+关节模式通过 FK 生成相同格式的目标笛卡尔位姿。为兼容旧请求，没有 `goal_type` 但只包含 `q_pos_goal` 时仍按关节模式处理。`ee_pose_goal` 与 `q_pos_goal` 不允许同时出现。
 
 ### 4.4 输入字段
 
 | 字段 | 必需 | 格式/单位 | 规则 |
 |---|---|---|---|
 | `schema_version` | 是 | 整数 | 当前必须为 `1` |
-| `request_id` | 是 | 非空字符串 | 原样写回结果，用于请求结果配对 |
-| `joint_names` | 是 | 7 个字符串 | 顺序必须严格为 `panda_joint1..7` |
-| `q_pos_start` | 是 | `[7]`，rad | 必须有限、在 Panda 位置限位内且在当前 MPD 场景中无碰撞 |
-| `q_pos_goal` | 是 | `[7]`，rad | 规则同 `q_pos_start`，同时用于计算 `ee_pose_goal` |
-| `scene_id` | 是 | 非空字符串 | 当前必须为 `EnvWarehouseExtraObjectsV00` |
-| `seed` | 是 | 整数 | 范围为 `[0, 2**32)` |
-| `q_vel_start` | 否 | `[7]`，rad/s | 默认全零，若传入则检查 Panda 速度限位 |
-| `q_vel_goal` | 否 | `[7]`，rad/s | 默认全零，若传入则检查 Panda 速度限位 |
-| `q_acc_start` | 否 | `[7]`，rad/s² | 默认全零，若传入则检查 Panda 加速度限位 |
-| `q_acc_goal` | 否 | `[7]`，rad/s² | 默认全零，若传入则检查 Panda 加速度限位 |
-| `robot_model` | 否 | 字符串 | 缺省为 `franka_panda`；传入时也必须为此值 |
-| `planning_frame` | 否 | 字符串 | 缺省为 `panda_link0`；传入时也必须为此值 |
-| `joint_state_stamp` | 否 | 任意 JSON 值 | 仅记录和回传；脚本本身不判断状态是否过期 |
-| `scene_hash` | 否 | 非空字符串 | 上层场景快照标识，仅记录和回传 |
+| `request_id` | 是 | 非空字符串 | 原样写回结果 |
+| `joint_names` | 是 | 7 个字符串 | 严格为 `fr3_joint1..7` |
+| `q_pos_start` | 是 | `[7]`，rad | 当前真实起点 |
+| `goal_type` | 否 | `cartesian` 或 `joint` | 缺省为 `cartesian`；旧 q-only 请求自动识别为 `joint` |
+| `ee_pose_goal` | 笛卡尔模式是 | `[x,y,z,qx,qy,qz,qw]` | m + 单位四元数，参考系 `fr3_link0` |
+| `q_pos_goal` | 关节模式是 | `[7]`，rad | 通过 FK 定义笛卡尔目标 |
+| `ik_candidates` | 否 | 整数 | 笛卡尔模式 IK 候选数，默认 `0`，范围 `0..256`；`0` 表示跳过 IK 并令内部 `q_pos_goal=q_pos_start` |
+| `ik_max_iters` | 否 | 整数 | 每个 IK 候选最大迭代数，默认 `300`，范围 `1..2000` |
+| `scene_id` | 是 | 字符串 | 必须为 `EnvWarehouseExtraObjectsV00` |
+| `seed` | 是 | 整数 | 范围 `[0, 2**32)` |
+| `q_vel_start/q_vel_goal` | 否 | `[7]`，rad/s | 默认全零 |
+| `q_acc_start/q_acc_goal` | 否 | `[7]`，rad/s² | 默认全零 |
+| `robot_model` | 否 | 字符串 | 缺省并固定为 `franka_fr3` |
+| `planning_frame` | 否 | 字符串 | 缺省并固定为 `fr3_link0` |
+| `joint_state_stamp` | 否 | 任意 JSON | 仅记录 |
+| `scene_hash` | 否 | 非空字符串 | 上层场景快照标识 |
 
-所有关节向量必须正好是 7 个数，不能包含 `NaN` 或 `Inf`。
+所有数值必须有限。笛卡尔四元数范数允许输入误差 ±1%，通过后会归一化。
 
 ## 5. 输出位置和内容
 
@@ -199,11 +189,12 @@ python scripts/runtime/infer_once.py --help
 
 | 数组 | 类型 | 形状 | 单位/含义 |
 |---|---|---|---|
-| `positions` | `float64` | `[128, 7]` | Panda 关节位置，rad |
-| `velocities` | `float64` | `[128, 7]` | Panda 关节速度，rad/s |
-| `accelerations` | `float64` | `[128, 7]` | Panda 关节加速度，rad/s² |
+| `positions` | `float64` | `[128, 7]` | FR3 关节位置，rad |
+| `velocities` | `float64` | `[128, 7]` | FR3 关节速度，rad/s |
+| `accelerations` | `float64` | `[128, 7]` | FR3 关节加速度，rad/s² |
 | `time_from_start` | `float64` | `[128]` | 从 `0.0` 到 `10.0` 秒，严格递增 |
-| `joint_names` | Unicode 字符串 | `[7]` | 与输入完全相同的固定 Panda 关节顺序 |
+| `joint_names` | Unicode 字符串 | `[7]` | 与输入完全相同的固定 FR3 关节顺序 |
+| `terminal_cartesian_pose_xyzw` | `float64` | `[7]` | 最后时刻 `[x,y,z,qx,qy,qz,qw]`，位置 m，参考系 `fr3_link0` |
 
 读取示例：
 
@@ -216,6 +207,7 @@ velocities = trajectory["velocities"]
 accelerations = trajectory["accelerations"]
 time_from_start = trajectory["time_from_start"]
 joint_names = trajectory["joint_names"].tolist()
+terminal_cartesian_pose_xyzw = trajectory["terminal_cartesian_pose_xyzw"]
 ```
 
 不要让 ROS 侧加载 MPD 的 `.pt`/pickle 文件；ROS adapter 只需读取这个 NPZ 和对应 JSON。
@@ -231,6 +223,7 @@ request_id
 joint_names
 trajectory_file = "trajectory.npz"
 request
+goal
 scene
 model
 config
@@ -247,18 +240,19 @@ created_unix_time
 | 部分 | 内容 |
 |---|---|
 | `request` | 请求 schema、原始 JSON SHA-256、seed、机器人/坐标系和状态时间戳 |
+| `goal` | 输入类型、目标位姿、IK 关节参考；笛卡尔模式的 `ik` 还记录候选数、最大迭代数、有效解数量和 `elapsed_sec` |
 | `scene` | 实际加载的场景、上层传入的 scene hash、MPD 场景几何 SHA-256 |
 | `model` | 模型目录、训练参数路径及哈希、checkpoint 路径及完整 SHA-256 |
 | `config` | 本次 runtime YAML 的绝对路径和 SHA-256 |
 | `mpd_source` | MPD Git commit 和工作区是否 dirty |
 | `trajectory` | 轨迹点数、持续时间、单位、起点误差、速度/加速度限位利用率 |
-| `candidates` | 生成、有效、碰撞和各类关节限位违规候选数量 |
+| `candidates` | 生成、dense 已检查/未检查、批次数、有效、碰撞和各类关节限位违规候选数量 |
 | `best_trajectory_diagnostics` | 选优方法、各指标归一化/权重、末端误差、路径长度和平滑度 |
 | `timing` | MPD planner 内部的总推理、生成器和 cost guide 时间 |
 
 `timing.inference_total_sec` 只表示 `plan_trajectory()` 内部推理计时，不包含数据集/模型初始化、checkpoint SHA-256 计算和文件写入时间。若上层需要完整请求延迟，应在启动子进程前后自行计时。
 
-候选统计中的碰撞或限位违规数可能大于零，因为 MPD 会生成一批候选再过滤。可执行性关注的是：
+runtime 默认按候选分数排序并分批 dense-check；因此 `dense_complete=false` 时，碰撞、限位违规和有效数量只覆盖 `dense_checked`，不能当作全部 100 条候选的完整统计。论文评测或候选有效率统计应关闭 `dense_validation.ranked_early_exit.enabled`。可执行性关注的是：
 
 - `status == "success"`；
 - `candidates.valid > 0`；
@@ -312,7 +306,7 @@ CLI 参数
   ▼
 请求静态校验
   ├─ schema_version / request_id / seed
-  ├─ Panda joint_names 精确顺序
+  ├─ FR3 joint_names 精确顺序
   ├─ q_pos / q_vel / q_acc 形状和有限值
   └─ robot_model / planning_frame / scene_id
   │
@@ -333,7 +327,7 @@ CLI 参数
   └─ 可选边界速度/加速度限位
   │
   ▼
-RobotPanda FK(q_pos_goal) → ee_pose_goal
+goal_type=cartesian：EE pose → 可配置的多候选 IK 验证；goal_type=joint：q_pos_goal → FK pose
   │
   ▼
 构造 GenerativeOptimizationPlanner 并加载 checkpoint
@@ -342,8 +336,11 @@ RobotPanda FK(q_pos_goal) → ee_pose_goal
 plan_trajectory(...)
   ├─ 生成 100 条候选
   ├─ cost guidance
-  ├─ 碰撞和位置/速度/加速度限位过滤
-  └─ weighted_metrics 选择 q_trajs_pos_best
+  ├─ 对全部候选计算 weighted_metrics 分数并排序
+  ├─ 按固定 GPU 桶 8 → 16 → 32 → 64 进行 128 点 dense 检查
+  │   └─ 最后不足一桶时复制 padding，并用 slot mask 排除 padding 结果
+  ├─ 首个包含 valid 的批次后停止，否则继续下一批
+  └─ 选择全局分数顺序中的第一个 valid 候选作为 q_trajs_pos_best
   │
   ▼
 最佳轨迹二次验收
@@ -382,6 +379,10 @@ plan_trajectory(...)
 | `trajectory_duration` | `10.0 s` |
 | `ddim_sampling_timesteps` | `15` |
 | `best_trajectory_selection` | `weighted_metrics` |
+| `dense_validation.ranked_early_exit.enabled` | `true`（仅 runtime 低延迟路径） |
+| `dense_validation.ranked_early_exit.batch_buckets` | `[8, 16, 32, 64]` |
+| `dense_validation.ranked_early_exit.preallocate_buffers` | `true` |
+| `dense_validation.ranked_early_exit.cuda_graph` | `false`（静态场景下的后续实验开关） |
 
 `infer_once.py` 会主动检查这些固定值。不能通过临时 YAML 静默换成另一机器人、另一场景、另一轨迹长度或另一规划方法而继续使用相同输出契约。
 
@@ -389,7 +390,7 @@ plan_trajectory(...)
 
 ROS 2/physical runtime adapter 在调用前仍需负责：
 
-1. 按名称从最新 `/joint_states` 提取 `panda_joint1..7`，不能依赖消息数组偶然顺序；
+1. 按名称从最新 `/franka/joint_states` 提取 `fr3_joint1..7`，不能依赖消息数组偶然顺序；
 2. 检查状态时间戳新鲜度；
 3. 冻结目标、TF、场景和抓取状态快照；
 4. 为每个请求创建唯一 `request_id` 和独立输出目录；
@@ -417,16 +418,16 @@ command = [
   "run",
   "--no-capture-output",
   "-n",
-  "mpd-splines-public-cu128",
+  "mpd-splines-public",
   "python",
-  "/home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/runtime/
+  "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/runtime/
   infer_once.py",
     后续参数
 ]
 
 subprocess.run(
   command,
-  cwd="/home/eric/MotionPlanningDiffusion/mpd-splines-public",
+  cwd="/home/eric/Projects/MotionPlanningDiffusion/mpd",
   env=env,
   timeout=900,
   check=True,
@@ -438,7 +439,7 @@ ROS adapter：Pixi/ROS 2 Jazzy
       |
       | subprocess + conda run
       v
-MPD infer_once：mpd-splines-public-cu128
+MPD infer_once：mpd-splines-public
       |
       | NPZ + JSON
       v
@@ -449,3 +450,50 @@ ROS adapter 校验并生成 JointTrajectory
 在 ROS adapter 进程内 import MPD
 在 ROS adapter 所在 shell 中永久 activate MPD
 只换 Python 路径但继承 Pixi 动态库环境
+
+## FR3 关节空间到笛卡尔坐标
+
+`fr3_forward_kinematics.py` 使用与 `infer_once.py` 相同的 MPD 运动学模型，在
+CPU 上将 `fr3_joint1..7` 转换为 `fr3_link0` 坐标系下的 `fr3_hand` 位姿。该
+工具只做正向运动学，不连接 ROS 2、控制器或真机，也不检查关节限位和碰撞。
+
+直接输入一组关节角（单位 rad）：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/fr3_forward_kinematics.py \
+  --joints 0.2 -0.3 0.1 -1.8 0.2 1.6 0.1
+```
+
+读取 JSON 文件并同时写出 JSON 结果：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/fr3_forward_kinematics.py \
+  --input /tmp/fr3_joints.json \
+  --output /tmp/fr3_pose.json
+```
+
+输入文件可以是单组、批量数组或带字段的对象：
+
+```json
+{"joint_positions": [0.2, -0.3, 0.1, -1.8, 0.2, 1.6, 0.1]}
+```
+
+```json
+[
+  [0.2, -0.3, 0.1, -1.8, 0.2, 1.6, 0.1],
+  [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398]
+]
+```
+
+纯文本文件可使用空格、逗号或换行分隔。也支持标准输入：
+
+```bash
+echo '[0.2, -0.3, 0.1, -1.8, 0.2, 1.6, 0.1]' |
+  conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/fr3_forward_kinematics.py --input -
+```
+
+输出包括位置（m）、ROS 顺序四元数 `xyzw`、`wxyz` 四元数、RPY（rad/deg）和
+4x4 齐次变换矩阵。无论是否指定 `--output`，结果都会打印到标准输出。

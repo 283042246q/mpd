@@ -69,9 +69,9 @@ def test_open_drawer_scene_is_independent_and_structured():
     assert len(OPEN_BOTTOM_DRAWER_BOXES["centers"]) == 5
     assert len(ADJACENT_SHELF_BOXES["centers"]) == 7
 
-    drawer_front_x = OPEN_BOTTOM_DRAWER_BOXES["centers"][3][0]
-    cabinet_front_x = DRAWER_CABINET_BOXES["centers"][6][0]
-    assert drawer_front_x < cabinet_front_x
+    drawer_front_y = OPEN_BOTTOM_DRAWER_BOXES["centers"][3][1]
+    cabinet_front_y = DRAWER_CABINET_BOXES["centers"][6][1]
+    assert drawer_front_y < cabinet_front_y
     bottom_bay_height = DRAWER_CABINET_BOXES["centers"][5][2]
     assert bottom_bay_height >= 0.45
 

@@ -119,15 +119,15 @@ MPD 主进程可以继续用 CPU，IsaacLab 子进程用 `env_isaaclab_ori` 和 
 
 ```bash
 python inference.py \
-  --cfg_inference_path ./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml \
+  --cfg_inference_path ./cfgs/config_EnvThreePillarsPassage-RobotPanda-regions.yaml \
   --sim_backend isaaclab \
   --device cuda:0 \
-  --isaaclab_root /home/eric/IsaacLab_ori \
-  --isaaclab_conda_env env_isaaclab_ori \
   --isaaclab_device cuda:0 \
   --isaaclab_timeout_s 900 \
-  --results_dir /home/eric/MotionPlanningDiffusion/mpd-splines-public/scripts/inference/logs/ \
-  --isaaclab_headless True
+  --results_dir /home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/logs/three-pillars \
+  --isaaclab_headless True \
+  #--isaaclab_root /home/eric/IsaacLab \
+  #--isaaclab_conda_env env_isaaclab \
 ```
 
 `inference.py` 会把有效轨迹和场景 payload 写成 `isaaclab-trajectories-XXX.pt`，先调用 IsaacLab evaluator 生成 `isaaclab-statistics-XXX.json`，再默认调用 replay 导出 `isaaclab-replay-XXX.mp4`、`.png` 和 `.json`。如果只想跑批量统计、不导出视频，加：
@@ -319,6 +319,10 @@ python inference.py \
 - `model_dir_*`：根据 `planner_alg` 和 `model_selection` 选出最终 `model_dir`。
 - `<MODEL_DIR>/args.yaml`：恢复训练时的数据集、模型结构、trajectory 表示。
 - `<MODEL_DIR>/checkpoints/ema_model_current.pth` 或 `model_current.pth`：生成轨迹的模型。
+- `checkpoint: <文件名>`：可在推理 YAML 中指定 `<MODEL_DIR>/checkpoints/` 下的中间完整模型；
+  也可用 `inference.py --checkpoint <文件名>` 临时覆盖 YAML，例如
+  `ema_model__iter_500000.pth`。两处都省略时仍加载上述 `*_current.pth`。不能传路径或
+  `*_state_dict.pth`。
 - `<MODEL_DIR>/train_subset_indices.pt`、`val_subset_indices.pt`：加载训练时保存的 split。
 - `data_trajectories/<dataset_subdir>/<dataset_file_merged>`：推理仍会加载数据集，用于构造 planning task、环境、机器人、start-goal 样本和归一化参数。
 

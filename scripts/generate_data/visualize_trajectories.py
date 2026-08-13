@@ -48,8 +48,8 @@ from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS, to_torch
     show_default=True,
     help="Optional physics replay backend.",
 )
-@click.option("--isaaclab-root", default="/home/eric/IsaacLab_ori", show_default=True)
-@click.option("--isaaclab-conda-env", default="env_isaaclab_ori", show_default=True)
+@click.option("--isaaclab-root", default="/home/eric/IsaacLab", show_default=True)
+@click.option("--isaaclab-conda-env", default="env_isaaclab", show_default=True)
 @click.option("--isaaclab-device", default="cuda:0", show_default=True)
 @click.option("--isaaclab-timeout-s", default=900, show_default=True, type=int)
 @click.option("--isaaclab-action-repeat", default=4, show_default=True, type=int)

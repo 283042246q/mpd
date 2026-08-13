@@ -23,7 +23,7 @@ MEMORY_SINGLE_JOB = 22000
 PARTITION = "gpu" if USE_CUDA else "amd3,amd2,amd"
 GRES = "gpu:1" if USE_CUDA else None
 CONSTRAINT = "rtx3090|a5000" if USE_CUDA else None  # rtx2080|rtx3080|rtx3090|a5000
-CONDA_ENV = "mpd-splines-public-cu128"
+CONDA_ENV = "mpd-splines-public"
 
 
 EXPERIMENT_NAME = Path(__file__).stem
@@ -89,8 +89,8 @@ default_options = OrderedDict(
     run_evaluation_isaac_lab=False,
     render_isaacgym_viewer=False,
     render_isaacgym_movie=False,
-    isaaclab_root="/home/eric/IsaacLab_ori",
-    isaaclab_conda_env="env_isaaclab_ori",
+    isaaclab_root="/home/eric/IsaacLab",
+    isaaclab_conda_env="env_isaaclab",
     isaaclab_device="cuda:0",
     isaaclab_headless=True,
     isaaclab_action_repeat=4,

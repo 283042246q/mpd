@@ -7,66 +7,67 @@ from torch_robotics.environments.primitives import MultiBoxField, ObjectField
 from torch_robotics.torch_utils.torch_utils import DEFAULT_TENSOR_ARGS
 
 
-# All dimensions are in metres in the Panda base frame. The cabinet and shelf
-# open towards -x (towards the robot).
+# All dimensions are in metres in the Panda base frame and are written directly
+# in their final world coordinates. The cabinet and shelf open towards -y so
+# the existing replay camera sees inside them without a per-environment view.
 DRAWER_CABINET_BOXES = {
     "centers": [
-        [0.72, -0.14, 0.60],  # cabinet side, shelf-facing
-        [0.72, 0.58, 0.60],  # cabinet side, outer
-        [0.93, 0.22, 0.60],  # cabinet back
-        [0.72, 0.22, 1.17],  # cabinet top
-        [0.72, 0.22, 0.03],  # cabinet plinth
-        [0.72, 0.22, 0.62],  # separator above the large bottom drawer
-        [0.465, 0.22, 0.76],  # simplified closed upper drawer front
-        [0.465, 0.22, 0.99],  # simplified closed upper drawer front
+        [0.14, 0.72, 0.60],  # cabinet side, shelf-facing
+        [-0.58, 0.72, 0.60],  # cabinet side, outer
+        [-0.22, 0.93, 0.60],  # cabinet back
+        [-0.22, 0.72, 1.17],  # cabinet top
+        [-0.22, 0.72, 0.03],  # cabinet plinth
+        [-0.22, 0.72, 0.62],  # separator above the large bottom drawer
+        [-0.22, 0.465, 0.76],  # simplified closed upper drawer front
+        [-0.22, 0.465, 0.99],  # simplified closed upper drawer front
     ],
     "sizes": [
-        [0.48, 0.06, 1.20],
-        [0.48, 0.06, 1.20],
-        [0.06, 0.78, 1.20],
-        [0.48, 0.78, 0.06],
-        [0.48, 0.78, 0.06],
-        [0.48, 0.78, 0.05],
-        [0.05, 0.66, 0.18],
-        [0.05, 0.66, 0.18],
+        [0.06, 0.48, 1.20],
+        [0.06, 0.48, 1.20],
+        [0.78, 0.06, 1.20],
+        [0.78, 0.48, 0.06],
+        [0.78, 0.48, 0.06],
+        [0.78, 0.48, 0.05],
+        [0.66, 0.05, 0.18],
+        [0.66, 0.05, 0.18],
     ],
 }
 
 OPEN_BOTTOM_DRAWER_BOXES = {
     "centers": [
-        [0.525, 0.22, 0.11],  # tray bottom
-        [0.525, -0.07, 0.20],  # side wall, shelf-facing
-        [0.525, 0.51, 0.20],  # side wall, outer
-        [0.25, 0.22, 0.20],  # pulled-out drawer front
-        [0.80, 0.22, 0.20],  # drawer back
+        [-0.22, 0.525, 0.11],  # tray bottom
+        [0.07, 0.525, 0.20],  # side wall, shelf-facing
+        [-0.51, 0.525, 0.20],  # side wall, outer
+        [-0.22, 0.25, 0.20],  # pulled-out drawer front
+        [-0.22, 0.80, 0.20],  # drawer back
     ],
     "sizes": [
-        [0.55, 0.62, 0.04],
-        [0.55, 0.04, 0.20],
-        [0.55, 0.04, 0.20],
-        [0.04, 0.62, 0.20],
-        [0.04, 0.62, 0.20],
+        [0.62, 0.55, 0.04],
+        [0.04, 0.55, 0.20],
+        [0.04, 0.55, 0.20],
+        [0.62, 0.04, 0.20],
+        [0.62, 0.04, 0.20],
     ],
 }
 
 ADJACENT_SHELF_BOXES = {
     "centers": [
-        [0.70, -0.66, 0.55],  # shelf outer side
-        [0.70, -0.20, 0.55],  # shelf cabinet-facing side
-        [0.93, -0.43, 0.55],  # shelf back
-        [0.70, -0.43, 0.03],  # bottom
-        [0.70, -0.43, 0.38],  # lower shelf
-        [0.70, -0.43, 0.72],  # middle shelf
-        [0.70, -0.43, 1.07],  # top
+        [0.66, 0.70, 0.55],  # shelf outer side
+        [0.20, 0.70, 0.55],  # shelf cabinet-facing side
+        [0.43, 0.93, 0.55],  # shelf back
+        [0.43, 0.70, 0.03],  # bottom
+        [0.43, 0.70, 0.38],  # lower shelf
+        [0.43, 0.70, 0.72],  # middle shelf
+        [0.43, 0.70, 1.07],  # top
     ],
     "sizes": [
-        [0.48, 0.05, 1.10],
-        [0.48, 0.05, 1.10],
-        [0.06, 0.51, 1.10],
-        [0.48, 0.51, 0.06],
-        [0.48, 0.51, 0.05],
-        [0.48, 0.51, 0.05],
-        [0.48, 0.51, 0.06],
+        [0.05, 0.48, 1.10],
+        [0.05, 0.48, 1.10],
+        [0.51, 0.06, 1.10],
+        [0.51, 0.48, 0.06],
+        [0.51, 0.48, 0.05],
+        [0.51, 0.48, 0.05],
+        [0.51, 0.48, 0.06],
     ],
 }
 
@@ -101,7 +102,7 @@ class EnvOpenDrawerShelf(EnvBase):
         objects.append(create_adjacent_shelf_field(tensor_args=tensor_args))
 
         super().__init__(
-            limits=torch.tensor([[-0.45, -0.90, -0.10], [1.20, 0.90, 1.40]], **tensor_args),
+            limits=torch.tensor([[-0.90, -0.45, -0.10], [0.90, 1.20, 1.40]], **tensor_args),
             obj_fixed_list=objects,
             tensor_args=tensor_args,
             **kwargs,

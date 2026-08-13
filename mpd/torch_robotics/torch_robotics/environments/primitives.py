@@ -41,6 +41,16 @@ class PrimitiveShapeField(ABC):
         """
         return self.compute_signed_distance_impl(x, get_gradient=get_gradient)
 
+    def compute_signed_distance_gradient(self, x):
+        """Return only the SDF gradient.
+
+        Primitive implementations may override this to avoid recomputing the
+        distance.  The compatibility fallback preserves the previous behavior.
+        """
+
+        _, gradient = self.compute_signed_distance(x, get_gradient=True)
+        return gradient
+
     @abstractmethod
     def compute_signed_distance_impl(self, x, get_gradient=False):
         # The SDF computed here assumes the primitive shape main center is located at the origin, and there is no

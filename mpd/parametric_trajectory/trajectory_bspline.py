@@ -225,12 +225,16 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
     def get_control_points_derivatives(
         self, inner_control_points, q_pos_start=None, q_pos_goal=None, get_type="pos", get_time_repr=True, **kwargs
     ):
-        raise NotImplementedError
         # https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/spline/B-spline/bspline-derv.html
         # https://arxiv.org/pdf/2405.01758 - appendix
         q_pos_start, q_pos_goal = self.get_q_pos_start_q_goal(q_pos_start, q_pos_goal)
         all_control_points = self.augment_control_points_fn(inner_control_points, q_pos_start, q_pos_goal)
-        all_control_points = self.preprocess_control_points(all_control_points)
+        all_control_points = self.preprocess_control_points(
+            all_control_points,
+            q_pos_start=q_pos_start,
+            q_pos_goal=q_pos_goal,
+            **kwargs,
+        )
 
         if get_type == "pos":
             return all_control_points
@@ -241,7 +245,7 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
             if get_time_repr:
                 assert isinstance(self.phase_time, PhaseTimeLinear), "Only linear phase time is supported"
                 ds_dt = self.phase_time.rs[0]  # for linear phase all values are the same
-                control_points_vel = control_points_vel * (ds_dt**-1)
+                control_points_vel = control_points_vel * ds_dt
             return control_points_vel
         elif get_type == "acc":
             # TODO - remove recomputation of control_points_vel
@@ -257,7 +261,7 @@ class ParametricTrajectoryBspline(ParametricTrajectoryBase):
             if get_time_repr:
                 assert isinstance(self.phase_time, PhaseTimeLinear), "Only linear phase time is supported"
                 ds_dt = self.phase_time.rs[0]  # for linear phase all values are the same
-                control_points_acc = control_points_acc * (ds_dt**-2)
+                control_points_acc = control_points_acc * ds_dt**2
             return control_points_acc
         elif get_type == "jerk":
             pass

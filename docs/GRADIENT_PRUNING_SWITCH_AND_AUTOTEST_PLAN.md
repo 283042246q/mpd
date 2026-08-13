@@ -1,5 +1,8 @@
 # MPD 梯度剪枝总开关与自动场景测试方案
 
+> 当前实现、配置、验证命令和明确边界见
+> [`GRADIENT_PRUNING_IMPLEMENTATION_STATUS.md`](GRADIENT_PRUNING_IMPLEMENTATION_STATUS.md)。
+
 本文档补充 `GRADIENT_PRUNING_IMPLEMENTATION_PLAN.md`，明确梯度剪枝功能的生效边界，以及如何在测试时确定性生成简单、一般和狭窄环境，自动完成 baseline/pruning 配对测试。
 
 ## 1. 结论
@@ -86,6 +89,8 @@ gradient_pruning:
   temporal:
     enabled: true
     coarse_points: 32
+    probe_midpoints: true
+    reuse_selection_within_ddim_step: true
     buckets: [32, 64, 128]
     environment_refine_margin: 0.08
     self_refine_margin: 0.06
@@ -94,6 +99,7 @@ gradient_pruning:
 
   spatial:
     parent_link_kinematics: false
+    dense_parent_fast_path: true
     environment_link_broad_phase: false
     self_link_pair_broad_phase: false
 
@@ -445,6 +451,7 @@ gradient_pruning:
   temporal:
     enabled: true
     coarse_points: 32
+    probe_midpoints: true
     buckets: [32, 64, 128]
 
 dense_validation:

@@ -71,10 +71,16 @@ class GridMapSDF:
 
     def project_x_to_grid_points(self, X, **kwargs):
         # Project X to grid points
-        X_in_map = ((X - self.limits[0]) / self.map_dim * self.cmap_dim).round().type(torch.LongTensor)
+        X_in_map = ((X - self.limits[0]) / self.map_dim * self.cmap_dim).round().to(
+            dtype=torch.long
+        )
 
         # Project out-of-bounds locations to axis
-        max_idx = torch.tensor(self.points_for_sdf.shape[:-1]) - 1
+        max_idx = torch.as_tensor(
+            self.points_for_sdf.shape[:-1],
+            dtype=torch.long,
+            device=X.device,
+        ) - 1
         X_in_map = X_in_map.clamp(torch.zeros_like(max_idx), max_idx)
         return X_in_map
 
@@ -93,6 +99,18 @@ class GridMapSDF:
             return self.get_sdf_and_gradient(X_in_map, **kwargs)
         else:
             return self.get_sdf(X, X_in_map, **kwargs)
+
+    def compute_signed_distance_gradient(self, X, **kwargs):
+        """Look up only the precomputed SDF gradient for cached-distance use."""
+
+        X_in_map = self.project_x_to_grid_points(X, **kwargs)
+        if self.dim == 2:
+            X_query = X_in_map[..., 0], X_in_map[..., 1]
+        elif self.dim == 3:
+            X_query = X_in_map[..., 0], X_in_map[..., 1], X_in_map[..., 2]
+        else:
+            raise ValueError("Invalid dimension")
+        return self.grad_sdf_tensor[X_query]
 
     def get_sdf(self, X, X_in_map, **kwargs):
         """

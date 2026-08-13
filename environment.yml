@@ -22,7 +22,9 @@ dependencies:
 - ffmpeg
 - gcc_linux-64=12
 - gxx_linux-64=12
-- cudnn==8.9.7.29
+- cuda-version=11.8
+- cudatoolkit=11.8
+- cudnn=8.9.7.29=hbc23b4c_3
 - pip:
   - --extra-index-url https://download.pytorch.org/whl/cu118
   - absl-py==2.1.0

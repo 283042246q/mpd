@@ -46,8 +46,17 @@ def single_experiment_yaml_optional_artifacts(experiment_function):
 
 
 ISAACLAB_BATCH_SUPPORTED_ENVS = {
+    "EnvOpenDrawerShelf",
     "EnvSpheres3D",
     "EnvSpheres3DExtraObjectsV00",
+    "EnvThreePillarsPassage",
+    "EnvWarehouse",
+    "EnvWarehouseExtraObjectsV00",
+}
+
+ISAACLAB_BOX_OBSTACLE_ENVS = {
+    "EnvOpenDrawerShelf",
+    "EnvThreePillarsPassage",
     "EnvWarehouse",
     "EnvWarehouseExtraObjectsV00",
 }
@@ -177,13 +186,25 @@ def _write_inference_text_report(
     q_trajs_pos_all = results_single_plan.q_trajs_pos_iter_0
     n_generated = int(q_trajs_pos_all.shape[0])
     n_total = int(args_inference.n_trajectory_samples)
-    denominator = max(n_total, 1)
     horizon = int(q_trajs_pos_all.shape[1])
+
+    dense_complete = _mapping_get(results_single_plan, "dense_validation_complete")
+    dense_candidates_checked = _mapping_get(
+        results_single_plan, "dense_validation_candidates_checked"
+    )
+    if dense_complete is False and dense_candidates_checked is not None:
+        validity_denominator = int(dense_candidates_checked)
+        validity_denominator_label = "dense_checked_candidates"
+    else:
+        validity_denominator = n_total
+        validity_denominator_label = "n_trajectory_samples"
+    denominator = max(validity_denominator, 1)
 
     q_trajs_pos_valid = results_single_plan.q_trajs_pos_valid
     n_valid = 0 if q_trajs_pos_valid is None else int(q_trajs_pos_valid.shape[0])
     collision_trajectory_mask = results_single_plan.collision_trajectory_mask.detach().cpu().bool()
     collision_waypoint_mask = results_single_plan.collision_waypoint_mask.detach().cpu().bool()
+    collision_horizon = int(collision_waypoint_mask.shape[-1])
     n_collision = int(collision_trajectory_mask.sum().item())
     n_collision_waypoints = int(collision_waypoint_mask.sum().item())
 
@@ -237,6 +258,7 @@ def _write_inference_text_report(
             [
                 f"method: {_mapping_get(best_selection_details, 'method', 'N/A')}",
                 f"selected_valid_index: {_mapping_get(best_selection_details, 'selected_valid_index', 'N/A')}",
+                f"selected_candidate_index: {_mapping_get(best_selection_details, 'selected_candidate_index', 'N/A')}",
                 f"score: {_format_float(_mapping_get(best_selection_details, 'score'))}",
             ]
         )
@@ -273,8 +295,22 @@ def _write_inference_text_report(
         f"simulation_status: {simulation_status}",
         f"configured_total_trajectories: {n_total}",
         f"generated_total_trajectories: {n_generated}",
-        f"all_trajectory_rate_denominator: n_trajectory_samples={n_total}",
+        "all_trajectory_rate_denominator: "
+        f"{validity_denominator_label}={validity_denominator}",
         f"trajectory_horizon: {horizon}",
+        "dense_validation_points: "
+        f"{_format_float(_mapping_get(results_single_plan, 'dense_validation_points'), precision=0)}",
+        "dense_validation_candidates_checked: "
+        f"{_format_float(_mapping_get(results_single_plan, 'dense_validation_candidates_checked'), precision=0)}",
+        "dense_validation_batches_evaluated: "
+        f"{_format_float(_mapping_get(results_single_plan, 'dense_validation_batches_evaluated'), precision=0)}",
+        "dense_validation_bucket_capacities: "
+        f"{_mapping_get(results_single_plan, 'dense_validation_bucket_capacities', [])}",
+        "dense_validation_padding_slots: "
+        f"{_format_float(_mapping_get(results_single_plan, 'dense_validation_padding_slots'), precision=0)}",
+        f"dense_validation_complete: {_mapping_get(results_single_plan, 'dense_validation_complete', 'N/A')}",
+        "dense_validation_ranked_early_exit: "
+        f"{_mapping_get(results_single_plan, 'dense_validation_ranked_early_exit', False)}",
         "",
         "[START/GOAL]",
         f"source: {_mapping_get(start_goal_metadata, 'source', 'unknown')}",
@@ -288,12 +324,12 @@ def _write_inference_text_report(
         "",
         "[MPD VALIDITY]",
         f"valid_trajectories: {n_valid}",
-        f"valid_rate: {n_valid / denominator:.6f} ({n_valid}/{n_total})",
+        f"valid_rate: {n_valid / denominator:.6f} ({n_valid}/{validity_denominator})",
         f"colliding_trajectories: {n_collision}",
-        f"collision_rate: {n_collision / denominator:.6f} ({n_collision}/{n_total})",
+        f"collision_rate: {n_collision / denominator:.6f} ({n_collision}/{validity_denominator})",
         f"collision_waypoints: {n_collision_waypoints}",
-        f"collision_waypoint_fraction: {n_collision_waypoints / max(n_generated * horizon, 1):.6f} "
-        f"({n_collision_waypoints}/{n_generated * horizon})",
+        f"collision_waypoint_fraction: {n_collision_waypoints / max(validity_denominator * collision_horizon, 1):.6f} "
+        f"({n_collision_waypoints}/{validity_denominator * collision_horizon})",
         f"joint_position_violation_trajectories: {int(joint_position_violation_mask.sum().item())}",
         f"joint_position_violation_rate: {joint_position_violation_mask.sum().item() / denominator:.6f}",
         f"joint_velocity_violation_trajectories: {int(joint_velocity_violation_mask.sum().item())}",
@@ -351,6 +387,10 @@ def _write_inference_text_report(
         "",
         "[TIMING]",
         f"inference_total_sec: {_format_float(results_single_plan.t_inference_total)}",
+        f"trajectory_ranking_sec: {_format_float(_mapping_get(results_single_plan, 'trajectory_ranking_time', 0.0))}",
+        f"dense_validation_sec: {_format_float(_mapping_get(results_single_plan, 'dense_validation_time', 0.0))}",
+        "inference_total_with_dense_validation_sec: "
+        f"{_format_float(results_single_plan.t_inference_total + _mapping_get(results_single_plan, 'trajectory_ranking_time', 0.0) + _mapping_get(results_single_plan, 'dense_validation_time', 0.0))}",
         f"generator_sec: {_format_float(results_single_plan.t_generator)}",
         f"guide_sec: {_format_float(results_single_plan.t_guide)}",
         "",
@@ -431,10 +471,15 @@ def _run_isaaclab_evaluator(
     replay_json_path = results_dir / f"isaaclab-replay-{idx_sg:03d}.json"
 
     scene_payload = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
-    if env_name.startswith("EnvWarehouse") and not any(
+    if scene_payload["unsupported_obstacles"]:
+        raise RuntimeError(
+            f"IsaacLab {env_name} evaluation cannot export every obstacle. "
+            f"Got unsupported={scene_payload['unsupported_obstacles']}."
+        )
+    if env_name in ISAACLAB_BOX_OBSTACLE_ENVS and not any(
         obstacle.get("type") == "box" for obstacle in scene_payload["obstacles"]
     ):
-        raise RuntimeError(f"IsaacLab Warehouse evaluation requires exported box obstacles. Got scene={scene_payload}.")
+        raise RuntimeError(f"IsaacLab {env_name} evaluation requires exported box obstacles. Got scene={scene_payload}.")
 
     payload = {
         "q_trajs_pos": q_trajs_pos.detach().cpu(),
@@ -510,6 +555,9 @@ def experiment(
     # cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
     # cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
     cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
+    # Optional full-model filename under <model_dir>/checkpoints. Empty selects
+    # ema_model_current.pth or model_current.pth from the training configuration.
+    checkpoint: str = "",
     ########################################################################
     # Select the start and goal from the training or validation/test set.
     selection_start_goal: str = "validation",  # training, validation/test
@@ -527,6 +575,10 @@ def experiment(
     ee_goal_orientation_weight_override: float = -1.0,
     ee_goal_orientation_weight_end_override: float = -1.0,
     ddim_scale_grad_prior_end_override: float = -1.0,
+    # Benchmark-only runtime override. "config" preserves YAML, while true or
+    # false toggles ranked fixed-bucket dense validation without duplicating a
+    # complete environment config.
+    dense_ranked_early_exit_override: str = "config",
     ########################################################################
     save_args_inference: bool = True,
     save_results_single_plan: bool = True,
@@ -545,8 +597,8 @@ def experiment(
     run_evaluation_isaac_lab: bool = False,
     render_isaacgym_viewer: bool = False,
     render_isaacgym_movie: bool = False,
-    isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab_ori"),
-    isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab_ori"),
+    isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab"),
+    isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab"),
     isaaclab_device: str = "cuda:0",
     isaaclab_headless: bool = True,
     isaaclab_action_repeat: int = 4,
@@ -580,6 +632,22 @@ def experiment(
     if not cfg_inference_path_resolved.is_absolute():
         cfg_inference_path_resolved = (Path.cwd() / cfg_inference_path_resolved).resolve()
     args_inference = DotMap(load_params_from_yaml(cfg_inference_path_resolved.as_posix()))
+    dense_override = str(dense_ranked_early_exit_override).strip().lower()
+    if dense_override not in {"config", "true", "false"}:
+        raise ValueError(
+            "dense_ranked_early_exit_override must be config, true, or false."
+        )
+    if dense_override != "config":
+        if not args_inference.get("dense_validation"):
+            args_inference.dense_validation = DotMap()
+        if not args_inference.dense_validation.get("ranked_early_exit"):
+            args_inference.dense_validation.ranked_early_exit = DotMap()
+        args_inference.dense_validation.ranked_early_exit.enabled = (
+            dense_override == "true"
+        )
+    checkpoint_cli = checkpoint.strip()
+    checkpoint_yaml = str(args_inference.get("checkpoint") or "").strip()
+    args_inference.checkpoint = checkpoint_cli or checkpoint_yaml or None
 
     if ee_pose_goal_weight_override >= 0.0:
         for cost_key in (
@@ -776,6 +844,8 @@ def experiment(
         # Run motion planning inference
         print(f"\n----------------PLAN TRAJECTORIES----------------")
         print(f"Starting inference...")
+        if generative_optimization_planner.cost_guide is not None:
+            generative_optimization_planner.cost_guide.profile_context_index = idx_sg
         results_single_plan = generative_optimization_planner.plan_trajectory(
             q_pos_start,
             q_pos_goal,
@@ -787,6 +857,13 @@ def experiment(
             results_ns=results_single_plan,
             debug=debug,
         )
+        if (
+            generative_optimization_planner.cost_guide is not None
+            and generative_optimization_planner.cost_guide.guidance_profiler.records
+        ):
+            generative_optimization_planner.cost_guide.guidance_profiler.write_csv(
+                Path(results_dir) / "active-statistics.csv"
+            )
         print(f"...inference finished.")
 
         ############################################################################################################

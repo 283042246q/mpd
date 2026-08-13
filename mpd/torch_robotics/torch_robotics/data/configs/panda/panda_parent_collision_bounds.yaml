@@ -1,0 +1,68 @@
+metadata:
+  source: panda_sphere_config.yaml
+  geometry: conservative_parent_multi_sphere
+  method: principal_axis_topology_partition_then_exact_cover
+  safety_padding: 1.0e-06
+parent_bounds:
+  panda_link1:
+  - center: [0.0, 0.0, -0.145]
+    radius: 0.085001
+    source_sphere_indices: [3, 2]
+  - center: [-0.0, -0.055, -0.0]
+    radius: 0.085001
+    source_sphere_indices: [1, 0]
+  panda_link2:
+  - center: [0.0, -0.145, 0.0]
+    radius: 0.085001
+    source_sphere_indices: [3, 2]
+  - center: [0.0, 0.0, 0.055]
+    radius: 0.085001
+    source_sphere_indices: [0, 1]
+  panda_link3:
+  - center: [0.0, 0.0, -0.085]
+    radius: 0.075001
+    source_sphere_indices: [1, 0]
+  - center: [0.08, 0.04, -0.0]
+    radius: 0.075001
+    source_sphere_indices: [3, 2]
+  panda_link4:
+  - center: [-0.0, -0.0, 0.04]
+    radius: 0.075001
+    source_sphere_indices: [1, 0]
+  - center: [-0.08, 0.08, 0.0]
+    radius: 0.075001
+    source_sphere_indices: [3, 2]
+  panda_link5:
+  - center: [0.0, 0.0, -0.22]
+    radius: 0.060001
+    source_sphere_indices: [2]
+  - center: [-0.0, 0.062126368, -0.155747253]
+    radius: 0.077116393
+    source_sphere_indices: [3, 4, 8, 5, 9]
+  - center: [0.0, 0.065649503, -0.024341737]
+    radius: 0.086570383
+    source_sphere_indices: [6, 10, 7, 11, 0, 1]
+  panda_link6:
+  - center: [0.0, 0.0, 0.0]
+    radius: 0.060001
+    source_sphere_indices: [0]
+  - center: [0.08, 0.01, 0.0]
+    radius: 0.080001
+    source_sphere_indices: [2, 1]
+  panda_link7:
+  - center: [0.0, 0.0, 0.07]
+    radius: 0.050001
+    source_sphere_indices: [0]
+  - center: [0.037538171, 0.037538171, 0.081884536]
+    radius: 0.042811096
+    source_sphere_indices: [1, 2, 3, 4]
+  panda_hand:
+  - center: [-7.0e-09, -0.06, 0.04318845]
+    radius: 0.06442178
+    source_sphere_indices: [0, 6, 12, 1, 7, 13, 18]
+  - center: [-7.0e-09, -0.0, 0.027495459]
+    radius: 0.051046413
+    source_sphere_indices: [2, 8, 14, 3, 9, 15]
+  - center: [-7.0e-09, 0.06, 0.04318845]
+    radius: 0.06442178
+    source_sphere_indices: [4, 10, 16, 19, 5, 11, 17]

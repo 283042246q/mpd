@@ -3,7 +3,7 @@
 This script intentionally runs outside the MPD Python environment. Launch it
 with IsaacLab's Python wrapper, for example:
 
-    /home/eric/IsaacLab_ori/isaaclab.sh -p scripts/isaaclab/evaluate_mpd_trajectories.py \
+    /home/eric/IsaacLab/isaaclab.sh -p scripts/isaaclab/evaluate_mpd_trajectories.py \
         --input logs/trajectories.pt \
         --output logs/isaaclab_statistics.json \
         --headless
@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, help="Path to write IsaacLab statistics JSON.")
     parser.add_argument("--num_envs", type=int, default=None, help="Number of IsaacLab environments. Defaults to B.")
     parser.add_argument("--robot_name", default="panda", choices=("panda",), help="Robot asset to use.")
+    parser.add_argument(
+        "--robot_usd",
+        default=None,
+        help="Optional Panda USD path or URL. Defaults to the Isaac Sim FrankaPanda asset.",
+    )
     parser.add_argument("--action_repeat", type=int, default=4, help="Physics steps per MPD trajectory waypoint.")
     parser.add_argument("--contact_force_threshold", type=float, default=1.0, help="Contact force norm threshold.")
     parser.add_argument("--stop_robot_if_in_contact", action="store_true", help="Hold collided envs at current state.")
@@ -67,6 +72,7 @@ from isaaclab.assets import AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
@@ -104,6 +110,9 @@ def _metadata_tensor(metadata: dict[str, Any], key: str) -> torch.Tensor | None:
 
 
 PANDA_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
+PANDA_CFG.spawn.usd_path = (
+    args_cli.robot_usd or f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
+)
 PANDA_CFG.spawn.activate_contact_sensors = True
 PANDA_CFG.spawn.rigid_props.disable_gravity = True
 
@@ -296,6 +305,7 @@ def run_evaluation() -> dict[str, Any]:
     stats = {
         "backend": "isaaclab",
         "robot_name": str(metadata.get("robot_name", args_cli.robot_name)),
+        "robot_usd": PANDA_CFG.spawn.usd_path,
         "env_name": str(metadata.get("env_name", "")),
         "num_envs": int(num_envs),
         "n_trajectories": int(batch),

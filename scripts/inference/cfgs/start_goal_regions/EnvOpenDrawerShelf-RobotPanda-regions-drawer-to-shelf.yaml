@@ -9,11 +9,11 @@ max_sampling_attempts: 200
 start_regions:
   bottom_drawer_reachable_corner:
     translation:
-      x: [[0.50, 0.54]]
-      y: [[0.18, 0.26]]
+      x: [[-0.26, -0.18]]
+      y: [[0.50, 0.54]]
       z: [[0.28, 0.32]]
     rotation:
-      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
       x: [[-2.0, 2.0]]
       y: [[-2.0, 2.0]]
       z: [[-2.0, 2.0]]
@@ -21,11 +21,11 @@ start_regions:
 goal_regions:
   adjacent_shelf_middle_level:
     translation:
-      x: [[0.53, 0.59]]
-      y: [[-0.48, -0.38]]
+      x: [[0.38, 0.48]]
+      y: [[0.53, 0.59]]
       z: [[0.53, 0.59]]
     rotation:
-      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      base: [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
       x: [[-4.0, 4.0]]
       y: [[-4.0, 4.0]]
       z: [[-6.0, 6.0]]

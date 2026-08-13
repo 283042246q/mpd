@@ -1,0 +1,9 @@
+schema: mpd_gradient_pruning_scenarios
+schema_version: 1
+suite_name: to_drawer_panda_gradient_pruning
+seed: 0
+base_config: ../config_EnvOpenDrawerShelf-RobotPanda-regions-to-drawer.yaml
+scenarios:
+- id: to_drawer
+  type: panda_regions
+  difficulty: medium

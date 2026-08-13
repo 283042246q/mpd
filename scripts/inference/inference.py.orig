@@ -3,7 +3,7 @@ from mpd.utils.patches import numpy_monkey_patch
 numpy_monkey_patch()
 
 import time
-from functools import partial
+from functools import partial, wraps
 
 from dotmap import DotMap
 
@@ -17,6 +17,7 @@ import torch
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 
 from experiment_launcher import single_experiment_yaml, run_experiment
+from experiment_launcher.utils import create_results_dir
 from mpd.inference.inference import EvaluationSamplesGenerator, GenerativeOptimizationPlanner, render_results
 from mpd.metrics.metrics import PlanningMetricsCalculator
 from mpd.utils.loaders import get_planning_task_and_dataset, load_params_from_yaml, save_to_yaml
@@ -29,6 +30,20 @@ from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 
 allow_ops_in_compiled_graph()
+
+
+def single_experiment_yaml_optional_artifacts(experiment_function):
+    launcher_experiment = single_experiment_yaml(experiment_function)
+
+    @wraps(experiment_function)
+    def wrapper(*args, **kwargs):
+        if not kwargs.get("lightweight_output", False):
+            return launcher_experiment(*args, **kwargs)
+        create_results_dir(kwargs, make_dirs_with_seed=True)
+        return experiment_function(*args, **kwargs)
+
+    return wrapper
+
 
 ISAACLAB_BATCH_SUPPORTED_ENVS = {
     "EnvSpheres3D",
@@ -169,6 +184,7 @@ def _write_inference_text_report(
     n_valid = 0 if q_trajs_pos_valid is None else int(q_trajs_pos_valid.shape[0])
     collision_trajectory_mask = results_single_plan.collision_trajectory_mask.detach().cpu().bool()
     collision_waypoint_mask = results_single_plan.collision_waypoint_mask.detach().cpu().bool()
+    collision_horizon = int(collision_waypoint_mask.shape[-1])
     n_collision = int(collision_trajectory_mask.sum().item())
     n_collision_waypoints = int(collision_waypoint_mask.sum().item())
 
@@ -189,7 +205,54 @@ def _write_inference_text_report(
     metrics = results_single_plan.metrics.toDict() if hasattr(results_single_plan.metrics, "toDict") else {}
     metrics_all = metrics.get("trajs_all", {})
     metrics_valid = metrics.get("trajs_valid", {})
+    guidance_schedule = _mapping_get(results_single_plan, "ddim_guidance_schedule", [])
+    ee_goal_position_weight_schedule = [
+        _mapping_get(
+            step,
+            "ee_goal_position_weight",
+            _mapping_get(step, "ee_pose_goal_weight"),
+        )
+        for step in guidance_schedule
+    ]
+    ee_goal_orientation_weight_schedule = [
+        _mapping_get(
+            step,
+            "ee_goal_orientation_weight",
+            _mapping_get(step, "ee_pose_goal_weight"),
+        )
+        for step in guidance_schedule
+    ]
+    prior_weight_schedule = [_mapping_get(step, "prior_weight") for step in guidance_schedule]
+    best_selection_details = _mapping_get(results_single_plan, "best_trajectory_selection_details")
+    best_selection_lines = ["[BEST TRAJECTORY SELECTION]"]
+    if best_selection_details is None:
+        best_selection_lines.extend(
+            [
+                "method: N/A",
+                "selected_valid_index: N/A",
+                "score: N/A",
+            ]
+        )
+    else:
+        best_selection_lines.extend(
+            [
+                f"method: {_mapping_get(best_selection_details, 'method', 'N/A')}",
+                f"selected_valid_index: {_mapping_get(best_selection_details, 'selected_valid_index', 'N/A')}",
+                f"score: {_format_float(_mapping_get(best_selection_details, 'score'))}",
+            ]
+        )
+        components = _mapping_get(best_selection_details, "components", {})
+        for component_name, component in components.items():
+            best_selection_lines.append(
+                f"{component_name}: value={_format_float(_mapping_get(component, 'value'))}, "
+                f"scale={_format_float(_mapping_get(component, 'scale'))}, "
+                f"weight={_format_float(_mapping_get(component, 'weight'))}, "
+                f"normalized={_format_float(_mapping_get(component, 'normalized_value'))}, "
+                f"weighted_term={_format_float(_mapping_get(component, 'weighted_term'))}"
+            )
+    best_selection_lines.append("")
 
+    start_goal_metadata = _mapping_get(results_single_plan, "start_goal_metadata", {})
     simulation_statistics = results_single_plan.sim_statistics
     if n_valid == 0:
         status = "failed_no_valid_trajectory"
@@ -214,14 +277,24 @@ def _write_inference_text_report(
         f"all_trajectory_rate_denominator: n_trajectory_samples={n_total}",
         f"trajectory_horizon: {horizon}",
         "",
+        "[START/GOAL]",
+        f"source: {_mapping_get(start_goal_metadata, 'source', 'unknown')}",
+        f"selection: {_mapping_get(start_goal_metadata, 'selection', 'N/A')}",
+        f"sample_index: {_mapping_get(start_goal_metadata, 'sample_index', 'N/A')}",
+        f"sampling_attempt: {_mapping_get(start_goal_metadata, 'sampling_attempt', 'N/A')}",
+        f"start_region_id: {_mapping_get(start_goal_metadata, 'start_region_id', 'N/A')}",
+        f"goal_region_id: {_mapping_get(start_goal_metadata, 'goal_region_id', 'N/A')}",
+        f"rotation_z_axis_deg: {_mapping_get(start_goal_metadata, 'rotation_z_axis_deg', 'N/A')}",
+        f"rotate_with_environment: {_mapping_get(start_goal_metadata, 'rotate_with_environment', 'N/A')}",
+        "",
         "[MPD VALIDITY]",
         f"valid_trajectories: {n_valid}",
         f"valid_rate: {n_valid / denominator:.6f} ({n_valid}/{n_total})",
         f"colliding_trajectories: {n_collision}",
         f"collision_rate: {n_collision / denominator:.6f} ({n_collision}/{n_total})",
         f"collision_waypoints: {n_collision_waypoints}",
-        f"collision_waypoint_fraction: {n_collision_waypoints / max(n_generated * horizon, 1):.6f} "
-        f"({n_collision_waypoints}/{n_generated * horizon})",
+        f"collision_waypoint_fraction: {n_collision_waypoints / max(n_generated * collision_horizon, 1):.6f} "
+        f"({n_collision_waypoints}/{n_generated * collision_horizon})",
         f"joint_position_violation_trajectories: {int(joint_position_violation_mask.sum().item())}",
         f"joint_position_violation_rate: {joint_position_violation_mask.sum().item() / denominator:.6f}",
         f"joint_velocity_violation_trajectories: {int(joint_velocity_violation_mask.sum().item())}",
@@ -249,13 +322,39 @@ def _write_inference_text_report(
         f"{_format_float(path_lengths_valid.std() if path_lengths_valid is not None else None)}",
         "",
         "[END-EFFECTOR GOAL ERROR - ALL TRAJECTORIES]",
-        "position_error_mean_m: "
-        f"{_format_float(metrics_all.get('ee_pose_goal_error_position_norm_mean'))}",
+        "position_error_mean_m: " f"{_format_float(metrics_all.get('ee_pose_goal_error_position_norm_mean'))}",
+        "orientation_error_mean_deg: " f"{_format_float(metrics_all.get('ee_pose_goal_error_orientation_norm_mean'))}",
+        "",
+        "[END-EFFECTOR GOAL ERROR - VALID TRAJECTORIES]",
+        "position_error_mean_m: " f"{_format_float(metrics_valid.get('ee_pose_goal_error_position_norm_mean'))}",
         "orientation_error_mean_deg: "
-        f"{_format_float(metrics_all.get('ee_pose_goal_error_orientation_norm_mean'))}",
+        f"{_format_float(metrics_valid.get('ee_pose_goal_error_orientation_norm_mean'))}",
+        "",
+        "[VALID TRAJECTORY METRICS - MEDIAN]",
+        "ee_position_error_median_m: " f"{_format_float(metrics_valid.get('ee_pose_goal_error_position_norm_median'))}",
+        "ee_orientation_error_median_deg: "
+        f"{_format_float(metrics_valid.get('ee_pose_goal_error_orientation_norm_median'))}",
+        f"path_length_median: {_format_float(metrics_valid.get('path_length_median'))}",
+        f"smoothness_median: {_format_float(metrics_valid.get('smoothness_median'))}",
+        "velocity_limit_utilization_median: "
+        f"{_format_float(metrics_valid.get('velocity_limit_utilization_median'))}",
+        "acceleration_limit_utilization_median: "
+        f"{_format_float(metrics_valid.get('acceleration_limit_utilization_median'))}",
+        "",
+        *best_selection_lines,
+        "[DDIM GUIDANCE SCHEDULE]",
+        f"active_steps: {len(guidance_schedule)}",
+        "ee_goal_position_weights: "
+        f"[{', '.join(_format_float(value) for value in ee_goal_position_weight_schedule)}]",
+        "ee_goal_orientation_weights: "
+        f"[{', '.join(_format_float(value) for value in ee_goal_orientation_weight_schedule)}]",
+        f"prior_weights: [{', '.join(_format_float(value) for value in prior_weight_schedule)}]",
         "",
         "[TIMING]",
         f"inference_total_sec: {_format_float(results_single_plan.t_inference_total)}",
+        f"dense_validation_sec: {_format_float(_mapping_get(results_single_plan, 'dense_validation_time', 0.0))}",
+        "inference_total_with_dense_validation_sec: "
+        f"{_format_float(results_single_plan.t_inference_total + _mapping_get(results_single_plan, 'dense_validation_time', 0.0))}",
         f"generator_sec: {_format_float(results_single_plan.t_generator)}",
         f"guide_sec: {_format_float(results_single_plan.t_guide)}",
         "",
@@ -405,16 +504,16 @@ def _run_isaaclab_evaluator(
     return statistics, replay_request
 
 
-@single_experiment_yaml
+@single_experiment_yaml_optional_artifacts
 def experiment(
     ########################################################################
     # Configuration path defining the model and the inference parameters
     # cfg_inference_path: str = './cfgs/config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar2Link-RobotPlanar2Link_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar4Link-RobotPlanar4Link_00.yaml',
-    cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
+    # cfg_inference_path: str = "./cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml",
     # cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
-    # cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
+    cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
     ########################################################################
     # Select the start and goal from the training or validation/test set.
     selection_start_goal: str = "validation",  # training, validation/test
@@ -422,7 +521,21 @@ def experiment(
     # number of start and goal states to evaluate
     n_start_goal_states: int = 1,
     ########################################################################
+    ee_pose_goal_weight_override: float = -1.0,
+    t_start_guide_steps_fraction_override: float = -1.0,
+    n_guide_steps_override: int = -1,
+    ddim_scale_grad_prior_override: float = -1.0,
+    ee_pose_goal_weight_end_override: float = -1.0,
+    ee_goal_position_weight_override: float = -1.0,
+    ee_goal_position_weight_end_override: float = -1.0,
+    ee_goal_orientation_weight_override: float = -1.0,
+    ee_goal_orientation_weight_end_override: float = -1.0,
+    ddim_scale_grad_prior_end_override: float = -1.0,
+    ########################################################################
+    save_args_inference: bool = True,
+    save_results_single_plan: bool = True,
     save_results_single_plan_low_mem: bool = False,
+    lightweight_output: bool = False,
     ########################################################################
     # Visualization options
     render_joint_space_time_iters: bool = True,
@@ -436,8 +549,8 @@ def experiment(
     run_evaluation_isaac_lab: bool = False,
     render_isaacgym_viewer: bool = False,
     render_isaacgym_movie: bool = False,
-    isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab_ori"),
-    isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab_ori"),
+    isaaclab_root: str = os.environ.get("ISAACLAB_ROOT", "/home/eric/IsaacLab"),
+    isaaclab_conda_env: str = os.environ.get("ISAACLAB_CONDA_ENV", "env_isaaclab"),
     isaaclab_device: str = "cuda:0",
     isaaclab_headless: bool = True,
     isaaclab_action_repeat: int = 4,
@@ -467,7 +580,49 @@ def experiment(
     tensor_args = {"device": device, "dtype": torch.float32}
 
     # Save and load the inference configuration
-    args_inference = DotMap(load_params_from_yaml(cfg_inference_path))
+    cfg_inference_path_resolved = Path(os.path.expandvars(os.path.expanduser(str(cfg_inference_path))))
+    if not cfg_inference_path_resolved.is_absolute():
+        cfg_inference_path_resolved = (Path.cwd() / cfg_inference_path_resolved).resolve()
+    args_inference = DotMap(load_params_from_yaml(cfg_inference_path_resolved.as_posix()))
+
+    if ee_pose_goal_weight_override >= 0.0:
+        for cost_key in (
+            "CostTaskSpaceEEGoalPosition",
+            "CostTaskSpaceEEGoalOrientation",
+            "CostTaskSpaceEEGoalPose",
+        ):
+            if cost_key in args_inference.costs:
+                args_inference.costs[cost_key].weight = ee_pose_goal_weight_override
+    if ee_goal_position_weight_override >= 0.0:
+        if "CostTaskSpaceEEGoalPosition" in args_inference.costs:
+            args_inference.costs.CostTaskSpaceEEGoalPosition.weight = ee_goal_position_weight_override
+        args_inference.ddim.ee_goal_position_weight_start = ee_goal_position_weight_override
+    if ee_goal_orientation_weight_override >= 0.0:
+        if "CostTaskSpaceEEGoalOrientation" in args_inference.costs:
+            args_inference.costs.CostTaskSpaceEEGoalOrientation.weight = ee_goal_orientation_weight_override
+        args_inference.ddim.ee_goal_orientation_weight_start = ee_goal_orientation_weight_override
+    if t_start_guide_steps_fraction_override >= 0.0:
+        args_inference.ddim.t_start_guide_steps_fraction = t_start_guide_steps_fraction_override
+    if n_guide_steps_override >= 0:
+        args_inference.ddim.n_guide_steps = n_guide_steps_override
+    if ddim_scale_grad_prior_override >= 0.0:
+        args_inference.ddim.ddim_scale_grad_prior = ddim_scale_grad_prior_override
+    if ee_pose_goal_weight_override >= 0.0 and ee_pose_goal_weight_end_override >= 0.0:
+        args_inference.ddim.ee_pose_goal_weight_start = ee_pose_goal_weight_override
+        args_inference.ddim.ee_pose_goal_weight_end = ee_pose_goal_weight_end_override
+    if ee_goal_position_weight_end_override >= 0.0:
+        args_inference.ddim.ee_goal_position_weight_end = ee_goal_position_weight_end_override
+    if ee_goal_orientation_weight_end_override >= 0.0:
+        args_inference.ddim.ee_goal_orientation_weight_end = ee_goal_orientation_weight_end_override
+    if ddim_scale_grad_prior_end_override >= 0.0:
+        args_inference.ddim.ddim_scale_grad_prior_end = ddim_scale_grad_prior_end_override
+
+    start_goal_regions_path = args_inference.get("start_goal_regions_path")
+    if start_goal_regions_path:
+        start_goal_regions_path = Path(os.path.expandvars(os.path.expanduser(str(start_goal_regions_path))))
+        if not start_goal_regions_path.is_absolute():
+            start_goal_regions_path = cfg_inference_path_resolved.parent / start_goal_regions_path
+        args_inference.start_goal_regions_path = start_goal_regions_path.resolve().as_posix()
 
     if "cvae" in args_inference.planner_alg:
         if args_inference.model_selection == "bspline":
@@ -486,10 +641,11 @@ def experiment(
 
     args_inference.model_dir = os.path.expandvars(args_inference.model_dir)
 
-    save_to_yaml(args_inference.toDict(), os.path.join(results_dir, "args_inference.yaml"))
+    if save_args_inference:
+        save_to_yaml(args_inference.toDict(), os.path.join(results_dir, "args_inference.yaml"))
 
     print(f"\n-------------------------------------------------------------------------------------------------")
-    print(f"cfg_inference_path:\n{cfg_inference_path}")
+    print(f"cfg_inference_path:\n{cfg_inference_path_resolved}")
     print(f"Model:\n{args_inference.model_dir}")
     print(f"--------------------------------------------------------------------------------------------------")
 
@@ -509,6 +665,8 @@ def experiment(
 
     ################################################################################################################
     # Generator of evaluation samples
+    evaluation_samples_kwargs = dict(args_inference)
+    selection_start_goal = evaluation_samples_kwargs.pop("selection_start_goal", selection_start_goal)
     evaluation_samples_generator = EvaluationSamplesGenerator(
         planning_task,
         train_subset,
@@ -518,7 +676,7 @@ def experiment(
         tensor_args=tensor_args,
         debug=debug,
         render_pybullet=render_pybullet,
-        **args_inference,
+        **evaluation_samples_kwargs,
     )
 
     ################################################################################################################
@@ -582,11 +740,17 @@ def experiment(
 
     ################################################################################################################
     # Plan for several start and goal states sequentially
-    if selection_start_goal == "training":
-        idx_sample_l = np.random.choice(np.arange(len(train_subset)), n_start_goal_states)
+    start_goal_source = str(args_inference.get("start_goal_source", "auto")).lower()
+    uses_dataset_start_goal = start_goal_source == "dataset" or (
+        start_goal_source == "auto" and selection_start_goal in {"training", "validation"}
+    )
+    if uses_dataset_start_goal:
+        dataset_subset = train_subset if selection_start_goal == "training" else val_subset
+        idx_sample_l = np.random.choice(np.arange(len(dataset_subset)), n_start_goal_states)
     else:
-        idx_sample_l = np.random.choice(np.arange(len(val_subset)), n_start_goal_states)
+        idx_sample_l = np.arange(n_start_goal_states)
     isaaclab_replay_requests = []
+    reproducible_start_goal_states = []
     for idx_sg, idx_sample in enumerate(idx_sample_l):
         print(f"\n-------------------------------------------------------------------------------------------------")
         print(f"----------------PLANNING {idx_sg+1}/{n_start_goal_states}------------------")
@@ -594,7 +758,15 @@ def experiment(
 
         results_single_plan = DotMap(t_generator=0.0, t_guide=0.0)
 
-        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sg)
+        q_pos_start, q_pos_goal, ee_pose_goal = evaluation_samples_generator.get_data_sample(idx_sample)
+        results_single_plan.start_goal_metadata = dict(evaluation_samples_generator.last_sample_metadata)
+        reproducible_start_goal_states.append(
+            {
+                "q_pos_start": to_numpy(q_pos_start).tolist(),
+                "q_pos_goal": to_numpy(q_pos_goal).tolist(),
+                "ee_pose_goal": to_numpy(ee_pose_goal).reshape(3, 4).tolist(),
+            }
+        )
 
         print("\n----------------START AND GOAL states----------------")
         print(f"q_pos_start: {q_pos_start}")
@@ -608,9 +780,26 @@ def experiment(
         # Run motion planning inference
         print(f"\n----------------PLAN TRAJECTORIES----------------")
         print(f"Starting inference...")
+        if generative_optimization_planner.cost_guide is not None:
+            generative_optimization_planner.cost_guide.profile_context_index = idx_sg
         results_single_plan = generative_optimization_planner.plan_trajectory(
-            q_pos_start, q_pos_goal, ee_pose_goal, results_ns=results_single_plan, debug=debug
+            q_pos_start,
+            q_pos_goal,
+            ee_pose_goal,
+            q_vel_start=torch.zeros_like(q_pos_start),
+            q_vel_goal=torch.zeros_like(q_pos_goal),
+            q_acc_start=torch.zeros_like(q_pos_start),
+            q_acc_goal=torch.zeros_like(q_pos_goal),
+            results_ns=results_single_plan,
+            debug=debug,
         )
+        if (
+            generative_optimization_planner.cost_guide is not None
+            and generative_optimization_planner.cost_guide.guidance_profiler.records
+        ):
+            generative_optimization_planner.cost_guide.guidance_profiler.write_csv(
+                Path(results_dir) / "active-statistics.csv"
+            )
         print(f"...inference finished.")
 
         ############################################################################################################
@@ -708,26 +897,28 @@ def experiment(
         results_single_plan.inference_report_path = report_path.as_posix()
         print(f"inference_report: {report_path}")
 
-        # Save data
-        results_single_plan_to_save = results_single_plan
-        if save_results_single_plan_low_mem:
-            results_single_plan_to_save = DotMap(
-                t_generator=results_single_plan.t_generator,
-                t_guide=results_single_plan.t_guide,
-                t_inference_total=results_single_plan.t_inference_total,
-                q_pos_start=q_pos_start,
-                q_pos_goal=q_pos_goal,
-                ee_pose_goal=ee_pose_goal,
-                control_points_iters=results_single_plan.control_points_iters,
-                metrics=results_single_plan.metrics,
-                isaacgym_statistics=results_single_plan.isaacgym_statistics,
-                sim_statistics=results_single_plan.sim_statistics,
+        if save_results_single_plan:
+            results_single_plan_to_save = results_single_plan
+            if save_results_single_plan_low_mem:
+                results_single_plan_to_save = DotMap(
+                    t_generator=results_single_plan.t_generator,
+                    t_guide=results_single_plan.t_guide,
+                    t_inference_total=results_single_plan.t_inference_total,
+                    q_pos_start=q_pos_start,
+                    q_pos_goal=q_pos_goal,
+                    ee_pose_goal=ee_pose_goal,
+                    start_goal_metadata=results_single_plan.start_goal_metadata,
+                    control_points_iters=results_single_plan.control_points_iters,
+                    metrics=results_single_plan.metrics,
+                    best_trajectory_selection_details=results_single_plan.best_trajectory_selection_details,
+                    isaacgym_statistics=results_single_plan.isaacgym_statistics,
+                    sim_statistics=results_single_plan.sim_statistics,
+                )
+            torch.save(
+                results_single_plan_to_save,
+                os.path.join(results_dir, f"results_single_plan-{idx_sg:03d}.pt"),
+                _use_new_zipfile_serialization=True,
             )
-        torch.save(
-            results_single_plan_to_save,
-            os.path.join(results_dir, f"results_single_plan-{idx_sg:03d}.pt"),
-            _use_new_zipfile_serialization=True,
-        )
 
         ############################################################################################################
         # Render sampling results
@@ -750,6 +941,10 @@ def experiment(
         # empty memory
         del results_single_plan
         _release_torch_memory()
+
+    reproducible_states_path = Path(results_dir) / "start-goal-states.yaml"
+    save_to_yaml(reproducible_start_goal_states, reproducible_states_path)
+    print(f"reproducible_start_goal_states: {reproducible_states_path}")
 
     ################################################################################################################
     # clean up inference resources before launching replay processes
