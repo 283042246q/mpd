@@ -102,6 +102,51 @@ class DenseTrajectoryValidator:
             for bucket_size in batch_buckets
         )
 
+    def warmup_ranked_batch_workspaces(
+        self,
+        control_points,
+        batch_buckets,
+        **validate_kwargs,
+    ):
+        """Execute every fixed ranked-validation shape once.
+
+        Workspace allocation alone does not initialize the FK and collision-field
+        kernels used by :meth:`validate`.  Running each configured bucket here
+        keeps that one-time cost out of the first user request.
+        """
+
+        if control_points is None or control_points.ndim < 2 or control_points.shape[0] < 1:
+            raise ValueError("Dense warmup requires at least one batched control-point trajectory.")
+
+        batch_buckets = tuple(int(value) for value in batch_buckets)
+        if (
+            not batch_buckets
+            or any(value < 1 for value in batch_buckets)
+            or tuple(sorted(set(batch_buckets))) != batch_buckets
+        ):
+            raise ValueError(
+                "batch_buckets must contain unique positive integers in ascending order."
+            )
+
+        results = []
+        for bucket_size in batch_buckets:
+            workspace = self._bucket_workspace(control_points, bucket_size)
+            workspace.control_points.copy_(
+                control_points[:1].expand(bucket_size, *control_points.shape[1:])
+            )
+            workspace.slot_valid_mask.fill_(True)
+            with torch.no_grad():
+                results.append(
+                    self.validate(
+                        control_points=workspace.control_points,
+                        **validate_kwargs,
+                    )
+                )
+
+        if control_points.is_cuda:
+            torch.cuda.synchronize(control_points.device)
+        return tuple(results)
+
     def _dense_bspline(self, control_points, num_points):
         trajectory = self.parametric_trajectory
         augmented = trajectory.augment_control_points_fn(control_points, None, None)

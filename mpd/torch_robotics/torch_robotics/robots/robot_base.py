@@ -15,6 +15,7 @@ from urdf_parser_py.urdf import URDF, Joint, Link, Visual, Collision, Pose, Sphe
 
 import torchkin
 from torch_robotics.robots.torchkin_robot_wrapper import wrapper_torchkin_robot_from_urdf_model
+from torch_robotics.robots.torchkin_compat import ensure_torchkin_pose_cache_api
 from torch_robotics.torch_kinematics_tree.geometrics.quaternion import (
     q_convert_to_xyzw,
     q_to_euler,
@@ -440,6 +441,7 @@ class RobotBase(ABC):
         # Torchkin robot forward kinematics functions
         # Lock the urdf robot file because of multiprocessing
         self.robot_torchkin = wrapper_torchkin_robot_from_urdf_model(self.robot_urdf, **tensor_args)
+        ensure_torchkin_pose_cache_api()
 
         print("-----------------------------------")
         print(f"Torchkin robot: {self.robot_torchkin.name}")

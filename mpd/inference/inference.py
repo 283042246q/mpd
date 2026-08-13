@@ -799,6 +799,29 @@ class GenerativeOptimizationPlanner:
             if self.cost_guide is not None:
                 self.cost_guide.warmup(shape_x)
 
+        if self.dense_validator is not None:
+            ranked_cfg = self.dense_validation_config.get("ranked_early_exit", {})
+            if ranked_cfg.get("enabled", False):
+                sample = self.dataset[0]
+                q_pos_start = sample[self.dataset.field_key_q_start].to(**self.tensor_args)
+                q_pos_goal = sample[self.dataset.field_key_q_goal].to(**self.tensor_args)
+                control_points = sample[self.dataset.field_key_control_points].to(**self.tensor_args)
+                self.planning_task.set_q_pos_start_goal(q_pos_start, q_pos_goal)
+                self.planning_task.parametric_trajectory.set_boundary_conditions(
+                    q_pos_start=q_pos_start,
+                    q_pos_goal=q_pos_goal,
+                )
+                self.dense_validator.warmup_ranked_batch_workspaces(
+                    control_points.unsqueeze(0),
+                    ranked_cfg["batch_buckets"],
+                    num_points=int(self.dense_validation_config["runtime_points"]),
+                    check_environment=bool(self.dense_validation_config["check_environment"]),
+                    check_self_collision=bool(self.dense_validation_config["check_self_collision"]),
+                    check_joint_position=bool(self.dense_validation_config["check_joint_position"]),
+                    check_joint_velocity=bool(self.dense_validation_config["check_joint_velocity"]),
+                    check_joint_acceleration=bool(self.dense_validation_config["check_joint_acceleration"]),
+                )
+
     def plan_trajectory(
         self,
         q_pos_start,

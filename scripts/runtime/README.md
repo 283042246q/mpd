@@ -1,4 +1,46 @@
-# MPD Warehouse 单次推理接口
+# MPD Warehouse 推理接口
+
+本目录保留原有单次入口 `infer_once.py`，并提供常驻入口
+`infer_server.py`。常驻入口在启动时只加载一次 planning task、dataset、
+checkpoint、CostGuide 和 DenseValidator；服务进入 `READY` 前还会实际执行
+8/16/32/64 四种 dense bucket 的 FK/SDF 路径。
+
+常驻服务启动示例：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/infer_server.py \
+  --socket /tmp/mpd-runtime/mpd.sock \
+  --output-root /tmp/mpd-runtime/results \
+  --device cuda:0
+```
+
+本地 IPC 使用长度前缀 JSON，一次连接处理一个 `health`、`plan` 或
+`shutdown` 操作。`plan` 请求必须携带单调递增的 `request_seq`、
+`world_version`、可选 `deadline_unix_ns`，以及原 `infer_once.py` 的 v1
+request 对象。轨迹仍以 `result.json + trajectory.npz` 落盘，协议响应只
+返回经过服务端约束的输出路径。
+
+命令行健康检查和规划请求：
+
+```bash
+python scripts/runtime/infer_client.py \
+  --socket /tmp/mpd-runtime/mpd.sock health
+
+python scripts/runtime/infer_client.py \
+  --socket /tmp/mpd-runtime/mpd.sock \
+  --timeout-sec 30 \
+  plan \
+  --request tests/data/runtime_cartesian_request.json \
+  --request-seq 1 \
+  --world-version 0 \
+  --deadline-sec 5
+```
+
+常驻 planner 不是线程安全对象。服务使用非阻塞单规划锁：已有请求执行时
+返回 `BUSY`，不会在服务端形成无界队列；调用方负责 latest-only 合并。
+
+## 单次推理接口
 
 本文说明 `scripts/runtime/infer_once.py` 的用途、输入输出位置、数据格式、调用方式和内部运行流程。
 

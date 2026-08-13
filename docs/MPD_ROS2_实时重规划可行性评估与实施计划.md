@@ -442,6 +442,17 @@ worker 可以保留上一轮 elite candidates 在 GPU 上，减少 host/device �
 
 ### Phase 1：常驻 worker 与完整预热（4–7 天）
 
+实施状态（2026-08-13）：**已完成并通过真实 CUDA 验证。**
+
+- 新增 `runtime_engine.py`、`infer_server.py`、`infer_client.py` 和长度帧 JSON IPC；
+- 原 `infer_once.py` 未修改，继续作为单次回归入口；
+- planner 构造阶段实际执行 8/16/32/64 四种 DenseValidator bucket，并在 READY 前同步 CUDA；
+- worker 使用单 planner 非阻塞锁、单调 `request_seq`、deadline 和受控输出根目录；
+- 修复仓库第一方 robot wrapper 与固定 TorchKin submodule 间缺失 pose-cache factory 的接口不一致，原有 cached-pose Jacobian 数值等价测试通过；
+- `tests/` 全量结果：`109 passed`；新增常驻协议相关定向结果：`20 passed`；
+- 同一 CUDA worker 连续两次真实请求的 `engine_instance_id` 一致；服务端耗时约 `364 ms / 308 ms`；
+- 首个用户请求 DenseCheck 为 `6.40 ms`，第二次为 `4.64 ms`，首次约 200 ms 的 FK/SDF 冷启动已移至 READY 前。
+
 交付：
 
 - `MpdRuntimeEngine`；

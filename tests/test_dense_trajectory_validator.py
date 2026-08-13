@@ -198,6 +198,32 @@ class DenseTrajectoryValidatorTest(unittest.TestCase):
         self.assertEqual(int(result.trajectory_checked_mask.sum()), 100)
         self.assertTrue(result.complete)
 
+    def test_warmup_executes_every_fixed_bucket(self):
+        class RecordingValidator(DenseTrajectoryValidator):
+            def __init__(self):
+                self._bucket_workspaces = {}
+                self.seen_batch_sizes = []
+
+            def validate(self, control_points=None, num_points=4, **kwargs):
+                self.seen_batch_sizes.append(int(control_points.shape[0]))
+                return object()
+
+        validator = RecordingValidator()
+        template = torch.zeros(1, 2, 1, dtype=torch.float64)
+
+        results = validator.warmup_ranked_batch_workspaces(
+            template,
+            batch_buckets=[2, 4, 8],
+            num_points=4,
+        )
+
+        self.assertEqual(validator.seen_batch_sizes, [2, 4, 8])
+        self.assertEqual(len(results), 3)
+        self.assertEqual(
+            sorted(key[0] for key in validator._bucket_workspaces),
+            [2, 4, 8],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

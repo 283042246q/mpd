@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "request_id": "resident-runtime-smoke",
+  "joint_names": [
+    "fr3_joint1",
+    "fr3_joint2",
+    "fr3_joint3",
+    "fr3_joint4",
+    "fr3_joint5",
+    "fr3_joint6",
+    "fr3_joint7"
+  ],
+  "goal_type": "cartesian",
+  "q_pos_start": [0.0, -0.7, 0.0, -2.2, 0.0, 1.5, 0.7],
+  "ee_pose_goal": [
+    0.4322542996381046,
+    0.16375043690143717,
+    0.6717085498613047,
+    0.8765521159636589,
+    0.47117624388215046,
+    0.06455630619812767,
+    -0.07403930395941108
+  ],
+  "scene_id": "EnvWarehouseExtraObjectsV00",
+  "seed": 123
+}
