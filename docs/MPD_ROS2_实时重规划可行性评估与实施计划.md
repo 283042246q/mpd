@@ -517,6 +517,36 @@ worker 可以保留上一轮 elite candidates 在 GPU 上，减少 host/device �
 
 ### Phase 3：可控抢占、拼接与真机前验证（1–2 周）
 
+实施状态（2026-08-13）：**工程落地完成，unit/plan-only/fake-hardware 通过；仿真与
+限速真机按安全门槛保留为后续人工测试。**
+
+- 在同一新增 ROS 包中实现 `JtcHandoffManager`，分别保存 pending/active plan ID
+  与 accepted goal handle；所有 goal response、result、cancel 回调均闭包关联 plan ID，
+  新 goal rejection/send error 不会覆盖仍在执行的旧 handle，过期 accepted response 会取消；
+- 执行路径默认关闭，仅 `plan_only:=false` 时启用；提交前构造从当前 commit time 到
+  future handoff 的旧安全前缀，再追加新计划后缀，不依赖 future header stamp 的隐含抢占语义；
+- 拼接前检查当前 JointState 对 active plan 的 start drift、handoff 速度、位置和速度断差，
+  并用拼接两侧速度差分检查加速度断差；任一超阈值只丢新计划，旧 goal 继续执行；
+- 首版强制低速/停止点门控，默认阈值为 handoff speed `0.20 rad/s`、q jump
+  `0.03 rad`、dq jump `0.20 rad/s`、ddq jump `2.0 rad/s²`、start drift `0.10 rad`；
+- `/mpd_replanner/safe_stop` 会同时使 generation 失效、清 target/pending 并取消 owned goal；
+  另有独立进程 `/mpd_jtc_safe_stop`，即使 replanner/MPD worker 不运行，也能直接向
+  JTC dispatch cancel-all；它同时发布 transient-local `/mpd/emergency_stop` 锁存，
+  防止 replanner 下一周期重新提交，重启的 replanner 也会收到 stop；
+- 标准单包 `colcon build` 为 `0.85 s`；`colcon test` 最终为 `17 passed`，
+  覆盖 q/dq/ddq 拼接、start drift、低速门、
+  pending-slot、worker contract，以及 goal accepted/succeeded/rejected/aborted/cancel、
+  stale response 和 cancel-all wildcard；静态检查、manifest schema 和两个 launch 解析通过；
+- Franka fake-hardware 实测完成多个 goal 的 accepted→terminal 关联，JTC 返回
+  `error_code=0`/`Goal successfully reached!`；活动轨迹期间不满足低速或 start-drift
+  的新计划全部被拒绝，没有替换旧 goal；
+- owned safe-stop 实测得到 `CANCELED`，active/pending plan ID 清空；独立 safe-stop
+  实测 cancel 后 `has_target=false`、`pending_count=0`，间隔 2 秒两次诊断的
+  submitted/accepted 计数不再增长；replanner 完全关闭时独立 stop 仍能成功 dispatch；
+- 当前 effort JTC + `mock_components/GenericSystem` 不模拟 Franka 真实动力学跟踪，
+  因而 fake hardware 只能验证 ROS/action/门控状态机，不能替代动力学仿真；真实跟踪误差、
+  protective stop 和制动距离必须在仿真及限速真机阶段继续验证，外部 E-stop 不由本程序替代。
+
 交付：
 
 - Execution Manager 或 handoff manager 持有 JTC goal handle；
