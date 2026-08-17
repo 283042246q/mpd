@@ -374,3 +374,26 @@ class StaticDynamicCollisionField:
 
     def compute_distance_field_cost_and_gradient(self, link_pos, **kwargs):
         return self.compute_embodiment_taskspace_sdf_and_gradient(link_pos, **kwargs)
+
+    def compute_cost(self, q_pos, link_pos, *, field_type="sdf", **kwargs):
+        """Compatibility path used by the final best-trajectory recheck."""
+
+        del q_pos
+        if link_pos.shape[-2:] == (3, 4):
+            link_pos = link_pos[..., :3, 3]
+        squeeze_batch = link_pos.ndim == 3
+        if squeeze_batch:
+            link_pos = link_pos.unsqueeze(0)
+        if link_pos.ndim != 4:
+            raise ValueError("collision field expects [batch,time,links,3] positions")
+        distances = self.object_signed_distances(link_pos, **kwargs)
+        cutoff = float(kwargs.get("margin", self.cutoff_margin))
+        margins = self.collision_margins + cutoff
+        collisions = distances <= margins
+        if field_type == "occupancy":
+            result = collisions.any(dim=-1).any(dim=-1)
+        elif field_type == "sdf":
+            result = torch.relu(margins - distances).max(dim=-2).values.sum(dim=-1)
+        else:
+            raise ValueError(f"unsupported field_type {field_type!r}")
+        return result.squeeze(0) if squeeze_batch else result

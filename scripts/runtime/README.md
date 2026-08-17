@@ -40,6 +40,75 @@ python scripts/runtime/infer_client.py \
 常驻 planner 不是线程安全对象。服务使用非阻塞单规划锁：已有请求执行时
 返回 `BUSY`，不会在服务端形成无界队列；调用方负责 latest-only 合并。
 
+## Phase 4 独立动态入口
+
+Phase 3 的 `infer_server.py`、socket 和协议行为保持不变。动态场景使用独立
+入口与独立 socket：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/infer_dynamic_server.py \
+  --socket /tmp/mpd-dynamic-runtime.sock \
+  --output-root /tmp/mpd-dynamic-results \
+  --device cuda:0
+```
+
+动态 worker 保留启动时构建的静态全局 SDF，并在固定容量张量中叠加已知
+动态物体的 local SDF。首版 local SDF 支持 `sphere`、`box` 和沿 local Z
+轴的 `capsule`；位姿按恒定线速度预测，orientation 在预测窗口内保持不变。
+膨胀可选线性 horizon 或 6x6 constant-velocity covariance。动态规划使用轨迹
+时间戳与障碍预测的 fixed timing，最终 DenseCheck 强制完整检查所有候选，
+不使用 ranked early-exit 或候选剪枝。
+
+先提交单调递增的世界快照，再引用相同版本规划：
+
+```bash
+python scripts/runtime/infer_dynamic_client.py \
+  --socket /tmp/mpd-dynamic-runtime.sock \
+  update-world --world /tmp/mpd-world.json
+
+python scripts/runtime/infer_dynamic_client.py \
+  --socket /tmp/mpd-dynamic-runtime.sock \
+  plan \
+  --request tests/data/runtime_cartesian_request.json \
+  --request-seq 1 \
+  --world-version 1 \
+  --trajectory-start-unix-ns "$(date +%s%N)" \
+  --deadline-sec 2
+```
+
+世界快照的最小对象格式如下；`valid_until_unix_ns` 必须覆盖完整 10 s 规划
+horizon，否则请求 fail closed：
+
+```json
+{
+  "world_version": 1,
+  "frame_id": "fr3_link0",
+  "stamp_unix_ns": 1000000000,
+  "valid_until_unix_ns": 12000000000,
+  "objects": [
+    {
+      "id": "box-1",
+      "local_sdf": {"type": "box", "size_xyz": [0.20, 0.12, 0.30]},
+      "pose": {
+        "position": [0.55, 0.0, 0.45],
+        "orientation_xyzw": [0.0, 0.0, 0.0, 1.0]
+      },
+      "linear_velocity": [0.0, 0.08, 0.0],
+      "covariance_6x6": [
+        0.0001, 0, 0, 0, 0, 0,
+        0, 0.0001, 0, 0, 0, 0,
+        0, 0, 0.0001, 0, 0, 0,
+        0, 0, 0, 0.0004, 0, 0,
+        0, 0, 0, 0, 0.0004, 0,
+        0, 0, 0, 0, 0, 0.0004
+      ],
+      "inflation": {"mode": "covariance", "base_m": 0.01}
+    }
+  ]
+}
+```
+
 ## 单次推理接口
 
 本文说明 `scripts/runtime/infer_once.py` 的用途、输入输出位置、数据格式、调用方式和内部运行流程。
