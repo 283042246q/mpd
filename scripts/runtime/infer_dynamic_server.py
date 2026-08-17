@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-dynamic-objects", type=int, default=16)
     parser.add_argument("--covariance-sigma", type=float, default=3.0)
-    parser.add_argument("--process-acceleration-std", type=float, default=0.25)
+    parser.add_argument("--process-acceleration-std", type=float, default=0.01)
     return parser
 
 

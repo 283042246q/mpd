@@ -54,7 +54,7 @@ class FixedCapacityDynamicWorld:
         trajectory_duration_s: float,
         tensor_args: dict[str, Any],
         covariance_sigma: float = 3.0,
-        process_acceleration_std_m_s2: float = 0.25,
+        process_acceleration_std_m_s2: float = 0.01,
     ) -> None:
         if max_objects < 1:
             raise ValueError("max_objects must be positive")
@@ -195,9 +195,7 @@ class FixedCapacityDynamicWorld:
             velocity[index].copy_(torch.as_tensor(v, **self.tensor_args))
             rotation[index].copy_(torch.as_tensor(_rotation_xyzw(quaternion), **self.tensor_args))
             parameters[index].copy_(torch.as_tensor(shape_parameters, **self.tensor_args))
-            covariance[index].copy_(
-                torch.as_tensor(flat_covariance, **self.tensor_args).reshape(6, 6)
-            )
+            covariance[index].copy_(torch.as_tensor(flat_covariance, **self.tensor_args).reshape(6, 6))
             inflation_code[index] = _INFLATION_CODES[str(mode)]
             base_inflation[index] = base
             horizon_rate[index] = rate
@@ -223,9 +221,7 @@ class FixedCapacityDynamicWorld:
 
     def set_plan_start(self, plan_start_unix_ns: int, *, world_version: int) -> None:
         if world_version != self.world_version:
-            raise DynamicWorldError(
-                f"requested world_version {world_version} != loaded {self.world_version}"
-            )
+            raise DynamicWorldError(f"requested world_version {world_version} != loaded {self.world_version}")
         if not isinstance(plan_start_unix_ns, int) or plan_start_unix_ns < self.stamp_unix_ns:
             raise DynamicWorldError("plan_start_unix_ns predates the world snapshot")
         horizon_end = plan_start_unix_ns + int(self.trajectory_duration_s * 1e9)
@@ -237,9 +233,7 @@ class FixedCapacityDynamicWorld:
         if self.plan_start_unix_ns <= 0:
             raise DynamicWorldError("dynamic plan context has not been set")
         plan_offset = (self.plan_start_unix_ns - self.stamp_unix_ns) * 1e-9
-        trajectory_times = torch.linspace(
-            0.0, self.trajectory_duration_s, horizon, dtype=dtype, device=device
-        )
+        trajectory_times = torch.linspace(0.0, self.trajectory_duration_s, horizon, dtype=dtype, device=device)
         return trajectory_times + plan_offset
 
     def _inflation(self, relative_times: torch.Tensor) -> torch.Tensor:
@@ -250,11 +244,7 @@ class FixedCapacityDynamicWorld:
         p_pv = self.covariance[:, :3, 3:]
         p_vp = self.covariance[:, 3:, :3]
         p_vv = self.covariance[:, 3:, 3:]
-        propagated = (
-            p_pp[None]
-            + dt[..., None, None] * (p_pv + p_vp)[None]
-            + dt[..., None, None].square() * p_vv[None]
-        )
+        propagated = p_pp[None] + dt[..., None, None] * (p_pv + p_vp)[None] + dt[..., None, None].square() * p_vv[None]
         process = self.process_variance * dt.pow(3) / 3.0
         propagated = propagated + process[..., None, None] * torch.eye(
             3, dtype=relative_times.dtype, device=relative_times.device
@@ -286,18 +276,14 @@ class FixedCapacityDynamicWorld:
         box_outside = torch.relu(box_q)
         box_outside_norm = torch.linalg.norm(box_outside, dim=-1)
         box_distance = box_outside_norm + torch.clamp(box_q.amax(dim=-1), max=0.0)
-        box_outside_gradient = (
-            torch.sign(local) * box_outside / box_outside_norm.clamp_min(eps)[..., None]
-        )
+        box_outside_gradient = torch.sign(local) * box_outside / box_outside_norm.clamp_min(eps)[..., None]
         box_axis = box_q.argmax(dim=-1)
         box_inside_gradient = torch.zeros_like(local).scatter_(
             -1,
             box_axis[..., None],
             torch.gather(torch.sign(local), -1, box_axis[..., None]),
         )
-        box_gradient_local = torch.where(
-            (box_outside_norm > eps)[..., None], box_outside_gradient, box_inside_gradient
-        )
+        box_gradient_local = torch.where((box_outside_norm > eps)[..., None], box_outside_gradient, box_inside_gradient)
 
         capsule_half = self.parameters[None, None, :, None, 1]
         closest_z = local[..., 2].clamp(-capsule_half, capsule_half)
@@ -360,13 +346,13 @@ class StaticDynamicCollisionField:
         margins = self.collision_margins
         link_indices = kwargs.get("link_indices")
         if link_indices is not None:
-            margins = margins.index_select(
-                0, torch.as_tensor(link_indices, dtype=torch.long, device=link_pos.device)
-            )
+            margins = margins.index_select(0, torch.as_tensor(link_indices, dtype=torch.long, device=link_pos.device))
         penetration = torch.relu(margins + self.cutoff_margin - distances)
         cost, active_object = penetration.max(dim=-2)
-        gather_index = active_object.unsqueeze(-2).unsqueeze(-1).expand(
-            *active_object.shape[:-1], 1, active_object.shape[-1], gradients.shape[-1]
+        gather_index = (
+            active_object.unsqueeze(-2)
+            .unsqueeze(-1)
+            .expand(*active_object.shape[:-1], 1, active_object.shape[-1], gradients.shape[-1])
         )
         active_gradient = gradients.gather(-3, gather_index).squeeze(-3)
         active_gradient = torch.where((cost > 0.0)[..., None], -active_gradient, torch.zeros_like(active_gradient))

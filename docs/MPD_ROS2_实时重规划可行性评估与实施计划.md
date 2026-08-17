@@ -573,10 +573,58 @@ worker 可以保留上一轮 elite candidates 在 GPU 上，减少 host/device �
 
 ### Phase 4：固定容量动态场景（2–4 周）
 
+实施状态（2026-08-17）：**基础动态闭环已独立落地，unit/CUDA/fake-hardware
+通过；真实动力学仿真、人工障碍侵入测试与限速真机仍须按安全门槛执行。**
+
+- Phase 3 入口与行为保持不变：MPD 仍使用 `infer_server.py` 和
+  `/tmp/mpd-runtime.sock`，ROS 仍使用 `mpd_planner_adapter/replan.launch.py`；
+  Phase 4 新增 `infer_dynamic_server.py`、`/tmp/mpd-dynamic-runtime.sock` 和独立
+  `mpd_dynamic_planner_adapter/replan_dynamic.launch.py`；
+- 静态 warehouse SDF 在 worker 启动时构建一次，动态层用固定容量
+  tensor 叠加已知物体 local SDF；首版实现 `sphere`/`box`/沿 local Z
+  轴 `capsule` 的解析 SDF，不在规划循环重建静态 SDF；
+- ROS 世界层对每个已知物体使用 3D constant-velocity Kalman Filter，
+  位置/速度协方差随 horizon 传播，orientation 在预测窗内保持不变；
+  安全包络可选 `base + rate * horizon` 线性膨胀或
+  `base + sigma * sqrt(max_eigenvalue(position_covariance))` 协方差膨胀；
+  默认过程加速度标准差经假硬件标定为 `0.01 m/s²`，该值必须按真实
+  tracker 残差重新标定，不是通用安全常数；
+- 动态 collision cost 使用轨迹的绝对启动时刻和固定 10 s/128 点
+  timing 查询障碍未来位置；动态 worker 关闭 guidance candidate pruning
+  和 ranked DenseCheck early-exit，最终 DenseCheck 对生成的全部候选进行验证，
+  并断言 `dense_checked == generated`；
+- ROS 安全层按旧轨迹的绝对持续时间复验当前到 handoff 的整段前缀，
+  按时间从早到晚扫描同时满足动态安全、低速和拼接连续性的 handoff；
+  找不到可行点时发送有界减速轨迹并锁存 emergency stop；
+- 新计划返回后使用最新 world snapshot 对旧前缀和新后缀复验，
+  在真正提交前再次比较 world version；世界更新不取消正在执行的
+  GPU 请求，而是在返回时用最新快照 fail closed，避免 10 Hz 感知导致
+  约 1 Hz 推理永远被 supersede；
+- `plan_only` 每周期都从实测 JointState 规划，不把未执行的轨迹记为
+  active plan；执行模式才保存带绝对时间的 active plan 并进行前缀复验。
+
+当前验证证据：
+
+- MPD Phase 3/4 定向回归 `27 passed`；真实 CUDA 动态 worker 完成一次
+  `100 generated / 100 dense checked`，`full_batch=true`、`pruning_used=false`，
+  单次稳态请求约 `1.074 s`，导出的碰撞球中心形状为 `[128,56,3]`；
+- ROS Phase 4 `15 passed`，Phase 3 回归 `20 passed`，Franka server 定向
+  `5 passed`，包含无低速 handoff 时的制动分支；
+- `safe_far` 假硬件 plan-only 连续 40 次规划全部接受，
+  `handoff_rejected=0`、`no_handoff_brakes=0`、
+  `world_revalidation_rejected=0`、`has_active_plan=false`；
+- 假硬件执行模式完成 JTC goal accepted 与终态闭环，一次旧轨迹
+  start drift `0.2826 rad > 0.10 rad` 被拒绝并转入受控制动，制动 goal
+  被 JTC 接受并成功终止；`safe_far` 安全检查的最小 clearance
+  为 `1.9916 m`。
+
 交付：
 
 - 静态 SDF + 动态解析 primitive 混合碰撞场；
 - world snapshot/version/frame/stamp 契约；
+- constant-velocity KF、恒定 orientation 和 uncertainty/horizon inflation；
+- fixed-timing dynamic collision cost 和无剪枝最终 DenseCheck；
+- 旧轨迹时间对齐复验、最早可行低速 handoff 和无解制动；
 - 最新世界提交前复验；
 - 障碍物更新压力测试。
 
@@ -586,6 +634,12 @@ worker 可以保留上一轮 elite candidates 在 GPU 上，减少 host/device �
 - 固定容量内更新不产生明显的频繁内存分配；
 - 旧 world version 的计划 100% 被丢弃或重验；
 - 障碍突然侵入已提交前缀时，安全层能停止，而不是等待 MPD。
+
+已知限制：首版 local SDF 仅是解析 primitive，尚不支持任意 voxel/mesh
+local SDF；128 点/10 s 加在线离散 guard 不等于 swept/continuous
+碰撞证明；`mock_components/GenericSystem` 下的 effort JTC 不表示 Franka
+真实动力学。因此限速真机前仍必须完成高分辨率/swept 终检、感知残差
+标定、动态障碍人工侵入故障注入、制动距离和 protective-stop 验证。
 
 ### Phase 5：diffusion warm start（3–6 周研究）
 

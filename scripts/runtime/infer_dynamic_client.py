@@ -54,9 +54,7 @@ def main(argv=None) -> int:
             world_version=args.world_version,
             trajectory_start_unix_ns=args.trajectory_start_unix_ns,
             deadline_unix_ns=(
-                None
-                if args.deadline_sec is None
-                else time.time_ns() + int(args.deadline_sec * 1_000_000_000)
+                None if args.deadline_sec is None else time.time_ns() + int(args.deadline_sec * 1_000_000_000)
             ),
             request=raw_request,
         )

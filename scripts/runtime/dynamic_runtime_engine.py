@@ -25,7 +25,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         *,
         max_dynamic_objects: int = 16,
         covariance_sigma: float = 3.0,
-        process_acceleration_std_m_s2: float = 0.25,
+        process_acceleration_std_m_s2: float = 0.01,
     ) -> None:
         import torch
 
@@ -54,9 +54,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         ]
 
         if self.planner.cost_guide is not None:
-            collision_cost = self.planner.cost_guide.costs.get(
-                "CostTaskSpaceCollisionObjects"
-            )
+            collision_cost = self.planner.cost_guide.costs.get("CostTaskSpaceCollisionObjects")
             if collision_cost is not None:
                 collision_cost.cost.collision_objects_field = self.dynamic_field
             # Dynamic timing must retain the complete phase axis.  Phase 4 has
@@ -142,9 +140,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         if checked != generated or not complete:
             raise DynamicWorldError("Phase-4 final DenseCheck did not evaluate every candidate")
 
-        q_position = torch.as_tensor(
-            artifacts.trajectory_arrays["positions"], **self.tensor_args
-        )
+        q_position = torch.as_tensor(artifacts.trajectory_arrays["positions"], **self.tensor_args)
         poses = self.planning_task.robot.fk_collision_spheres(q_position)
         poses = torch.stack(poses).transpose(0, 1)
         sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
@@ -161,9 +157,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             "snapshot_stamp_unix_ns": self.dynamic_world.stamp_unix_ns,
             "valid_until_unix_ns": self.dynamic_world.valid_until_unix_ns,
             "trajectory_start_unix_ns": plan_start_unix_ns,
-            "active_object_ids": [
-                object_id for object_id in self.dynamic_world.object_ids if object_id
-            ],
+            "active_object_ids": [object_id for object_id in self.dynamic_world.object_ids if object_id],
             "fixed_timing": True,
             "orientation_model": "constant",
             "motion_model": "constant_velocity",
