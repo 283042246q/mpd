@@ -32,7 +32,10 @@ def test_summary_reports_phase_ratio_and_continuous_switches():
 
     assert summary["executed_plan_count"] == 2
     assert summary["maximum_command_gap_s"] == pytest.approx(0.0)
+    assert summary["phase_totals"]["initial_planning_wait_s"] == pytest.approx(1.5)
+    assert summary["phase_totals"]["old_continuation_s"] == pytest.approx(2.0)
     assert summary["phase_totals"]["quintic_bridge_s"] == pytest.approx(0.5)
+    assert summary["phase_totals"]["latest_mpd_realized_s"] == pytest.approx(9.5)
     assert sum(summary["phase_ratios"].values()) == pytest.approx(1.0)
 
 

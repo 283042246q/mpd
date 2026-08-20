@@ -69,6 +69,18 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         )
     executed.sort(key=lambda item: item["bridge_start_s"])
 
+    initial_planning_wait_s = 0.0
+    if executed:
+        initial_planning_wait_s = executed[0]["old_continuation_s"]
+        executed[0]["old_continuation_s"] = 0.0
+    for current, replacement in zip(executed, executed[1:]):
+        mpd_execution_end = min(
+            current["active_until_s"], replacement["planning_submitted_s"]
+        )
+        current["latest_mpd_realized_s"] = max(
+            0.0, mpd_execution_end - current["handoff_s"]
+        )
+
     gaps = []
     for old, new in zip(executed, executed[1:]):
         gap = new["bridge_start_s"] - old["active_until_s"]
@@ -82,6 +94,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     totals = {
+        "initial_planning_wait_s": initial_planning_wait_s,
         "old_continuation_s": sum(item["old_continuation_s"] for item in executed),
         "quintic_bridge_s": sum(item["bridge_s"] for item in executed),
         "latest_mpd_realized_s": sum(item["latest_mpd_realized_s"] for item in executed),
