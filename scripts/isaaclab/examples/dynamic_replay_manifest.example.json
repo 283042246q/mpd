@@ -1,0 +1,121 @@
+{
+  "schema": "mpd_dynamic_replay",
+  "schema_version": 1,
+  "env_name": "EnvWarehouseExtraObjectsV00",
+  "frame_id": "fr3_link0",
+  "duration_s": 6.0,
+  "initial_q": [0.0, -0.785398, 0.0, -2.356194, 0.0, 1.570796, 0.785398],
+  "static_scene": {
+    "obstacles": [
+      {
+        "type": "box",
+        "position": [0.75, 0.0, 0.15],
+        "orientation": [1.0, 0.0, 0.0, 0.0],
+        "size": [0.15, 0.8, 0.3]
+      }
+    ]
+  },
+  "plans": [
+    {
+      "id": "plan-000",
+      "trajectory": "plan-000/trajectory.npz",
+      "created_s": 0.0,
+      "start_s": 0.0,
+      "status": "superseded",
+      "active_from_s": 0.0,
+      "active_until_s": 2.5,
+      "collision_segments_s": [[2.0, 2.4]]
+    },
+    {
+      "id": "plan-001",
+      "trajectory": "plan-001/trajectory.npz",
+      "created_s": 1.5,
+      "start_s": 2.5,
+      "status": "accepted",
+      "active_from_s": 2.5,
+      "active_until_s": 5.0
+    },
+    {
+      "id": "plan-002-rejected",
+      "trajectory": "plan-002/trajectory.npz",
+      "created_s": 3.5,
+      "start_s": 4.0,
+      "status": "rejected",
+      "collision_segments_s": [[0.8, 1.8]]
+    }
+  ],
+  "world_snapshots": [
+    {
+      "time_s": 0.0,
+      "world_version": 10,
+      "valid_until_s": 4.0,
+      "objects": [
+        {
+          "id": "moving-box",
+          "local_sdf": {"type": "box", "size_xyz": [0.2, 0.2, 0.35]},
+          "pose": {
+            "position": [0.45, -0.55, 0.5],
+            "orientation_xyzw": [0.0, 0.0, 0.0, 1.0]
+          },
+          "linear_velocity": [0.0, 0.18, 0.0],
+          "inflation": {
+            "mode": "linear",
+            "base_m": 0.02,
+            "horizon_rate_m_s": 0.025
+          }
+        }
+      ]
+    },
+    {
+      "time_s": 2.0,
+      "world_version": 11,
+      "valid_until_s": 6.0,
+      "objects": [
+        {
+          "id": "moving-box",
+          "local_sdf": {"type": "box", "size_xyz": [0.2, 0.2, 0.35]},
+          "pose": {
+            "position": [0.45, -0.19, 0.5],
+            "orientation_xyzw": [0.0, 0.0, 0.0, 1.0]
+          },
+          "linear_velocity": [0.0, 0.18, 0.0],
+          "inflation": {
+            "mode": "linear",
+            "base_m": 0.02,
+            "horizon_rate_m_s": 0.025
+          }
+        }
+      ]
+    },
+    {
+      "time_s": 4.0,
+      "world_version": 12,
+      "valid_until_s": 8.0,
+      "objects": [
+        {
+          "id": "moving-box",
+          "local_sdf": {"type": "box", "size_xyz": [0.2, 0.2, 0.35]},
+          "pose": {
+            "position": [0.45, 0.17, 0.5],
+            "orientation_xyzw": [0.0, 0.0, 0.0, 1.0]
+          },
+          "linear_velocity": [0.0, 0.18, 0.0],
+          "inflation": {
+            "mode": "linear",
+            "base_m": 0.02,
+            "horizon_rate_m_s": 0.025
+          }
+        }
+      ]
+    }
+  ],
+  "events": [
+    {"type": "handoff", "time_s": 2.5, "plan_id": "plan-001"},
+    {
+      "type": "brake",
+      "time_s": 5.0,
+      "duration_s": 1.0,
+      "reason": "no_safe_handoff"
+    }
+  ]
+}

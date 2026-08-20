@@ -1,4 +1,4 @@
-"""Replay one MPD trajectory in IsaacLab and export visual evidence.
+"""Replay one MPD trajectory or a Phase-4 replan timeline in IsaacLab.
 
 Launch with IsaacLab's Python wrapper, for example:
 
@@ -26,8 +26,14 @@ from isaaclab.app import AppLauncher
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Replay one MPD trajectory with IsaacLab camera output.")
-    parser.add_argument("--input", type=Path, required=True, help="Torch file written by MPD inference.")
+    parser = argparse.ArgumentParser(description="Replay MPD trajectories with IsaacLab camera output.")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input", type=Path, help="Legacy Torch file written by MPD inference.")
+    source.add_argument(
+        "--manifest",
+        type=Path,
+        help="Phase-4 mpd_dynamic_replay JSON manifest containing multiple NPZ plans.",
+    )
     parser.add_argument(
         "--trajectory_source",
         choices=("best", "batch"),
@@ -47,6 +53,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video_fps", type=float, default=24.0, help="Output mp4 frame rate.")
     parser.add_argument("--width", type=int, default=960, help="Camera image width.")
     parser.add_argument("--height", type=int, default=540, help="Camera image height.")
+    parser.add_argument(
+        "--prediction_horizon_s",
+        type=float,
+        default=3.0,
+        help="Future dynamic-obstacle envelope horizon [s].",
+    )
+    parser.add_argument(
+        "--prediction_samples",
+        type=int,
+        default=8,
+        help="Number of translucent envelope samples per dynamic object.",
+    )
+    parser.add_argument(
+        "--trajectory_history_s",
+        type=float,
+        default=30.0,
+        help="How long superseded trajectories remain visible in gray [s].",
+    )
+    parser.add_argument(
+        "--trajectory_line_width",
+        type=float,
+        default=4.0,
+        help="Rendered trajectory line width in pixels.",
+    )
     parser.add_argument(
         "--camera_eye",
         type=float,
@@ -74,6 +104,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("At least one of --output_video or --screenshot_path is required.")
     if args.action_repeat < 1:
         parser.error("--action_repeat must be >= 1.")
+    if args.prediction_horizon_s <= 0.0 or args.prediction_samples < 1:
+        parser.error("prediction horizon and sample count must be positive.")
+    if args.trajectory_history_s < 0.0 or args.trajectory_line_width <= 0.0:
+        parser.error("trajectory history must be non-negative and line width must be positive.")
     if (args.camera_eye is None) != (args.camera_target is None):
         parser.error("--camera_eye and --camera_target must be provided together.")
     args.enable_cameras = True
@@ -93,6 +127,7 @@ import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.camera import Camera
@@ -100,6 +135,30 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_assets import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
+from isaacsim.core.experimental.utils.app import enable_extension  # isort: skip
+
+from dynamic_replay_timeline import (  # isort: skip
+    COLOR_BLUE,
+    COLOR_GRAY,
+    COLOR_GREEN,
+    COLOR_PURPLE,
+    COLOR_RED,
+    COLOR_YELLOW,
+    DynamicReplayManifest,
+    PlanRecord,
+    active_plan_at,
+    brake_event_at,
+    latest_pending_plan_at,
+    load_dynamic_replay_manifest,
+    plan_base_color,
+    predict_object,
+    robot_position_at,
+    segment_color,
+    world_snapshot_at,
+)
+
+enable_extension("isaacsim.util.debug_draw")
+from isaacsim.util.debug_draw import _debug_draw as omni_debug_draw  # noqa: E402, PLC0415
 
 
 def _log(message: str) -> None:
@@ -140,9 +199,7 @@ def _normalize_best_trajectory(q_trajs_pos_best: torch.Tensor) -> torch.Tensor:
 
 
 PANDA_CFG = FRANKA_PANDA_HIGH_PD_CFG.copy()
-PANDA_CFG.spawn.usd_path = (
-    args_cli.robot_usd or f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
-)
+PANDA_CFG.spawn.usd_path = args_cli.robot_usd or f"{ISAAC_NUCLEUS_DIR}/Robots/FrankaRobotics/FrankaPanda/franka.usd"
 PANDA_CFG.spawn.activate_contact_sensors = True
 PANDA_CFG.spawn.rigid_props.disable_gravity = True
 
@@ -153,7 +210,7 @@ class ReplaySceneCfg(InteractiveSceneCfg):
 
     dome_light = AssetBaseCfg(
         prim_path="/World/Light",
-        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+        spawn=sim_utils.DomeLightCfg(intensity=1200.0, color=(0.75, 0.75, 0.75)),
     )
 
     robot = PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -208,6 +265,275 @@ def _spawn_scene_obstacles(scene_payload: dict[str, Any] | None) -> dict[str, An
     return {"n_obstacles": len(obstacles), "obstacle_types": sorted(set(obstacle_types))}
 
 
+_CURRENT_MARKER_INDEX = {"sphere": 0, "box": 1, "capsule": 2}
+_HANDOFF_MARKER_INDEX = 3
+
+
+def _create_dynamic_markers() -> VisualizationMarkers:
+    current_material = sim_utils.PreviewSurfaceCfg(
+        diffuse_color=(0.95, 0.28, 0.04),
+        emissive_color=(0.12, 0.02, 0.0),
+        roughness=0.35,
+        opacity=0.92,
+    )
+    handoff_material = sim_utils.PreviewSurfaceCfg(
+        diffuse_color=COLOR_PURPLE[:3],
+        emissive_color=(0.25, 0.02, 0.35),
+        roughness=0.2,
+        opacity=1.0,
+    )
+    cfg = VisualizationMarkersCfg(
+        prim_path="/World/Visuals/MpdDynamicReplay",
+        markers={
+            "current_sphere": sim_utils.SphereCfg(radius=0.5, visual_material=current_material),
+            "current_box": sim_utils.CuboidCfg(size=(1.0, 1.0, 1.0), visual_material=current_material),
+            "current_capsule": sim_utils.CapsuleCfg(
+                radius=0.5,
+                height=1.0,
+                axis="Z",
+                visual_material=current_material,
+            ),
+            "handoff": sim_utils.SphereCfg(radius=0.045, visual_material=handoff_material),
+        },
+    )
+    return VisualizationMarkers(cfg)
+
+
+def _current_marker_scale(local_sdf: dict[str, Any]) -> np.ndarray:
+    shape_type = local_sdf["type"]
+    if shape_type == "sphere":
+        diameter = 2.0 * float(local_sdf["radius"])
+        return np.full(3, diameter, dtype=np.float32)
+    if shape_type == "box":
+        return np.asarray(local_sdf["size_xyz"], dtype=np.float32)
+    diameter = 2.0 * float(local_sdf["radius"])
+    return np.asarray([diameter, diameter, float(local_sdf["length"])], dtype=np.float32)
+
+
+def _object_bounding_radius(local_sdf: dict[str, Any], inflation_m: float) -> float:
+    shape_type = local_sdf["type"]
+    if shape_type == "sphere":
+        radius = float(local_sdf["radius"])
+    elif shape_type == "box":
+        radius = float(np.linalg.norm(np.asarray(local_sdf["size_xyz"], dtype=np.float64) * 0.5))
+    else:
+        radius = float(local_sdf["radius"]) + 0.5 * float(local_sdf["length"])
+    return radius + float(inflation_m)
+
+
+def _handoff_positions(
+    manifest: DynamicReplayManifest,
+    time_s: float,
+    ee_paths: dict[str, np.ndarray],
+) -> list[np.ndarray]:
+    positions = []
+    plans = {plan.plan_id: plan for plan in manifest.plans}
+    for event in manifest.events:
+        if event.event_type != "handoff" or time_s < event.time_s - 1.0:
+            continue
+        if event.position is not None:
+            positions.append(np.asarray(event.position, dtype=np.float32))
+            continue
+        if event.plan_id is None or event.plan_id not in plans or event.plan_id not in ee_paths:
+            continue
+        plan = plans[event.plan_id]
+        local_time = np.clip(
+            event.time_s - plan.start_s,
+            plan.trajectory.times_s[0],
+            plan.trajectory.times_s[-1],
+        )
+        path = ee_paths[event.plan_id]
+        positions.append(
+            np.asarray(
+                [np.interp(local_time, plan.trajectory.times_s, path[:, axis]) for axis in range(3)],
+                dtype=np.float32,
+            )
+        )
+    return positions
+
+
+def _update_dynamic_markers(
+    markers: VisualizationMarkers,
+    manifest: DynamicReplayManifest,
+    time_s: float,
+    ee_paths: dict[str, np.ndarray],
+) -> int:
+    snapshot = world_snapshot_at(manifest, time_s)
+    translations = []
+    orientations = []
+    scales = []
+    indices = []
+    for item in snapshot.objects:
+        current = predict_object(item, snapshot.time_s, time_s)
+        translations.append(current.position)
+        orientations.append(current.orientation_xyzw)
+        scales.append(_current_marker_scale(current.local_sdf))
+        indices.append(_CURRENT_MARKER_INDEX[current.local_sdf["type"]])
+
+    handoffs = _handoff_positions(manifest, time_s, ee_paths)
+    for position in handoffs:
+        translations.append(position)
+        orientations.append(np.asarray([0.0, 0.0, 0.0, 1.0]))
+        scales.append(np.ones(3, dtype=np.float32))
+        indices.append(_HANDOFF_MARKER_INDEX)
+
+    if not translations:
+        markers.set_visibility(False)
+        return 0
+    markers.set_visibility(True)
+    markers.visualize(
+        translations=np.asarray(translations, dtype=np.float32),
+        orientations=np.asarray(orientations, dtype=np.float32),
+        scales=np.asarray(scales, dtype=np.float32),
+        marker_indices=np.asarray(indices, dtype=np.int32),
+    )
+    return len(snapshot.objects)
+
+
+def _append_wire_sphere(
+    starts: list,
+    ends: list,
+    colors: list,
+    widths: list,
+    center: np.ndarray,
+    radius: float,
+) -> None:
+    angles = np.linspace(0.0, 2.0 * np.pi, 25, dtype=np.float64)
+    for fixed_axis in range(3):
+        varying_axes = [axis for axis in range(3) if axis != fixed_axis]
+        points = np.repeat(np.asarray(center, dtype=np.float64)[None, :], len(angles), axis=0)
+        points[:, varying_axes[0]] += radius * np.cos(angles)
+        points[:, varying_axes[1]] += radius * np.sin(angles)
+        for index in range(len(points) - 1):
+            starts.append(points[index].tolist())
+            ends.append(points[index + 1].tolist())
+            colors.append(COLOR_YELLOW)
+            widths.append(max(1.0, args_cli.trajectory_line_width * 0.5))
+
+
+def _append_prediction_envelopes(
+    starts: list,
+    ends: list,
+    colors: list,
+    widths: list,
+    manifest: DynamicReplayManifest,
+    time_s: float,
+) -> int:
+    snapshot = world_snapshot_at(manifest, time_s)
+    prediction_end = min(time_s + args_cli.prediction_horizon_s, snapshot.valid_until_s)
+    if prediction_end <= time_s:
+        return 0
+    count = 0
+    for item in snapshot.objects:
+        for prediction_time in np.linspace(
+            time_s,
+            prediction_end,
+            args_cli.prediction_samples + 1,
+            dtype=np.float64,
+        )[1:]:
+            predicted = predict_object(item, snapshot.time_s, float(prediction_time))
+            radius = _object_bounding_radius(predicted.local_sdf, predicted.inflation_m)
+            _append_wire_sphere(starts, ends, colors, widths, predicted.position, radius)
+            count += 1
+    return count
+
+
+def _draw_trajectory_lines(
+    draw_interface,
+    manifest: DynamicReplayManifest,
+    time_s: float,
+    ee_paths: dict[str, np.ndarray],
+) -> tuple[int, int]:
+    starts = []
+    ends = []
+    colors = []
+    widths = []
+    for plan in manifest.plans:
+        color = plan_base_color(plan, manifest, time_s)
+        if color is None:
+            continue
+        if (
+            plan.active_until_s is not None
+            and time_s - plan.active_until_s > args_cli.trajectory_history_s
+            and color == COLOR_GRAY
+        ):
+            continue
+        path = ee_paths[plan.plan_id]
+        for index in range(len(path) - 1):
+            starts.append(path[index].tolist())
+            ends.append(path[index + 1].tolist())
+            colors.append(
+                segment_color(
+                    plan,
+                    float(plan.trajectory.times_s[index]),
+                    color,
+                )
+            )
+            widths.append(float(args_cli.trajectory_line_width))
+    trajectory_segment_count = len(starts)
+    prediction_count = _append_prediction_envelopes(
+        starts,
+        ends,
+        colors,
+        widths,
+        manifest,
+        time_s,
+    )
+    draw_interface.clear_lines()
+    if starts:
+        draw_interface.draw_lines(starts, ends, colors, widths)
+    return trajectory_segment_count, prediction_count
+
+
+def _rgba_to_rgb8(color: tuple[float, ...]) -> tuple[int, int, int]:
+    return tuple(int(round(255.0 * component)) for component in color[:3])
+
+
+def _overlay_dynamic_hud(
+    frame: np.ndarray,
+    manifest: DynamicReplayManifest,
+    time_s: float,
+) -> np.ndarray:
+    output = frame.copy()
+    snapshot = world_snapshot_at(manifest, time_s)
+    active = active_plan_at(manifest, time_s)
+    pending = latest_pending_plan_at(manifest, time_s)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    def text(value: str, position: tuple[int, int], scale: float = 0.55, color=(245, 245, 245)):
+        cv2.putText(output, value, (position[0] + 2, position[1] + 2), font, scale, (10, 10, 10), 3, cv2.LINE_AA)
+        cv2.putText(output, value, position, font, scale, color, 1, cv2.LINE_AA)
+
+    text(f"Phase 4 dynamic replay   t={time_s:05.2f}s   world={snapshot.world_version}", (22, 30), 0.62)
+    text(f"active={active.plan_id if active else '-'}   latest={pending.plan_id if pending else '-'}", (22, 55))
+    legend = (
+        ("obsolete", COLOR_GRAY),
+        ("active", COLOR_BLUE),
+        ("latest", COLOR_GREEN),
+        ("prediction", COLOR_YELLOW),
+        ("rejected/collision", COLOR_RED),
+        ("handoff", COLOR_PURPLE),
+    )
+    x, y = 22, output.shape[0] - 24
+    for label, color in legend:
+        label_width = cv2.getTextSize(label, font, 0.42, 1)[0][0]
+        item_width = label_width + 48
+        if x + item_width > output.shape[1] - 20:
+            x = 22
+            y -= 25
+        box_color = _rgba_to_rgb8(color)
+        cv2.rectangle(output, (x, y - 13), (x + 16, y + 3), box_color, thickness=-1)
+        text(label, (x + 22, y + 1), 0.42)
+        x += item_width
+
+    brake = brake_event_at(manifest, time_s)
+    if brake is not None and int((time_s - brake.time_s) * 8.0) % 2 == 0:
+        cv2.rectangle(output, (5, 5), (output.shape[1] - 6, output.shape[0] - 6), (255, 0, 0), 12)
+        reason = f"  {brake.reason}" if brake.reason else ""
+        text(f"SAFETY BRAKE{reason}", (22, 88), 0.9, (255, 40, 40))
+    return output
+
+
 def _resolve_panda_joint_ids(robot, trajectory_dof: int) -> tuple[list[int] | slice, list[int]]:
     arm_joint_ids = robot.find_joints(["panda_joint.*"])[0]
     finger_joint_ids = robot.find_joints(["panda_finger_joint.*"])[0]
@@ -235,6 +561,46 @@ def _reset_robot(robot, scene: InteractiveScene, q_pos_start: torch.Tensor, join
     robot.write_joint_state_to_sim(joint_pos, joint_vel)
     robot.set_joint_position_target(joint_pos)
     scene.reset()
+
+
+def _teleport_robot(robot, q_pos: torch.Tensor, joint_ids, finger_joint_ids) -> None:
+    joint_pos = robot.data.default_joint_pos.clone()
+    joint_vel = torch.zeros_like(robot.data.default_joint_vel)
+    joint_pos[:, joint_ids] = q_pos
+    if finger_joint_ids:
+        joint_pos[:, finger_joint_ids] = 0.04
+    robot.write_joint_state_to_sim(position=joint_pos, velocity=joint_vel)
+    robot.set_joint_position_target(joint_pos)
+
+
+def _body_positions_tensor(robot):
+    body_positions = robot.data.body_pos_w
+    return body_positions.torch if hasattr(body_positions, "torch") else body_positions
+
+
+def _compute_ee_paths(
+    robot,
+    scene: InteractiveScene,
+    sim,
+    manifest: DynamicReplayManifest,
+    joint_ids,
+    finger_joint_ids,
+) -> dict[str, np.ndarray]:
+    hand_indices = robot.find_bodies("panda_hand")[0]
+    if not hand_indices:
+        raise RuntimeError("IsaacLab Panda asset has no panda_hand body")
+    hand_index = hand_indices[0]
+    result = {}
+    for plan in manifest.plans:
+        points = []
+        for q_pos_cpu in plan.trajectory.positions:
+            q_pos = torch.as_tensor(q_pos_cpu, dtype=torch.float32, device=sim.device).reshape(1, -1)
+            _teleport_robot(robot, q_pos, joint_ids, finger_joint_ids)
+            sim.forward()
+            scene.update(0.0)
+            points.append(_body_positions_tensor(robot)[0, hand_index].detach().cpu().numpy().copy())
+        result[plan.plan_id] = np.asarray(points, dtype=np.float32)
+    return result
 
 
 def _position_camera(camera: Camera, sim, env_name: str, camera_eye=None, camera_target=None):
@@ -278,7 +644,7 @@ def _write_screenshot(path: Path, frame: np.ndarray) -> None:
         raise RuntimeError(f"Could not write screenshot to {path}")
 
 
-def run_replay() -> dict[str, Any]:
+def _run_legacy_replay() -> dict[str, Any]:
     _log(f"loading payload: {args_cli.input}")
     q_trajs_pos_cpu, metadata = _load_payload(args_cli.input)
     horizon, batch, dof = q_trajs_pos_cpu.shape
@@ -382,6 +748,185 @@ def run_replay() -> dict[str, Any]:
     _log("replay complete")
     print(json.dumps(summary, indent=2), flush=True)
     return summary
+
+
+def _open_video_writer(path: Path, fps: float, width: int, height: int):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not open video writer for {path}")
+    return writer
+
+
+def _run_dynamic_replay() -> dict[str, Any]:
+    _log(f"loading dynamic replay manifest: {args_cli.manifest}")
+    manifest = load_dynamic_replay_manifest(args_cli.manifest)
+    dof = int(manifest.initial_q.shape[0])
+    _log(
+        "creating dynamic simulation: "
+        f"env={manifest.env_name}, duration={manifest.duration_s:.2f}s, "
+        f"plans={len(manifest.plans)}, dof={dof}"
+    )
+    sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 120.0, device=args_cli.device)
+    sim = sim_utils.SimulationContext(sim_cfg)
+    sim.set_camera_view([2.4, -2.4, 1.8], [0.2, 0.0, 0.45])
+
+    _log("creating scene and dynamic visualization markers")
+    scene_cfg = ReplaySceneCfg(num_envs=1, env_spacing=2.5)
+    scene = InteractiveScene(scene_cfg)
+    obstacle_summary = _spawn_scene_obstacles(manifest.static_scene)
+    markers = _create_dynamic_markers()
+    draw_interface = omni_debug_draw.acquire_debug_draw_interface()
+    sim.reset()
+
+    robot = scene["robot"]
+    sim_dt = sim.get_physics_dt()
+    joint_ids, finger_joint_ids = _resolve_panda_joint_ids(robot, dof)
+    camera, camera_eye, camera_target = _position_camera(
+        scene["replay_camera"],
+        sim,
+        manifest.env_name,
+        camera_eye=args_cli.camera_eye,
+        camera_target=args_cli.camera_target,
+    )
+
+    _log("precomputing end-effector paths for colored trajectory overlays")
+    ee_paths = _compute_ee_paths(
+        robot,
+        scene,
+        sim,
+        manifest,
+        joint_ids,
+        finger_joint_ids,
+    )
+    initial_q = torch.as_tensor(
+        manifest.initial_q,
+        dtype=torch.float32,
+        device=sim.device,
+    ).reshape(1, -1)
+    _reset_robot(robot, scene, initial_q, joint_ids, finger_joint_ids)
+    scene.write_data_to_sim()
+    sim.step(render=True)
+    scene.update(sim_dt)
+
+    frame_times = (
+        np.arange(
+            int(np.floor(manifest.duration_s * args_cli.video_fps)) + 1,
+            dtype=np.float64,
+        )
+        / args_cli.video_fps
+    )
+    video_writer = None
+    if args_cli.output_video is not None:
+        _log(f"streaming video frames to: {args_cli.output_video}")
+        video_writer = _open_video_writer(
+            args_cli.output_video,
+            args_cli.video_fps,
+            args_cli.width,
+            args_cli.height,
+        )
+
+    final_frame = None
+    peak_dynamic_objects = 0
+    peak_prediction_markers = 0
+    peak_trajectory_segments = 0
+    try:
+        for frame_index, replay_time_s in enumerate(frame_times):
+            q_pos = torch.as_tensor(
+                robot_position_at(manifest, float(replay_time_s)),
+                dtype=torch.float32,
+                device=sim.device,
+            ).reshape(1, -1)
+            _teleport_robot(robot, q_pos, joint_ids, finger_joint_ids)
+            n_objects = _update_dynamic_markers(
+                markers,
+                manifest,
+                float(replay_time_s),
+                ee_paths,
+            )
+            n_segments, n_predictions = _draw_trajectory_lines(
+                draw_interface,
+                manifest,
+                float(replay_time_s),
+                ee_paths,
+            )
+            peak_dynamic_objects = max(peak_dynamic_objects, n_objects)
+            peak_prediction_markers = max(peak_prediction_markers, n_predictions)
+            peak_trajectory_segments = max(peak_trajectory_segments, n_segments)
+
+            scene.write_data_to_sim()
+            sim.step(render=True)
+            scene.update(sim_dt)
+            frame = _capture_rgb(camera, sim_dt)
+            final_frame = _overlay_dynamic_hud(frame, manifest, float(replay_time_s))
+            if video_writer is not None:
+                video_writer.write(cv2.cvtColor(final_frame, cv2.COLOR_RGB2BGR))
+            if frame_index and frame_index % max(1, int(args_cli.video_fps * 2.0)) == 0:
+                _log(f"rendered {frame_index + 1}/{len(frame_times)} frames")
+    finally:
+        if video_writer is not None:
+            video_writer.release()
+        draw_interface.clear_lines()
+
+    if final_frame is None:
+        raise RuntimeError("Dynamic replay produced no frames")
+    if args_cli.screenshot_path is not None:
+        _log(f"writing screenshot: {args_cli.screenshot_path}")
+        _write_screenshot(args_cli.screenshot_path, final_frame)
+
+    summary = {
+        "mode": "dynamic_replay",
+        "manifest": manifest.path.as_posix(),
+        "schema": "mpd_dynamic_replay",
+        "schema_version": 1,
+        "env_name": manifest.env_name,
+        "frame_id": manifest.frame_id,
+        "robot_usd": PANDA_CFG.spawn.usd_path,
+        "duration_s": manifest.duration_s,
+        "video_fps": args_cli.video_fps,
+        "n_frames": len(frame_times),
+        "n_plans": len(manifest.plans),
+        "n_world_snapshots": len(manifest.world_snapshots),
+        "n_handoff_events": sum(event.event_type == "handoff" for event in manifest.events),
+        "n_brake_events": sum(event.event_type == "brake" for event in manifest.events),
+        "peak_dynamic_objects": peak_dynamic_objects,
+        "peak_prediction_markers": peak_prediction_markers,
+        "peak_trajectory_segments": peak_trajectory_segments,
+        "prediction_horizon_s": args_cli.prediction_horizon_s,
+        "prediction_samples": args_cli.prediction_samples,
+        "output_video": args_cli.output_video.as_posix() if args_cli.output_video else None,
+        "screenshot_path": args_cli.screenshot_path.as_posix() if args_cli.screenshot_path else None,
+        "camera_eye": camera_eye,
+        "camera_target": camera_target,
+        "colors": {
+            "obsolete": COLOR_GRAY,
+            "active": COLOR_BLUE,
+            "latest": COLOR_GREEN,
+            "prediction": COLOR_YELLOW,
+            "rejected_or_collision": COLOR_RED,
+            "handoff": COLOR_PURPLE,
+        },
+        **obstacle_summary,
+    }
+    if args_cli.output_json is not None:
+        args_cli.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args_cli.output_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    _log("dynamic replay complete")
+    print(json.dumps(summary, indent=2), flush=True)
+    return summary
+
+
+def run_replay() -> dict[str, Any]:
+    """Dispatch without changing the existing single-trajectory entry point."""
+
+    if args_cli.manifest is not None:
+        return _run_dynamic_replay()
+    return _run_legacy_replay()
 
 
 def main() -> None:

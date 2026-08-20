@@ -370,7 +370,6 @@ def _validate_runtime_config(args_inference: Any) -> None:
         "model_selection": "bspline",
         "planner_alg": "mpd",
         "diffusion_sampling_method": "ddim",
-        "env_id_replace": "EnvWarehouseExtraObjectsV00",
         "num_T_pts": 128,
         "n_trajectory_samples": 100,
     }
@@ -378,6 +377,17 @@ def _validate_runtime_config(args_inference: Any) -> None:
         actual = args_inference.get(key)
         if actual != expected:
             raise ConfigurationError(f"{key} must be {expected!r}, got {actual!r}.")
+    planning_env_id = args_inference.get("planning_env_id")
+    env_id_replace = args_inference.get("env_id_replace")
+    if planning_env_id and env_id_replace:
+        raise ConfigurationError("planning_env_id and env_id_replace cannot both be set.")
+    configured_scene_id = planning_env_id or env_id_replace
+    runtime_scene_id = _runtime_config_value(args_inference, "scene_id", None)
+    if not configured_scene_id or runtime_scene_id != configured_scene_id:
+        raise ConfigurationError(
+            "runtime.scene_id must match the explicit planning_env_id/env_id_replace "
+            f"({configured_scene_id!r}), got {runtime_scene_id!r}."
+        )
     if not math.isclose(float(args_inference.trajectory_duration), 10.0, abs_tol=1e-9):
         raise ConfigurationError(
             f"trajectory_duration must be 10.0 seconds, got {args_inference.trajectory_duration!r}."
