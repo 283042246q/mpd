@@ -1199,6 +1199,7 @@ class GenerativeOptimizationPlanner:
 
         # Get the "best" trajectory from all the valid ones
         best_trajectory_selection_details = None
+        valid_trajectory_selection_scores = None
         if valid_idxs.numel() == 0:
             control_points_best = None
             q_trajs_pos_best = None
@@ -1227,6 +1228,7 @@ class GenerativeOptimizationPlanner:
                 valid_candidate_scores = candidate_scores.index_select(
                     0, valid_idxs.reshape(-1).long()
                 )
+                valid_trajectory_selection_scores = valid_candidate_scores
                 idx_min_cost = torch.argmin(valid_candidate_scores)
                 selected_candidate_index = int(
                     valid_idxs.reshape(-1).long()[idx_min_cost].detach().cpu().item()
@@ -1316,6 +1318,7 @@ class GenerativeOptimizationPlanner:
                 for _, _, normalized_values, _, weight in active_metrics:
                     normalized_weight = weight / active_weight_sum
                     weighted_score = weighted_score + normalized_weight * normalized_values.square()
+                valid_trajectory_selection_scores = weighted_score
                 idx_min_cost = torch.argmin(weighted_score)
 
                 component_details = {}
@@ -1339,6 +1342,7 @@ class GenerativeOptimizationPlanner:
                 if not self.dataset.context_ee_goal_pose:
                     raise ValueError("lowest_ee_position_error requires context_ee_goal_pose=True.")
                 idx_min_cost = torch.argmin(ee_pose_goal_error_position_norm)
+                valid_trajectory_selection_scores = ee_pose_goal_error_position_norm
                 best_trajectory_selection_details.update(
                     selected_valid_index=int(idx_min_cost.detach().cpu().item()),
                     score=float(ee_pose_goal_error_position_norm[idx_min_cost].detach().cpu().item()),
@@ -1347,6 +1351,7 @@ class GenerativeOptimizationPlanner:
                 if not self.dataset.context_ee_goal_pose:
                     raise ValueError("lowest_ee_orientation_error requires context_ee_goal_pose=True.")
                 idx_min_cost = torch.argmin(ee_pose_goal_error_orientation_norm)
+                valid_trajectory_selection_scores = ee_pose_goal_error_orientation_norm
                 best_trajectory_selection_details.update(
                     selected_valid_index=int(idx_min_cost.detach().cpu().item()),
                     score=float(ee_pose_goal_error_orientation_norm[idx_min_cost].detach().cpu().item()),
@@ -1355,6 +1360,7 @@ class GenerativeOptimizationPlanner:
                 if self.cost_guide is None:
                     raise ValueError("lowest_weighted_cost requires an active cost guide.")
                 costs_valid, *_ = self.cost_guide(control_points_valid, return_cost=True)
+                valid_trajectory_selection_scores = costs_valid
                 idx_min_cost = torch.argmin(costs_valid)
                 best_trajectory_selection_details.update(
                     selected_valid_index=int(idx_min_cost.detach().cpu().item()),
@@ -1364,6 +1370,7 @@ class GenerativeOptimizationPlanner:
                 batch_smoothness = compute_smoothness(
                     q_trajs_pos_valid, self.planning_task.robot, trajs_acc=q_trajs_acc_valid
                 )
+                valid_trajectory_selection_scores = batch_smoothness
                 idx_min_cost = torch.argmin(batch_smoothness)
                 best_trajectory_selection_details.update(
                     selected_valid_index=int(idx_min_cost.detach().cpu().item()),
@@ -1371,6 +1378,7 @@ class GenerativeOptimizationPlanner:
                 )
             elif best_trajectory_selection == "shortest_path_length":
                 batch_path_length = compute_path_length(q_trajs_pos_valid, self.planning_task.robot)
+                valid_trajectory_selection_scores = batch_path_length
                 idx_min_cost = torch.argmin(batch_path_length)
                 best_trajectory_selection_details.update(
                     selected_valid_index=int(idx_min_cost.detach().cpu().item()),
@@ -1475,6 +1483,7 @@ class GenerativeOptimizationPlanner:
             q_trajs_pos_valid=q_trajs_pos_valid,
             q_trajs_vel_valid=q_trajs_vel_valid,
             q_trajs_acc_valid=q_trajs_acc_valid,
+            valid_trajectory_selection_scores=valid_trajectory_selection_scores,
             # best control points and trajectories
             control_points_best=control_points_best,
             q_trajs_pos_best=q_trajs_pos_best,

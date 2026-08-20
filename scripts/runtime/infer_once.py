@@ -583,6 +583,8 @@ def _validate_best_trajectory(
     results: Any,
     planning_task: Any,
     q_pos_start: Any,
+    q_vel_start: Any,
+    q_acc_start: Any,
     expected_horizon: int,
     expected_duration: float,
 ) -> dict[str, float]:
@@ -620,11 +622,23 @@ def _validate_best_trajectory(
         )
 
     start_tolerance = 1e-5
-    start_error = float(torch.amax(torch.abs(positions[0] - q_pos_start)).item())
-    if start_error > start_tolerance:
-        raise ResultValidationError(
-            f"Trajectory start differs from q_pos_start by {start_error:.6g} rad " f"(limit {start_tolerance:.6g})."
-        )
+    start_errors = {
+        "position": float(torch.amax(torch.abs(positions[0] - q_pos_start)).item()),
+        "velocity": float(torch.amax(torch.abs(velocities[0] - q_vel_start)).item()),
+        "acceleration": float(torch.amax(torch.abs(accelerations[0] - q_acc_start)).item()),
+    }
+    units = {"position": "rad", "velocity": "rad/s", "acceleration": "rad/s^2"}
+    request_fields = {
+        "position": "q_pos_start",
+        "velocity": "q_vel_start",
+        "acceleration": "q_acc_start",
+    }
+    for derivative, error in start_errors.items():
+        if error > start_tolerance:
+            raise ResultValidationError(
+                f"Trajectory start differs from {request_fields[derivative]} by {error:.6g} "
+                f"{units[derivative]} (limit {start_tolerance:.6g})."
+            )
 
     robot = planning_task.robot
     limit_tolerance = 1e-5
@@ -657,7 +671,9 @@ def _validate_best_trajectory(
         raise ResultValidationError("Best trajectory collides in the configured MPD scene.")
 
     return {
-        "start_max_abs_error_rad": start_error,
+        "start_max_abs_error_rad": start_errors["position"],
+        "start_velocity_max_abs_error_rad_s": start_errors["velocity"],
+        "start_acceleration_max_abs_error_rad_s2": start_errors["acceleration"],
         "velocity_limit_utilization": velocity_utilization,
         "acceleration_limit_utilization": acceleration_utilization,
     }
@@ -792,6 +808,8 @@ def _run_inference(
         results,
         planning_task,
         q_pos_start,
+        q_vel_start,
+        q_acc_start,
         expected_horizon=int(args_inference.num_T_pts),
         expected_duration=float(args_inference.trajectory_duration),
     )

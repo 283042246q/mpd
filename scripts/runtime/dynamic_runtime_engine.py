@@ -141,11 +141,22 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             raise DynamicWorldError("Phase-4 final DenseCheck did not evaluate every candidate")
 
         q_position = torch.as_tensor(artifacts.trajectory_arrays["positions"], **self.tensor_args)
-        poses = self.planning_task.robot.fk_collision_spheres(q_position)
-        poses = torch.stack(poses).transpose(0, 1)
+        poses = torch.stack(
+            self.planning_task.robot.fk_collision_spheres(q_position), dim=-3
+        )
         sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
+        topk_q_position = torch.as_tensor(
+            artifacts.trajectory_arrays["topk_positions"], **self.tensor_args
+        )
+        topk_poses = torch.stack(
+            self.planning_task.robot.fk_collision_spheres(topk_q_position), dim=-3
+        )
+        topk_sphere_positions = link_pos_from_link_tensor(topk_poses)[..., :3]
         artifacts.trajectory_arrays.update(
             collision_sphere_positions=to_numpy(sphere_positions, dtype=np.float64),
+            topk_collision_sphere_positions=to_numpy(
+                topk_sphere_positions, dtype=np.float64
+            ),
             collision_sphere_radii=to_numpy(
                 self.planning_task.robot.link_collision_spheres_radii,
                 dtype=np.float64,

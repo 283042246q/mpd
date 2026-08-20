@@ -12,6 +12,7 @@ from scripts.runtime.infer_once import (
     ConfigurationError,
     NoValidTrajectoryError,
     RESULT_SCHEMA_VERSION,
+    ResultValidationError,
     _canonical_json_sha256,
     _cartesian_poses_xyzw,
     _git_metadata,
@@ -224,10 +225,46 @@ class MpdRuntimeEngine:
             results,
             self.planning_task,
             q_pos_start,
+            q_vel_start,
+            q_acc_start,
             expected_horizon=int(self.args_inference.num_T_pts),
             expected_duration=float(self.args_inference.trajectory_duration),
         )
         results.metrics = PlanningMetricsCalculator(self.planning_task).compute_metrics(results)
+
+        selection_scores = results.valid_trajectory_selection_scores
+        if selection_scores is None or selection_scores.ndim != 1:
+            raise ResultValidationError("MPD did not expose one selection score per valid trajectory.")
+        if len(selection_scores) != len(results.q_trajs_pos_valid):
+            raise ResultValidationError("MPD valid trajectory scores and arrays have inconsistent lengths.")
+        if not bool(torch.isfinite(selection_scores).all().item()):
+            raise ResultValidationError("MPD valid trajectory scores contain NaN or Inf.")
+        requested_top_k = int(
+            _runtime_config_value(self.args_inference, "runtime_top_k_valid_trajectories", 8)
+        )
+        if requested_top_k <= 0:
+            raise ConfigurationError("runtime_top_k_valid_trajectories must be positive.")
+        top_k_count = min(requested_top_k, len(selection_scores))
+        top_k_order = torch.argsort(selection_scores, stable=True)[:top_k_count]
+        top_k_positions = results.q_trajs_pos_valid.index_select(0, top_k_order)
+        top_k_velocities = results.q_trajs_vel_valid.index_select(0, top_k_order)
+        top_k_accelerations = results.q_trajs_acc_valid.index_select(0, top_k_order)
+        top_k_scores = selection_scores.index_select(0, top_k_order)
+        top_k_source_indices = torch.nonzero(
+            results.valid_trajectory_mask, as_tuple=False
+        ).flatten().index_select(0, top_k_order)
+        top_k_boundary_errors = {
+            "position": torch.amax(torch.abs(top_k_positions[:, 0] - q_pos_start)),
+            "velocity": torch.amax(torch.abs(top_k_velocities[:, 0] - q_vel_start)),
+            "acceleration": torch.amax(torch.abs(top_k_accelerations[:, 0] - q_acc_start)),
+        }
+        boundary_tolerance = 1e-5
+        for derivative, error in top_k_boundary_errors.items():
+            if float(error.item()) > boundary_tolerance:
+                raise ResultValidationError(
+                    f"Top-K {derivative} start boundary error {error.item():.6g} exceeds "
+                    f"{boundary_tolerance:.6g}."
+                )
 
         metrics_best = results.metrics.trajs_best
         generated_count = int(results.q_trajs_pos_iter_0.shape[0])
@@ -304,6 +341,8 @@ class MpdRuntimeEngine:
                 "dense_bucket_capacities": results.dense_validation_bucket_capacities,
                 "dense_padding_slots": int(results.dense_validation_padding_slots),
                 "valid": valid_trajectory_count,
+                "returned_top_k": top_k_count,
+                "requested_top_k": requested_top_k,
                 "colliding": int(results.collision_trajectory_mask.sum().item()),
                 "joint_position_violations": int(results.joint_position_violation_mask.sum().item()),
                 "joint_velocity_violations": int(results.joint_velocity_violation_mask.sum().item()),
@@ -316,6 +355,14 @@ class MpdRuntimeEngine:
                 "path_length": metrics_best.path_length,
                 "smoothness": metrics_best.smoothness,
                 "terminal_cartesian_pose_xyzw": terminal_pose,
+            },
+            "top_k_trajectory_diagnostics": {
+                "selection_method": results.best_trajectory_selection_details["method"],
+                "scores": top_k_scores,
+                "source_candidate_indices": top_k_source_indices,
+                "start_position_max_abs_error_rad": top_k_boundary_errors["position"],
+                "start_velocity_max_abs_error_rad_s": top_k_boundary_errors["velocity"],
+                "start_acceleration_max_abs_error_rad_s2": top_k_boundary_errors["acceleration"],
             },
             "timing": {
                 "request_total_sec": request_elapsed_sec,
@@ -334,6 +381,11 @@ class MpdRuntimeEngine:
             "time_from_start": to_numpy(results.timesteps, dtype=np.float64),
             "joint_names": np.asarray(request["joint_names"], dtype=np.str_),
             "terminal_cartesian_pose_xyzw": to_numpy(terminal_pose, dtype=np.float64),
+            "topk_positions": to_numpy(top_k_positions, dtype=np.float64),
+            "topk_velocities": to_numpy(top_k_velocities, dtype=np.float64),
+            "topk_accelerations": to_numpy(top_k_accelerations, dtype=np.float64),
+            "topk_scores": to_numpy(top_k_scores, dtype=np.float64),
+            "topk_source_candidate_indices": to_numpy(top_k_source_indices, dtype=np.int64),
         }
         return PlanArtifacts(
             result_payload=_jsonable(result_payload),
