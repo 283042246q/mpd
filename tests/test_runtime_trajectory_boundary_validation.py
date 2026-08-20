@@ -51,6 +51,15 @@ def test_runtime_explicitly_validates_all_three_start_boundaries():
     assert validation["start_acceleration_max_abs_error_rad_s2"] == 0.0
 
 
+def test_runtime_accepts_float32_scale_boundary_noise():
+    results = _results()
+    results.q_trajs_acc_best[0, 2] = 2e-5
+
+    validation = _validate(results)
+
+    assert validation["start_acceleration_max_abs_error_rad_s2"] == pytest.approx(2e-5)
+
+
 @pytest.mark.parametrize(
     ("field", "message"),
     (

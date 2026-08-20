@@ -29,6 +29,7 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-Ro
 EXPECTED_JOINT_NAMES = tuple(f"fr3_joint{index}" for index in range(1, 8))
 EXPECTED_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 1
+START_BOUNDARY_TOLERANCE = 5e-5
 DEFAULT_REQUEST_ID = "diffusion_planner_example"
 DEFAULT_SCENE_ID = "EnvWarehouseExtraObjectsV00"
 DEFAULT_SEED = 0
@@ -621,7 +622,7 @@ def _validate_best_trajectory(
             f"Final time must be {expected_duration:.6f} seconds, got {timesteps[-1].item():.6f}."
         )
 
-    start_tolerance = 1e-5
+    start_tolerance = START_BOUNDARY_TOLERANCE
     start_errors = {
         "position": float(torch.amax(torch.abs(positions[0] - q_pos_start)).item()),
         "velocity": float(torch.amax(torch.abs(velocities[0] - q_vel_start)).item()),

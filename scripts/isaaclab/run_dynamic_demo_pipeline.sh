@@ -15,6 +15,7 @@ PROFILE="to_drawer"
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=0.5
+WORLD_SCENARIO_OVERRIDE=""
 VIDEO_FPS=24
 WIDTH=1280
 HEIGHT=720
@@ -27,6 +28,7 @@ usage() {
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 0.5)" \
+    "  --world-scenario NAME   Override the profile's dynamic-world scenario" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
@@ -40,6 +42,7 @@ while (($#)); do
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
+    --world-scenario) WORLD_SCENARIO_OVERRIDE="$2"; shift 2 ;;
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
@@ -61,6 +64,9 @@ case "$PROFILE" in
     exit 2
     ;;
 esac
+if [[ -n "$WORLD_SCENARIO_OVERRIDE" ]]; then
+  WORLD_SCENARIO="$WORLD_SCENARIO_OVERRIDE"
+fi
 
 if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="${MPD_ROOT}/scripts/inference/logs/dynamic-replay-${PROFILE}/$(date +%Y%m%d-%H%M%S)"
@@ -74,6 +80,7 @@ PLANNER_RESULTS="${OUTPUT_DIR}/planner-results"
 VIDEO_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay.mp4"
 SCREENSHOT_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-final.png"
 SUMMARY_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-summary.json"
+TIMING_SUMMARY_PATH="${OUTPUT_DIR}/${PROFILE}-replan-timing.json"
 
 for required in "$MPD_PYTHON" "$CONDA_EXECUTABLE" "${ISAACLAB_ROOT}/isaaclab.sh" "$MPD_CONFIG"; do
   if [[ ! -e "$required" ]]; then
@@ -99,13 +106,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-printf '[1/5] Exporting static scene for %s\n' "$ENV_NAME"
+printf '[1/6] Exporting static scene for %s\n' "$ENV_NAME"
 cd "$MPD_ROOT"
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   scripts/isaaclab/export_replay_static_scene.py \
   --profile "$PROFILE" --output "$STATIC_SCENE"
 
-printf '[2/5] Starting resident MPD worker (cold model load occurs once)\n'
+printf '[2/6] Starting resident MPD worker (cold model load occurs once)\n'
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$CONDA_EXECUTABLE" run --no-capture-output \
   -n mpd-splines-public python scripts/runtime/infer_dynamic_server.py \
   --socket "$SOCKET_PATH" \
@@ -133,7 +140,7 @@ if [[ "$READY" != true ]]; then
   exit 1
 fi
 
-printf '[3/5] Running fake hardware, moving obstacle, replanning, and passive trace recording\n'
+printf '[3/6] Running fake hardware, moving obstacle, replanning, and passive trace recording\n'
 cd "$AIRUNTIME_ROOT"
 if [[ "$SKIP_BUILD" != true ]]; then
   pixi run build --packages-up-to mpd_dynamic_planner_adapter \
@@ -158,13 +165,20 @@ if [[ ! -f "$MANIFEST" ]]; then
   exit 1
 fi
 
-printf '[4/5] Validating recorded manifest\n'
+printf '[4/6] Validating recorded manifest\n'
 cd "$MPD_ROOT"
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
   'from pathlib import Path; from scripts.isaaclab.dynamic_replay_timeline import load_dynamic_replay_manifest; import sys; episode = load_dynamic_replay_manifest(Path(sys.argv[1])); print(f"manifest OK: {len(episode.plans)} plans, {len(episode.world_snapshots)} worlds, {episode.duration_s:.3f}s")' \
   "$MANIFEST" | tee "${OUTPUT_DIR}/manifest-validation.log"
 
-printf '[5/5] Rendering deterministic IsaacLab replay\n'
+printf '[5/6] Checking handoff timing, command continuity, and brake events\n'
+env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+  scripts/isaaclab/summarize_replan_timing.py "$MANIFEST" \
+  --output "$TIMING_SUMMARY_PATH" \
+  --maximum-gap-s 0.05 \
+  --require-no-brake >"${OUTPUT_DIR}/replan-timing.log"
+
+printf '[6/6] Rendering deterministic IsaacLab replay\n'
 env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
   "${ISAACLAB_ROOT}/isaaclab.sh" -p scripts/isaaclab/replay_mpd_trajectory.py \
   --manifest "$MANIFEST" \
@@ -185,4 +199,5 @@ printf '%s\n' \
   "  video:    $VIDEO_PATH" \
   "  frame:    $SCREENSHOT_PATH" \
   "  summary:  $SUMMARY_PATH" \
+  "  timing:   $TIMING_SUMMARY_PATH" \
   "  logs:     $OUTPUT_DIR"

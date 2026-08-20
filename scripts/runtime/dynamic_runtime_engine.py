@@ -148,10 +148,16 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         topk_q_position = torch.as_tensor(
             artifacts.trajectory_arrays["topk_positions"], **self.tensor_args
         )
+        topk_shape = topk_q_position.shape[:2]
         topk_poses = torch.stack(
-            self.planning_task.robot.fk_collision_spheres(topk_q_position), dim=-3
+            self.planning_task.robot.fk_collision_spheres(
+                topk_q_position.reshape(-1, topk_q_position.shape[-1])
+            ),
+            dim=-3,
         )
-        topk_sphere_positions = link_pos_from_link_tensor(topk_poses)[..., :3]
+        topk_sphere_positions = link_pos_from_link_tensor(topk_poses)[..., :3].reshape(
+            *topk_shape, topk_poses.shape[-3], 3
+        )
         artifacts.trajectory_arrays.update(
             collision_sphere_positions=to_numpy(sphere_positions, dtype=np.float64),
             topk_collision_sphere_positions=to_numpy(

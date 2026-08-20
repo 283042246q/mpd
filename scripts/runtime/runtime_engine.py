@@ -13,6 +13,7 @@ from scripts.runtime.infer_once import (
     NoValidTrajectoryError,
     RESULT_SCHEMA_VERSION,
     ResultValidationError,
+    START_BOUNDARY_TOLERANCE,
     _canonical_json_sha256,
     _cartesian_poses_xyzw,
     _git_metadata,
@@ -258,7 +259,7 @@ class MpdRuntimeEngine:
             "velocity": torch.amax(torch.abs(top_k_velocities[:, 0] - q_vel_start)),
             "acceleration": torch.amax(torch.abs(top_k_accelerations[:, 0] - q_acc_start)),
         }
-        boundary_tolerance = 1e-5
+        boundary_tolerance = START_BOUNDARY_TOLERANCE
         for derivative, error in top_k_boundary_errors.items():
             if float(error.item()) > boundary_tolerance:
                 raise ResultValidationError(
