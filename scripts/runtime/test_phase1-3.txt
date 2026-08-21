@@ -1,0 +1,419 @@
+下面按终端拆分执行。建议先完成 Phase 1，再分别测试 Phase 2 和 Phase 3；Phase
+  2/3 之间要停止上一套 ROS launch。
+
+  ## 0. 清理残留进程
+
+  cd /home/eric/Projects/physical_ai_runtime
+  pixi run stop
+
+  test ! -e /tmp/mpd-runtime.sock || rm /tmp/mpd-runtime.sock
+
+  ## Phase 1：常驻 MPD worker
+
+  ### 终端 1：MPD 单元测试
+
+  cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+  conda run -n mpd-splines-public \
+    python -m pytest -q tests
+
+  预期：
+
+  109 passed
+
+  ### 终端 1：启动常驻 worker
+
+  cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+  conda run --no-capture-output -n mpd-splines-public \
+    python scripts/runtime/infer_server.py \
+    --socket /tmp/mpd-runtime.sock \
+    --output-root /tmp/mpd-runtime-results \
+    --device cuda:0
+
+  该终端保持运行。
+
+  ### 终端 2：检查 READY 和完整预热
+
+  cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+  conda run -n mpd-splines-public \
+    python scripts/runtime/infer_client.py \
+    --socket /tmp/mpd-runtime.sock \
+    health
+
+  重点检查：
+
+  {
+    "state": "READY",
+    "engine": {
+      "dense_validation": {
+        "fully_warmed": true,
+        "ranked_batch_buckets": [8, 16, 32, 64]
+      }
+    }
+  }
+
+  ### 连续发送两次请求，确认 worker 没有重启
+
+  cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+  SEQ1=$(date +%s%N)
+
+  conda run -n mpd-splines-public \
+    python scripts/runtime/infer_client.py \
+    --socket /tmp/mpd-runtime.sock \
+    plan \
+    --request tests/data/runtime_cartesian_request.json \
+    --request-seq "${SEQ1}" \
+    --world-version 0 \
+    --deadline-sec 2
+
+  SEQ2=$(date +%s%N)
+
+  conda run -n mpd-splines-public \
+    python scripts/runtime/infer_client.py \
+    --socket /tmp/mpd-runtime.sock \
+    plan \
+    --request tests/data/runtime_cartesian_request.json \
+    --request-seq "${SEQ2}" \
+    --world-version 0 \
+    --deadline-sec 2
+
+  两次响应应满足：
+
+  - status: OK
+  - engine_instance_id 完全相同
+  - elapsed_sec 通常约 0.3～0.4 秒
+  - 输出文件位于 /tmp/mpd-runtime-results/request-*
+
+  查看结果：
+
+  find /tmp/mpd-runtime-results -maxdepth 2 \
+    -type f \( -name result.json -o -name trajectory.npz \) | sort
+
+  ## Phase 2：plan-only 滚动重规划
+
+  保持 Phase 1 worker 继续运行。
+
+  ### 终端 3：构建和测试 ROS 包
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run colcon build \
+    --base-paths src/motion_planning/motion_planners/mpd_planner_adapter \
+    --symlink-install \
+    --executor sequential
+
+  pixi run bash -c '
+    source install/setup.bash
+    colcon test \
+      --packages-select mpd_planner_adapter \
+      --python-testing pytest
+    colcon test-result \
+      --test-result-base build/mpd_planner_adapter \
+      --verbose
+  '
+
+  预期：
+
+  17 tests, 0 errors, 0 failures
+
+  ### 终端 3：启动 Franka 假硬件和 plan-only replanner
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    exec ros2 launch mpd_planner_adapter \
+      replan_fake_hardware.launch.py \
+      plan_only:=true \
+      plan_rate_hz:=1.0
+  '
+
+  ### 终端 4：检查控制器
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 control list_controllers
+  '
+
+  预期包含：
+
+  fr3_arm_controller       ... active
+  joint_state_broadcaster  ... active
+
+  ### 检查滚动规划诊断
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic echo \
+      /mpd_replanner/diagnostics \
+      std_msgs/msg/String \
+      --field data \
+      --once
+  '
+
+  连续观察：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic echo \
+      /mpd_replanner/diagnostics \
+      std_msgs/msg/String \
+      --field data
+  '
+
+  正常结果应表现为：
+
+  - state: READY
+  - plan_only: true
+  - accepted 持续增长
+  - pending_count 始终不超过 1
+  - deadline_miss: 0
+  - invalid: 0
+  - worker_error: 0
+  - P99 通常小于 0.8 秒
+
+  检查规划轨迹：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic echo \
+      /mpd_replanner/planned_trajectory \
+      trajectory_msgs/msg/JointTrajectory \
+      --once
+  '
+
+  ### latest-only 测试
+
+  快速发布两个目标：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+
+    ros2 topic pub --once \
+      /mpd_replanner/joint_target \
+      sensor_msgs/msg/JointState \
+      "{name: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5,
+      fr3_joint6, fr3_joint7],
+        position: [0.1, -0.6, 0.1, -2.1, 0.1, 1.6, 0.6]}"
+
+    ros2 topic pub --once \
+      /mpd_replanner/joint_target \
+      sensor_msgs/msg/JointState \
+      "{name: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5,
+      fr3_joint6, fr3_joint7],
+        position: [0.0, -0.7, 0.0, -2.2, 0.0, 1.5, 0.7]}"
+  '
+
+  再次查看 diagnostics。目标切换压中正在运行的请求时，superseded 应增长，而不是
+  形成无界队列。
+
+  ### world-version 失效测试
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic pub --once \
+      /mpd_replanner/world_version \
+      std_msgs/msg/UInt64 \
+      "{data: 9}"
+  '
+
+  随后 diagnostics 应显示：
+
+  world_version: 9
+
+  ## Phase 3：JTC goal、轨迹拼接和安全停止
+
+  先在 Phase 2 launch 终端按 Ctrl-C，然后清理：
+
+  cd /home/eric/Projects/physical_ai_runtime
+  pixi run stop
+
+  MPD worker继续保持运行。
+
+  ### 终端 3：启动执行模式
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    exec ros2 launch mpd_planner_adapter \
+      replan_fake_hardware.launch.py \
+      plan_only:=false \
+      plan_rate_hz:=1.0
+  '
+
+  ### 终端 4：观察 goal 生命周期
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic echo \
+      /mpd_replanner/diagnostics \
+      std_msgs/msg/String \
+      --field data
+  '
+
+  重点字段：
+
+  - goal_submitted
+  - goal_accepted
+  - goal_terminal
+  - active_plan_id
+  - pending_plan_id
+  - execution_state
+  - last_goal_result_code
+  - last_goal_result_text
+  - handoff_rejected
+
+  正常可见：
+
+  execution_state: ACTIVE / SUCCEEDED
+  last_goal_result_code: 0
+  last_goal_result_text: Goal successfully reached!
+
+  fake hardware 不能正确模拟真实动力学跟踪，因此后续请求可能因以下原因被安全拒
+  绝：
+
+  handoff rejected: speed ... > 0.20 rad/s
+  handoff rejected: active-plan start drift ... > 0.10 rad
+
+  这是预期的 fail-closed 行为。
+
+  ### 检查 action ownership
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 action info \
+      /fr3_arm_controller/follow_joint_trajectory
+  '
+
+  应看到：
+
+  - 一个 action server：/fr3_arm_controller
+  - action clients 中包含 /mpd_replanner
+
+  ### owned goal safe-stop
+
+  在存在活动 goal 时执行：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 service call \
+      /mpd_replanner/safe_stop \
+      std_srvs/srv/Trigger \
+      "{}"
+  '
+
+  预期响应之一：
+
+  active JTC cancel requested
+
+  随后 diagnostics 应满足：
+
+  execution_state: CANCELED
+  active_plan_id: null
+  pending_plan_id: null
+  has_target: false
+  pending_count: 0
+
+  ### 独立安全停止测试
+
+  重新启动执行模式并等待出现 active goal，然后调用：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 service call \
+      /mpd_jtc_safe_stop/stop \
+      std_srvs/srv/Trigger \
+      "{}"
+  '
+
+  预期：
+
+  success=True
+  message='JTC cancel-all request dispatched'
+
+  确认急停锁存：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+    ros2 topic echo \
+      /mpd/emergency_stop \
+      std_msgs/msg/Bool \
+      --qos-reliability reliable \
+      --qos-durability transient_local \
+      --once
+  '
+
+  预期：
+
+  data: true
+
+  间隔两秒读取两次 diagnostics：
+
+  cd /home/eric/Projects/physical_ai_runtime
+
+  pixi run bash -c '
+    source install/setup.bash
+
+    ros2 topic echo /mpd_replanner/diagnostics \
+      std_msgs/msg/String --field data --once
+
+    sleep 2
+
+    ros2 topic echo /mpd_replanner/diagnostics \
+      std_msgs/msg/String --field data --once
+  '
+
+  两次应保持：
+
+  - has_target: false
+  - pending_count: 0
+  - active_plan_id: null
+  - submitted 不再增长
+
+  ## 最终关闭
+
+  关闭 ROS：
+
+  cd /home/eric/Projects/physical_ai_runtime
+  pixi run stop
+
+  关闭 MPD worker：
+
+  cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+  conda run -n mpd-splines-public \
+    python scripts/runtime/infer_client.py \
+    --socket /tmp/mpd-runtime.sock \
+    shutdown
+
+  确认清理完成：
+
+  test ! -e /tmp/mpd-runtime.sock && echo "MPD worker stopped"
+  pgrep -af 'infer_server.py|mpd_replanner|mpd_jtc_safe_stop' || true
+
