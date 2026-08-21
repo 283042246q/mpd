@@ -20,6 +20,7 @@ VIDEO_FPS=24
 WIDTH=1280
 HEIGHT=720
 SKIP_BUILD=false
+REQUIRE_NO_BRAKE=true
 
 usage() {
   printf '%s\n' \
@@ -32,6 +33,7 @@ usage() {
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
+    "  --allow-brake           Accept recorded safety braking and still render replay" \
     "  --skip-build            Reuse the existing ROS install tree" \
     "  -h, --help              Show this help"
 }
@@ -46,6 +48,7 @@ while (($#)); do
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
+    --allow-brake) REQUIRE_NO_BRAKE=false; shift ;;
     --skip-build) SKIP_BUILD=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -148,7 +151,17 @@ if [[ "$SKIP_BUILD" != true ]]; then
 fi
 set +e
 timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
-  pixi run bash -lc "source install/setup.bash && exec ros2 launch mpd_dynamic_planner_adapter replan_dynamic_fake_hardware.launch.py plan_only:=false plan_rate_hz:=${PLAN_RATE_HZ} world_scenario:=${WORLD_SCENARIO} scene_id:=${ENV_NAME} socket_path:=${SOCKET_PATH} replay_record_dir:=${RECORD_DIR} replay_env_name:=${ENV_NAME} replay_static_scene_json:=${STATIC_SCENE} target_pose_xyzw:=${TARGET_POSE}" \
+  pixi run bash -lc 'source install/setup.bash && exec "$@"' bash \
+  ros2 launch mpd_dynamic_planner_adapter replan_dynamic_fake_hardware.launch.py \
+  plan_only:=false \
+  "plan_rate_hz:=${PLAN_RATE_HZ}" \
+  "world_scenario:=${WORLD_SCENARIO}" \
+  "scene_id:=${ENV_NAME}" \
+  "socket_path:=${SOCKET_PATH}" \
+  "replay_record_dir:=${RECORD_DIR}" \
+  "replay_env_name:=${ENV_NAME}" \
+  "replay_static_scene_json:=${STATIC_SCENE}" \
+  "target_pose_xyzw:=${TARGET_POSE}" \
   >"${OUTPUT_DIR}/ros-replan.log" 2>&1
 ROS_STATUS=$?
 set -e
@@ -172,11 +185,26 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
   "$MANIFEST" | tee "${OUTPUT_DIR}/manifest-validation.log"
 
 printf '[5/6] Checking handoff timing, command continuity, and brake events\n'
-env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+TIMING_ARGS=(
+  --output "$TIMING_SUMMARY_PATH"
+  --maximum-gap-s 0.05
+)
+if [[ "$REQUIRE_NO_BRAKE" == true ]]; then
+  TIMING_ARGS+=(--require-no-brake)
+fi
+if ! env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   scripts/isaaclab/summarize_replan_timing.py "$MANIFEST" \
-  --output "$TIMING_SUMMARY_PATH" \
-  --maximum-gap-s 0.05 \
-  --require-no-brake >"${OUTPUT_DIR}/replan-timing.log"
+  "${TIMING_ARGS[@]}" | tee "${OUTPUT_DIR}/replan-timing.log"; then
+  if [[ "$REQUIRE_NO_BRAKE" == true ]]; then
+    printf '%s\n' \
+      'Timing validation rejected the episode. If a safety brake is expected,' \
+      'rerun with --allow-brake to retain continuity checks and render it.' >&2
+  else
+    printf 'Timing validation failed; see %s\n' \
+      "${OUTPUT_DIR}/replan-timing.log" >&2
+  fi
+  exit 1
+fi
 
 printf '[6/6] Rendering deterministic IsaacLab replay\n'
 env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
