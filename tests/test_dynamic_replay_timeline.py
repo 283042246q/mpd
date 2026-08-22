@@ -125,6 +125,30 @@ def test_manifest_reads_deduplicated_trajectory_schema_v2(tmp_path):
     assert manifest.plans[1].trajectory.positions[0].tolist() == [10.0] * 7
 
 
+def test_manifest_reads_candidate_specific_trajectory_schema_v3(tmp_path):
+    path = _manifest(tmp_path)
+    np.savez(
+        tmp_path / "new.npz",
+        artifact_schema_version=np.asarray(3, dtype=np.int64),
+        timing_schema_version=np.asarray(1, dtype=np.int64),
+        best_trajectory_topk_index=np.asarray(1, dtype=np.int64),
+        topk_positions=np.asarray(
+            [
+                [[30.0] * 7, [31.0] * 7, [32.0] * 7],
+                [[10.0] * 7, [11.0] * 7, [12.0] * 7],
+            ]
+        ),
+        topk_time_from_start=np.asarray(
+            [[0.0, 0.5, 1.0], [0.0, 1.5, 4.0]], dtype=np.float64
+        ),
+        # Schema v3 readers must use the selected candidate's top-K time.
+        time_from_start=np.asarray([0.0, 0.1, 0.2]),
+    )
+    manifest = load_dynamic_replay_manifest(path)
+    assert manifest.plans[1].trajectory.positions[0].tolist() == [10.0] * 7
+    assert manifest.plans[1].trajectory.times_s.tolist() == [0.0, 1.5, 4.0]
+
+
 def test_robot_command_is_interpolated_across_handoff(tmp_path):
     manifest = load_dynamic_replay_manifest(_manifest(tmp_path))
     assert robot_position_at(manifest, 1.0) == pytest.approx([0.5] * 7)

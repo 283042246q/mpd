@@ -243,3 +243,104 @@ def test_grouped_fused_minimum_matches_materialized_object_reduction():
     actual_distance, actual_gradient = optimized.minimum_signed_distance_and_gradient(points)
     assert torch.allclose(actual_distance, expected_distance)
     assert torch.allclose(actual_gradient, expected_gradient)
+
+
+def test_candidate_specific_times_change_collision_for_same_spatial_path():
+    world = FixedCapacityDynamicWorld(
+        1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    world.update(
+        _world(
+            [
+                _sphere(
+                    linear_velocity=[1.0, 0.0, 0.0],
+                    inflation={"mode": "linear"},
+                )
+            ]
+        )
+    )
+    world.set_plan_start(1_000_000_000, world_version=1)
+    points = torch.tensor(
+        [
+            [[[0.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]],
+            [[[0.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]],
+        ],
+        **TENSOR_ARGS,
+    )
+    trajectory_times = torch.tensor(
+        [[0.0, 1.0, 2.0], [0.0, 0.5, 1.0]], **TENSOR_ARGS
+    )
+
+    distances, _ = world.signed_distances_and_gradients(
+        points, trajectory_times=trajectory_times
+    )
+
+    assert distances[0, :, 0, 0].tolist() == pytest.approx([-0.2, -0.2, -0.2])
+    assert distances[1, :, 0, 0].tolist() == pytest.approx([-0.2, 0.3, 0.8])
+
+
+def test_candidate_time_gradient_matches_central_difference():
+    world = FixedCapacityDynamicWorld(
+        1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    world.update(
+        _world(
+            [
+                _sphere(
+                    linear_velocity=[0.5, 0.0, 0.0],
+                    inflation={"mode": "linear", "horizon_rate_m_s": 0.1},
+                )
+            ]
+        )
+    )
+    world.set_plan_start(1_000_000_000, world_version=1)
+    points = torch.tensor(
+        [[[[1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]]]],
+        **TENSOR_ARGS,
+    )
+    trajectory_times = torch.tensor(
+        [[0.0, 0.6, 1.2]], **TENSOR_ARGS, requires_grad=True
+    )
+    distance, _ = world.signed_distances_and_gradients(
+        points, trajectory_times=trajectory_times
+    )
+    gradient = torch.autograd.grad(distance[0, 1, 0, 0], trajectory_times)[0][0, 1]
+
+    epsilon = 1e-5
+    plus = trajectory_times.detach().clone()
+    minus = trajectory_times.detach().clone()
+    plus[0, 1] += epsilon
+    minus[0, 1] -= epsilon
+    plus_distance = world.signed_distances_and_gradients(
+        points, trajectory_times=plus
+    )[0][0, 1, 0, 0]
+    minus_distance = world.signed_distances_and_gradients(
+        points, trajectory_times=minus
+    )[0][0, 1, 0, 0]
+    finite_difference = (plus_distance - minus_distance) / (2.0 * epsilon)
+    assert gradient.item() == pytest.approx(finite_difference.item(), rel=1e-8, abs=1e-8)
+    assert gradient.item() == pytest.approx(-0.6)
+
+
+def test_candidate_specific_times_fail_closed_on_invalid_contract():
+    world = FixedCapacityDynamicWorld(
+        1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    world.update(_world([_sphere()], valid_until=3_000_000_000))
+    world.set_plan_start(1_000_000_000, world_version=1)
+    points = torch.zeros((1, 3, 1, 3), **TENSOR_ARGS)
+
+    with pytest.raises(ValueError, match="shape"):
+        world.signed_distances_and_gradients(
+            points, trajectory_times=torch.zeros((2, 3), **TENSOR_ARGS)
+        )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        world.signed_distances_and_gradients(
+            points,
+            trajectory_times=torch.tensor([[0.0, 1.0, 1.0]], **TENSOR_ARGS),
+        )
+    with pytest.raises(DynamicWorldError, match="prediction validity"):
+        world.signed_distances_and_gradients(
+            points,
+            trajectory_times=torch.tensor([[0.0, 1.0, 2.1]], **TENSOR_ARGS),
+        )

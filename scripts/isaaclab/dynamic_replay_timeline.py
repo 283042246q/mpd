@@ -134,14 +134,15 @@ def _load_trajectory(path: Path) -> TrajectoryData:
     try:
         with np.load(path, allow_pickle=False) as data:
             if "positions" in data:
+                schema_version = 1
                 positions = np.asarray(data["positions"], dtype=np.float64)
             else:
                 schema_version = int(
                     np.asarray(data["artifact_schema_version"]).item()
                 )
-                if schema_version != 2:
+                if schema_version not in (2, 3):
                     raise DynamicReplayError(
-                        f"{path}: omitted positions require trajectory schema v2"
+                        f"{path}: omitted positions require trajectory schema v2 or v3"
                     )
                 best_index = int(
                     np.asarray(data["best_trajectory_topk_index"]).item()
@@ -152,7 +153,22 @@ def _load_trajectory(path: Path) -> TrajectoryData:
                         f"{path}: best trajectory top-K index is out of range"
                     )
                 positions = topk_positions[best_index]
-            times_s = np.asarray(data["time_from_start"], dtype=np.float64)
+            if schema_version == 3:
+                timing_schema_version = int(
+                    np.asarray(data["timing_schema_version"]).item()
+                )
+                if timing_schema_version != 1:
+                    raise DynamicReplayError(
+                        f"{path}: unsupported timing schema {timing_schema_version}"
+                    )
+                topk_times = np.asarray(data["topk_time_from_start"], dtype=np.float64)
+                if topk_times.shape[:1] != topk_positions.shape[:1]:
+                    raise DynamicReplayError(
+                        f"{path}: candidate positions and time arrays are inconsistent"
+                    )
+                times_s = topk_times[best_index]
+            else:
+                times_s = np.asarray(data["time_from_start"], dtype=np.float64)
     except DynamicReplayError:
         raise
     except (OSError, KeyError, ValueError) as error:
