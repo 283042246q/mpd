@@ -3,6 +3,7 @@ import zipfile
 import numpy as np
 
 from scripts.runtime.infer_dynamic_server import _build_parser
+from scripts.runtime.infer_space_time_server import _build_parser as _build_space_time_parser
 from scripts.runtime.infer_once import _atomic_write_npz
 
 
@@ -49,3 +50,24 @@ def test_dynamic_artifact_optimizations_are_independently_switchable():
     assert args.trajectory_compression == "zlib"
     assert not args.collision_spheres_float32
     assert not args.deduplicate_best_trajectory
+
+
+def test_phase5_server_has_separate_mode_and_timing_bounds():
+    parser = _build_space_time_parser()
+    args = parser.parse_args(
+        [
+            "--socket",
+            "/tmp/phase5.sock",
+            "--output-root",
+            "/tmp/phase5-output",
+            "--timing-mode",
+            "phase5_timing_only",
+            "--duration-min",
+            "7.0",
+            "--duration-max",
+            "13.0",
+        ]
+    )
+    assert args.timing_mode == "phase5_timing_only"
+    assert args.duration_min == 7.0
+    assert args.duration_max == 13.0

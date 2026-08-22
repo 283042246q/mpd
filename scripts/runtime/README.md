@@ -109,6 +109,25 @@ horizon，否则请求 fail closed：
 }
 ```
 
+## Phase 5 独立 Space-Time 入口
+
+Phase 4 的 `infer_dynamic_server.py` 和 fixed-timing socket 保持不变。Phase 5
+使用独立入口，并通过 `--timing-mode` 选择 scalar、time-only 或 joint 消融：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/runtime/infer_space_time_server.py \
+  --socket /tmp/mpd-space-time-runtime.sock \
+  --output-root /tmp/mpd-space-time-results \
+  --device cuda:0 \
+  --timing-mode phase5_joint
+```
+
+该入口返回 trajectory artifact schema v3；`topk_time_from_start[K,H]` 是每个
+候选的真实时间数组，`timing_schema_version=1`。旧 schema v2 reader 不应把
+变时长轨迹当作共享 10 s 轨迹。Phase 5 worker 首版关闭依赖共享时间表的
+cache/pruning，最终候选仍必须由下游 latest-world revalidation 复验。
+
 ## 单次推理接口
 
 本文说明 `scripts/runtime/infer_once.py` 的用途、输入输出位置、数据格式、调用方式和内部运行流程。

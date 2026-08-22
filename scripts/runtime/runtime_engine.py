@@ -214,6 +214,10 @@ class MpdRuntimeEngine:
             results_ns=DotMap(t_generator=0.0, t_guide=0.0),
             debug=False,
         )
+        # Phase-5 keeps the planner result device-resident long enough for its
+        # separate runtime subclass to attach candidate-specific timing.  The
+        # Phase-3/4 artifact path below is unchanged.
+        self._last_plan_results = results
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         request_elapsed_sec = time.perf_counter() - request_started
