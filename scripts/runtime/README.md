@@ -128,6 +128,24 @@ conda run --no-capture-output -n mpd-splines-public \
 变时长轨迹当作共享 10 s 轨迹。Phase 5 worker 首版关闭依赖共享时间表的
 cache/pruning，最终候选仍必须由下游 latest-world revalidation 复验。
 
+不需要 socket/ROS 的单进程入口位于 `scripts/inference/infer_space_time.py`。
+它一次加载模型，可用 `--repeats` 连续运行同一请求；省略 `--world` 时只使用
+配置中的静态场景，提供 `--world` 时加载一份动态世界快照：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/infer_space_time.py \
+  --request tests/data/runtime_cartesian_request.json \
+  --output-dir /tmp/mpd-phase5-standalone \
+  --device cuda:0 \
+  --timing-mode phase5_joint \
+  --repeats 1
+```
+
+输出包含每次运行的 `run-NNNN/result.json + trajectory.npz`，以及带耗时、
+duration、clearance 和有效候选统计的 `summary.json`。`--seed-step 0` 进行固定
+seed 重复；设置非零值可生成确定的 seed 序列。
+
 ## 单次推理接口
 
 本文说明 `scripts/runtime/infer_once.py` 的用途、输入输出位置、数据格式、调用方式和内部运行流程。
