@@ -1,0 +1,1991 @@
+项目交接摘要：Real-Time / Space-Time MPD + CDSG + World Model
+1. 当前总体研究方向
+
+项目从原始 Motion Planning Diffusion (MPD) 出发，目标是发展成面向真实动态环境、可实时执行的规划系统。
+
+路线经过讨论后已经逐渐从：
+
+Global MPD + Local Planner + CDSG + 异步重规划
+
+转向更统一的单 planner 方案：
+
+Space-Time MPD+Timing B-spline+CDSG+未来可选 World Model
+	​
+
+
+当前倾向不把两级 Local/Global Planner 作为主论文结构。
+
+核心变量：
+
+X=(P,c)
+
+其中：
+
+P：原 MPD 的空间 B-spline control points；
+c：新增 timing B-spline control coefficients；
+P 决定“去哪”；
+c 决定“什么时候到”。
+
+目标是让 diffusion 中的 Cost Guidance 同时产生：
+
+∇
+P
+	​
+
+C
+
+和：
+
+∇
+c
+	​
+
+C.
+2. 原始 MPD 基础
+
+空间轨迹：
+
+q(s;P)=
+i
+∑
+	​
+
+N
+i
+	​
+
+(s)P
+i
+	​
+
+,s∈[0,1].
+
+原始 MPD：
+
+diffusion state 主要是 B-spline CP；
+DDIM 生成多条候选轨迹；
+inference-time Cost Guidance 修正候选；
+原方案固定 trajectory duration；
+当前完整 inference 实测 steady-state 大约 3–4 Hz；
+dense final validation warm-up 后并不是主要瓶颈；
+Cost Guide/FK/SDF/Jacobian 才是主要优化对象。
+
+之前 Gradient Pruning 实验已经得到的重要结论：
+
+单纯数学 sparsity 不等于 GPU 加速；
+dynamic selector / nonzero / bucket / dynamic shape 很容易抵消省掉的计算；
+link sparse 是最有效的一个方向；
+CP-local-support 本身 scatter/mapping 占比很低，直接 sparse CP mapping 几乎没有收益；
+真正值得优化的是在 FK/Jacobian/SDF 之前排除不相关计算；
+因此后续 CDSG 应尽量产生 固定 shared tensor shape，避免 candidate-specific runtime masks。
+3. 两级 planner 路线曾讨论过，但目前不是主方向
+
+曾设计：
+
+Local deterministic repair→Warm MPD→Cold MPD.
+
+Global MPD 推理过程中机器人继续运动的问题，提出过：
+
+future handoff state；
+committed prefix；
+safe-stop handoff；
+moving handoff；
+B-spline hard boundary/null-space constraint；
+handoff tube。
+
+Warm restart 方面确认：
+
+旧轨迹、candidate、noise 不是三选一：
+
+clean trajectory 决定从哪个 solution mode 附近开始；
+forward re-noise level 决定允许离旧解探索多远。
+
+形式：
+
+P
+k
+	​
+
+=
+α
+ˉ
+k
+	​
+
+	​
+
+P
+seed
+	​
+
++
+1−
+α
+ˉ
+k
+	​
+
+	​
+
+ϵ.
+
+可构造：
+
+当前 local/repaired tail；
+old global tail；
+previous diverse elite trajectories；
+cold Gaussian candidates。
+
+但如果最终走单层 Space-Time MPD，这部分更多作为 Real-Time MPD / Warm MPD baseline，不再是论文主结构。
+
+4. 当前核心：Timing B-spline / Space-Time MPD
+
+建议 timing 参数化：
+
+z(s)=B
+T
+	​
+
+(s)c
+r(s)=
+dt
+ds
+	​
+
+=r
+min
+	​
+
++softplus(z(s))
+	​
+
+
+从而保证：
+
+r(s)>0.
+
+真实到达时间：
+
+t(s)=t
+0
+	​
+
++∫
+0
+s
+	​
+
+r(ξ)
+1
+	​
+
+dξ
+	​
+
+
+如果考虑 sensing/planning latency：
+
+t
+abs
+	​
+
+(s)=t
+sense
+	​
+
++L
+plan
+	​
+
++∫
+0
+s
+	​
+
+r(ξ)
+1
+	​
+
+dξ.
+
+动力学：
+
+q
+˙
+	​
+
+=q
+s
+	​
+
+r
+	​
+
+q
+¨
+	​
+
+=q
+ss
+	​
+
+r
+2
++q
+s
+	​
+
+r
+s
+	​
+
+r
+	​
+
+
+因此 timing spline 不能只满足 collision，还必须考虑：
+
+∣
+q
+˙
+	​
+
+j
+	​
+
+∣≤v
+j,max
+	​
+
+
+和：
+
+∣
+q
+¨
+	​
+
+j
+	​
+
+∣≤a
+j,max
+	​
+
+.
+
+重要确认：
+
+增加 timing spline 的 knot/CP 密度不会增加空间关节轨迹的 span。
+
+它只增加 r(s) 的局部时间表达能力。
+
+如果狭窄区域需要更复杂的 joint geometry，应增加/调整 spatial spline 表达；如果空间路径已经能过，只是“什么时候过”不对，应优先改 timing。
+
+5. Feasible corridor 的当前定义
+
+“时间窗口”不是现实传感器直接给出的 [a,b]。
+
+对某条 spatial candidate P
+b
+	​
+
+：
+
+q
+b
+	​
+
+(s)=q(s;P
+b
+	​
+
+)
+
+定义动态障碍：
+
+O(t).
+
+signed clearance：
+
+h
+b
+	​
+
+(s,t)=d(G(q
+b
+	​
+
+(s)),O(t))−m.
+
+safe-time set：
+
+T
+b
+	​
+
+(s)={t:h
+b
+	​
+
+(s,t)≥0}.
+	​
+
+
+一般是多个 disconnected intervals：
+
+T
+b
+	​
+
+(s)=
+m
+⋃
+	​
+
+[a
+b,m
+	​
+
+(s),b
+b,m
+	​
+
+(s)].
+
+因此：
+
+每条 MPD spatial candidate 因为空间路径不同，都有自己的 feasible corridors。
+
+不能整个 batch 共用同一个 [a,b]。
+
+这一概念与：
+
+SIPP；
+Safe Interval Motion Planning；
+SI-RRT；
+ST-RRT*；
+Temporal Safe Corridors；
+
+有直接相关性。
+
+创新不能写成“首次提出时间安全窗口”。
+
+更适合描述为：
+
+Path-Conditioned Phase-Time Feasible Set
+	​
+
+
+因为 corridor 是当前 diffusion spatial trajectory P 的函数。
+
+6. 一个 danger region 到底用哪个时间 t
+
+不能默认取中心 phase，也不能默认取 [a,b] 中点。
+
+如果是理想的零厚度 crossing event：
+
+找到：
+
+s
+∗
+
+使机器人经过对应 crossing surface，然后：
+
+t
+arrival
+	​
+
+=t(s
+∗
+).
+
+检查：
+
+a≤t(s
+∗
+)≤b.
+
+但真实机械臂有体积，通常 danger region 是：
+
+s∈[s
+in
+	​
+
+,s
+out
+	​
+
+].
+
+那么应该计算：
+
+t
+in
+	​
+
+=t(s
+in
+	​
+
+),t
+out
+	​
+
+=t(s
+out
+	​
+
+).
+
+简单统一开启窗口要求：
+
+t
+in
+	​
+
+≥a,t
+out
+	​
+
+≤b.
+
+更一般应该逐 phase：
+
+a(s
+k
+	​
+
+)≤t(s
+k
+	​
+
+)≤b(s
+k
+	​
+
+)
+	​
+
+
+而不是只检查 center。
+
+7. Corridor Cost 与普通 Dynamic Collision Cost 应同时存在
+
+对 candidate b：
+
+C
+b
+	​
+
+=λ
+dyn
+	​
+
+C
+dyn
+	​
+
++λ
+cor
+	​
+
+C
+cor
+	​
+
++λ
+static
+	​
+
+C
+static
+	​
+
++λ
+v
+	​
+
+C
+v
+	​
+
++λ
+a
+	​
+
+C
+a
+	​
+
++λ
+s
+	​
+
+C
+smooth
+	​
+
++λ
+T
+	​
+
+C
+T
+	​
+
+.
+
+其中：
+
+Dynamic SDF cost
+C
+dyn
+	​
+
+=
+k
+∑
+	​
+
+ϕ(m−d(G(q
+b
+	​
+
+(s
+k
+	​
+
+)),O(t
+b
+	​
+
+(s
+k
+	​
+
+)))).
+
+负责：
+
+当前空间+时间组合的细粒度 clearance。
+
+Corridor cost
+
+如果选定 temporal mode：
+
+[a
+k
+	​
+
+,b
+k
+	​
+
+]
+
+可以：
+
+C
+cor,k
+	​
+
+=ψ(a
+k
+	​
+
+−t
+k
+	​
+
+)+ψ(t
+k
+	​
+
+−b
+k
+	​
+
+).
+
+时间梯度：
+
+∂t
+k
+	​
+
+∂C
+cor,k
+	​
+
+	​
+
+=−ψ
+′
+(a
+k
+	​
+
+−t
+k
+	​
+
+)+ψ
+′
+(t
+k
+	​
+
+−b
+k
+	​
+
+)
+	​
+
+
+物理意义：
+
+太早 → t 应增大 → 减速/等待；
+太晚 → t 应减小 → 加速。
+8. Corridor 如何反传到 timing spline
+
+有：
+
+t(s;c)=∫
+0
+s
+	​
+
+r(ξ;c)
+1
+	​
+
+dξ.
+
+而：
+
+r=r
+min
+	​
+
++softplus(B
+T
+	​
+
+c).
+
+因此：
+
+∂c
+j
+	​
+
+∂t(s)
+	​
+
+=−∫
+0
+s
+	​
+
+r(ξ)
+2
+σ(z(ξ))R
+j
+	​
+
+(ξ)
+	​
+
+dξ
+	​
+
+
+于是：
+
+∂c
+j
+	​
+
+∂C
+cor
+	​
+
+	​
+
+=
+k
+∑
+	​
+
+∂t
+k
+	​
+
+∂C
+cor,k
+	​
+
+	​
+
+∂c
+j
+	​
+
+∂t
+k
+	​
+
+	​
+
+.
+	​
+
+
+实现时不需要手动构造 Jacobian。
+
+GPU上：
+
+z = B_T @ c
+r = r_min + softplus(z)
+inv_r = 1.0 / r
+dt = trapezoidal_integral(inv_r, ds)
+t = cumsum(dt)
+loss = corridor_cost(t, a, b)
+loss.backward()
+
+即可自动得到：
+
+∇
+c
+	​
+
+C.
+9. Timing spline 有一个重要结构
+
+Spatial B-spline：
+
+P
+j
+	​
+
+
+只影响局部 phase support。
+
+Timing spline虽然：
+
+c
+j
+	​
+
+
+只局部影响：
+
+r(s),
+
+但：
+
+t(s)=∫
+0
+s
+	​
+
+1/r
+
+是累计量。
+
+因此早期 timing CP 会影响后续所有 arrival times。
+
+所以：
+
+spatial Jacobian：banded/local；
+temporal Jacobian：causal/lower-triangular。
+
+这是未来 Space-Time CDSG 很值得利用的结构。
+
+10. 多个危险区域与多个时间窗口
+
+如果 candidate b 经过：
+
+R
+1
+	​
+
+,…,R
+R
+	​
+
+
+每个 region 有：
+
+I
+r,m
+	​
+
+=[a
+r,m
+	​
+
+,b
+r,m
+	​
+
+].
+
+完整 temporal mode 是：
+
+M
+b
+	​
+
+=(m
+1
+	​
+
+,m
+2
+	​
+
+,…,m
+R
+	​
+
+).
+	​
+
+
+不能每个 region 各自独立选择最近 window，因为可能产生时间顺序/动力学不可能的组合。
+
+建议构造 temporal interval graph：
+
+node = danger region 的一个 safe interval；
+edge = 两个 consecutive windows 在动力学上可以连续达到。
+
+粗略 edge feasibility：
+
+[a
+r,m
+	​
+
++ΔT
+min
+	​
+
+,b
+r,m
+	​
+
++ΔT
+max
+	​
+
+]∩[a
+r+1,n
+	​
+
+,b
+r+1,n
+	​
+
+]
+
+=∅.
+
+更严格可以用 TOPP/TOPP-RA reachable sets。
+
+11. 当前尚未解决、正要继续研究的问题
+
+这是最新问题，还没有最终结论：
+
+对每条不同的 spatial MPD candidate，是否需要各自生成 Top-K temporal corridor sequences？
+
+如果每条 spatial candidate 都枚举多个时间 mode，会导致：
+
+N
+spatial
+	​
+
+×N
+temporal
+	​
+
+
+candidate explosion。
+
+有没有更优雅的方法在 joint diffusion 中保留 space × time diversity？
+
+需要下一步重点检索/分析：
+
+方案候选 A：每 spatial candidate Top-K temporal modes
+
+最直接：
+
+P
+b
+	​
+
+→{M
+b,1
+	​
+
+,M
+b,2
+	​
+
+,...,M
+b,K
+	​
+
+}.
+
+优点：
+
+清晰；
+保证 temporal diversity。
+
+缺点：
+
+candidate 数量膨胀；
+每条空间轨迹 corridor extraction 不同；
+GPU batch 不规则。
+方案候选 B：Joint diffusion 直接生成 (P,c)
+
+让：
+
+X=(P,c)
+
+本身保持 space-time multimodality。
+
+Late-stage 根据：
+
+(
+P
+^
+0
+	​
+
+,
+c
+^
+0
+	​
+
+)
+
+只做 nearest feasible corridor / mode assignment。
+
+这可能更优雅：
+
+diffusion负责探索 mode→corridor只负责 late projection/refinement
+	​
+
+
+而不是 corridor graph 主动复制 candidates。
+
+这是目前最值得继续深入的方向。
+
+方案候选 C：Discrete temporal latent / mode token
+
+可能将：
+
+m
+
+作为一个低维离散 latent，与连续 timing spline c 分开。
+
+需要检索：
+
+multimodal trajectory diffusion；
+mixture diffusion；
+discrete-continuous diffusion；
+multi-hypothesis timing；
+safe-interval multimodal planning；
+topological trajectory diversity。
+方案候选 D：Batch-level mode allocation
+
+不让每条 spatial candidate 都有 K 个时间模式。
+
+而是整个 100-candidate population 自动分配：
+
+部分 candidate → window mode A
+部分 candidate → window mode B
+部分 candidate → window mode C
+
+保持总 batch：
+
+B=100
+
+不增长。
+
+这可能最适合 MPD/GPU。
+
+12. Trust Region / CDSG：重要修正
+
+此前曾考虑：
+
+∥ΔP
+i
+	​
+
+∥≤ρ
+i
+	​
+
+.
+
+如果有 local planner，人为 trust region 还有明确含义。
+
+但是现在如果不做 local planner：
+
+不能用最大关节 velocity 推导 trust region。
+
+用户已经实测：
+
+基于最大 joint velocity 得到的 region 极大；
+几乎所有 obstacle/link 都仍可能 active；
+CDSG 基本没作用。
+
+这符合理论，因为：
+
+v
+max
+	​
+
+
+描述的是 physical feasibility，而不是：
+
+剩余几个 DDIM steps 最终轨迹实际会改变多少。
+
+13. 当前更合理的 CDSG Envelope
+
+推荐不首先叫 Trust Region，而是：
+
+Posterior Refinement Envelope
+	​
+
+
+或：
+
+Remaining-Denoising Envelope.
+	​
+
+
+离线统计：
+
+D
+n
+	​
+
+=∥
+X
+^
+0
+(n)
+	​
+
+−X
+0
+final
+	​
+
+∥.
+
+对每 timestep：
+
+ρ
+diff
+	​
+
+(n)=Q
+0.99/0.999
+	​
+
+(D
+n
+	​
+
+).
+	​
+
+
+甚至分别统计：
+
+ρ
+P,i
+	​
+
+(n),ρ
+c,j
+	​
+
+(n).
+
+或 covariance：
+
+Σ
+n
+	​
+
+=Cov[X
+0
+final
+	​
+
+−
+X
+^
+0
+(n)
+	​
+
+].
+
+得到 statistical ellipsoid：
+
+ΔX
+T
+Σ
+n
+−1
+	​
+
+ΔX≤χ
+α
+2
+	​
+
+.
+
+注意：
+
+如果不强制 trajectory 留在里面，它不是严格的 Trust Region，只是 statistical envelope。
+
+14. CDSG robust pruning
+
+定义 dynamic constraint：
+
+ϕ
+e
+	​
+
+(P,c)=d(G
+l
+	​
+
+(q(s;P)),O
+j
+	​
+
+(t(s;c)))−m.
+
+在 reference：
+
+X
+ˉ
+=(
+P
+ˉ
+,
+c
+ˉ
+)
+
+处：
+
+ϕ
+ˉ
+	​
+
+e
+	​
+
+=ϕ
+e
+	​
+
+(
+X
+ˉ
+).
+
+梯度：
+
+g
+e
+	​
+
+=∇
+X
+	​
+
+ϕ
+e
+	​
+
+.
+
+如果 envelope 是 ellipsoid：
+
+ΔX
+T
+MΔX≤1,
+
+则最坏一阶变化：
+
+ming
+e
+T
+	​
+
+ΔX=−
+g
+e
+T
+	​
+
+M
+−1
+g
+e
+	​
+
+	​
+
+.
+
+robust lower bound：
+
+ϕ
+e
+LB
+	​
+
+=
+ϕ
+ˉ
+	​
+
+e
+	​
+
+−
+g
+e
+T
+	​
+
+M
+−1
+g
+e
+	​
+
+	​
+
+.
+	​
+
+
+如果：
+
+ϕ
+e
+LB
+	​
+
+>0,
+
+该 query 在整个 remaining refinement envelope 中都不可能碰撞，可从 CDSG stencil 删除。
+
+15. CDSG 最重要的实现原则
+
+不要 per-candidate stencil。
+
+应该构造 batch-shared stencil：
+
+对：
+
+B
+
+条 candidate：
+
+Φ
+k,l,j
+LB
+	​
+
+=
+b
+min
+	​
+
+ϕ
+b,k,l,j
+LB
+	​
+
+.
+
+如果：
+
+Φ
+k,l,j
+LB
+	​
+
+>0,
+
+说明整个 batch都不需要这个 query。
+
+否则保留。
+
+得到：
+
+S
+shared
+	​
+
+	​
+
+
+从而保持固定 tensor shape。
+
+如果 late diffusion 的 envelope 仍然巨大：
+
+∣S
+shared
+	​
+
+∣≈∣S
+dense
+	​
+
+∣,
+
+则应接受：
+
+CDSG 不适合 cold full MPD。
+
+CDSG 更可能适合：
+
+warm MPD；
+late predicted-clean refinement；
+static base world + small delta obstacles；
+已经形成 topology 的后几步 Cost Guidance。
+
+不要为了保住 CDSG 强行调阈值。
+
+16. Dynamic environment 的 SDF 处理：已确认方案
+
+现有代码：
+
+D
+static
+	​
+
+(x)
+
+预先生成完整静态 SDF，后续直接查询。
+
+动态环境后，不建议每帧重算整个 global SDF。
+
+对于已知刚体：
+
+object-local SDF+time-varying SE(3) pose
+	​
+
+
+最合适。
+
+物体局部 SDF：
+
+D
+O
+	​
+
+(y)
+
+只算一次。
+
+世界机器人点：
+
+x
+W
+	​
+
+.
+
+物体 pose：
+
+T
+WO
+	​
+
+(t)=[R(t),p(t)].
+
+转换：
+
+x
+O
+	​
+
+=R(t)
+T
+(x
+W
+	​
+
+−p(t)).
+	​
+
+
+查询：
+
+d(x
+W
+	​
+
+,t)=D
+O
+	​
+
+(x
+O
+	​
+
+).
+	​
+
+
+注意：
+
+不是 SDF × rotation matrix。
+
+SDF 是 scalar。
+
+旋转的是：
+
+query coordinate；
+gradient。
+
+梯度：
+
+g
+O
+	​
+
+=∇D
+O
+	​
+
+g
+W
+	​
+
+=Rg
+O
+	​
+
+.
+	​
+
+
+刚体变换保持欧氏距离，因此连续 SDF 下这是严格正确的，不是近似。
+
+17. Dynamic SDF + timing spline
+
+真正查询：
+
+d
+j,l
+	​
+
+(s;P,c)=D
+j
+local
+	​
+
+(T
+j
+	​
+
+(t(s;c))
+−1
+x
+l
+	​
+
+(s;P)).
+	​
+
+
+这样：
+
+∇
+P
+	​
+
+C
+
+回答：
+
+空间怎么绕。
+
+而：
+
+∇
+c
+	​
+
+C
+
+回答：
+
+什么时候到。
+
+如果 obstacle pose 按离散 timestamps 给出，不要：
+
+idx = round(t / dt)
+
+否则：
+
+∂T/∂t
+
+几乎处处为 0。
+
+要用可微：
+
+position interpolation；
+quaternion/rotation interpolation。
+18. Dynamic collision backend 推荐分层
+已知简单 rigid primitive
+
+直接解析 SDF：
+
+sphere；
+box；
+capsule；
+cylinder。
+
+首选。
+
+已知复杂 rigid mesh
+
+使用：
+
+object-local voxel/TE-SDF+T(t)
+
+或：
+
+cached mesh/BVH+T(t).
+未知视觉动态物体
+
+使用：
+
+dynamic occupancy / TSDF→incremental/current ESDF.
+
+可参考：
+
+FIESTA；
+Voxblox；
+nvblox；
+cuRoboV2。
+
+但 incremental ESDF解决的主要是：
+
+D(x,t
+now
+	​
+
+)
+
+而 Space-Time MPD 需要：
+
+D(x,t
+future
+	​
+
+).
+
+所以最终仍需要 motion prediction / WM。
+
+19. 视觉自动生成 bounding box / sphere
+
+当前推荐两条 perception pipeline。
+
+已知 CAD object
+Detector→FoundationPose→T
+WO
+	​
+
+(t)
+	​
+
+
+离线从 CAD 一次性生成：
+
+local SDF；
+local OBB；
+bounding sphere；
+collision primitives。
+
+运行时只更新 pose。
+
+可用：
+
+RT-DETR / YOLO；
+FoundationPose；
+Isaac ROS FoundationPose。
+未知 object + RGB-D
+Grounding DINO→SAM2→masked depth→point cloud
+	​
+
+
+然后 Open3D：
+
+pcd.get_oriented_bounding_box()
+
+或：
+
+pcd.get_minimal_oriented_bounding_box()
+
+生成 OBB。
+
+Bounding sphere可以：
+
+c=
+N
+1
+	​
+
+i
+∑
+	​
+
+p
+i
+	​
+
+,r=
+i
+max
+	​
+
+∥p
+i
+	​
+
+−c∥
+
+或者 minimum enclosing sphere。
+
+对 CDSG broad phase：
+
+single bounding sphere 很适合快速排除。
+
+Narrow phase：
+
+OBB / local SDF 更合适。
+
+20. World Model 的当前定位
+
+WM 不替代 MPD。
+
+接口保持：
+
+WM负责预测未来世界
+	​
+
+Space-Time MPD负责决定机器人去哪、什么时候去
+	​
+
+
+当前优先级：
+
+WM V1：Object-State WM
+
+输入：
+
+object pose；
+velocity；
+robot trajectory；
+history。
+
+输出：
+
+μ
+i
+	​
+
+(t),Σ
+i
+	​
+
+(t).
+
+预计模型仅几 M～几十 M 参数即可。
+
+不需要生成 RGB。
+
+WM V2：Action-conditioned Object-State WM
+
+输入：
+
+(P,c)→q(t)
+
+加当前世界状态。
+
+预测：
+
+p(X
+t+1:t+H
+world
+	​
+
+∣X
+history
+world
+	​
+
+,q
+future
+	​
+
+).
+
+适合：
+
+conveyor box；
+object sliding；
+robot contact。
+WM V3：Local Occupancy WM
+
+只预测 robot workspace / trajectory ROI 的：
+
+p
+occ
+	​
+
+(x,t)
+
+而不是整个世界视频。
+
+不推荐第一版
+full RGB video WM；
+dense whole-scene 3D occupancy WM。
+
+因为计算和数据成本高，而且 MPD 并不需要图像生成。
+
+21. 概率 World Model 未来与 feasible corridor 的接口
+
+如果：
+
+O(t)∼p
+ψ
+	​
+
+(O
+t
+	​
+
+∣H)
+
+则可以定义：
+
+F
+P
+δ
+	​
+
+={(s,t):P(safe∣s,t)≥1−δ}
+	​
+
+
+或：
+
+T
+P
+δ
+	​
+
+(s).
+
+WM uncertainty 可以通过：
+
+m→m+κσ(t)
+
+简单膨胀。
+
+更高级可用未来 occupancy samples。
+
+CDSG则可以对 probabilistic space-time occupancy 做 robust broad phase。
+
+22. 当前最有潜力的论文主线
+
+目前最统一的版本是：
+
+Trust-/Envelope-Aware Space-Time Motion Planning Diffusion
+
+不是两级 planner。
+
+流程：
+
+early diffusion
+    ↓
+探索 spatial + temporal multimodality
+    ↓
+late predicted-clean (P̂0,ĉ0)
+    ↓
+Path-Conditioned Phase-Time Feasible Set
+    ↓
+temporal mode / corridor refinement
+    ↓
+remaining-denoising statistical envelope
+    ↓
+compile shared Space-Time CDSG
+    ↓
+late Cost Guidance:
+∇P C + ∇c C
+    ↓
+dense final validation
+
+未来 WM 只替换：
+
+O(t)
+
+为：
+
+p
+ψ
+	​
+
+(O(t)∣history,…).
+23. 当前研究风险
+风险 1：CDSG 在 cold MPD 下没有足够 sparsity
+
+必须实测：
+
+Γ(n)=
+∣S
+dense
+	​
+
+∣
+∣S
+robust
+	​
+
+(n)∣
+	​
+
+.
+
+如果 late step 仍：
+
+Γ≈0.8∼1
+
+就不要强行把 CDSG作为主要速度贡献。
+
+风险 2：每 spatial candidate 单独构建多个 temporal modes 导致组合爆炸
+
+这是当前最重要的未解决问题。
+
+风险 3：corridor topology 随 P 变化不光滑
+
+第一版建议：
+
+Corridor extraction 对 P stop-gradient
+	​
+
+
+空间继续靠 direct dynamic SDF gradient。
+
+风险 4：所有 timing candidates 被拉向同一个 mode
+
+需要专门设计 temporal diversity mechanism，这是下一步重点。
+
+24. 下一步建议
+
+优先顺序：
+
+先解决当前 temporal diversity 问题
+检索 joint continuous/discrete diffusion、multimodal timing、safe-interval topology diversity，决定：
+per-spatial Top-K；
+joint (P,c) diffusion implicit diversity；
+discrete temporal latent；
+population-level mode allocation；
+哪个更合适。
+实现最小 timing spline：
+fixed knots；
+6–8 CP 可作为初始实验；
+r_min + softplus(Bc)；
+GPU cumsum 得到 t(s)。
+实现简单 moving gate：
+analytic box SDF；
+known constant-velocity pose；
+不接视觉，不接 WM。
+构造 phase-time safe field / safe intervals。
+同时比较：
+scalar duration T；
+timing-spline optimization；
+dynamic-SDF-only timing gradient；
+dynamic-SDF + corridor cost。
+再研究 (P,c) joint diffusion。
+离线统计 remaining predicted-clean drift：
+X
+^
+0
+(n)
+	​
+
+−X
+final
+	​
+
+
+用于判断 Space-Time CDSG 是否真的值得做。
+
+最后才加视觉/WM。
+
+corridor部分后续建议：目前我会放弃“每条 spatial candidate 都 Top-K temporal sequences”作为主算法，只保留成对照实验。
+
+主线改成：
+
+X=(P,c)
+	​
+
+
+连续 joint diffusion；early/middle diffusion 用 batch-coupled particle diversity guidance 防止 temporal collapse；diversity 不直接定义在 raw P,c 上，而定义在低维 space-time mode descriptor 上；late predicted-clean 后才计算 candidate-specific feasible corridors，并将每条 candidate assignment 而不是复制 到 temporal mode；随后只在固定的 B=100 population 内做 mode-preserving corridor refinement。
+
+这条路线同时吸收了 Particle Guidance/TDP 的 fixed-budget diversity、DiffusionDrive/MeanFuser 的 multimodal prior、DiffusionDriveV2 的 inter-mode preservation，以及 topology-aware diffusion “先生成、后识别 topology”的思路，而且和你之前“固定 shared GPU tensor shape”的 CDSG 原则完全一致。
+25. 关键参考工作，后续检索优先看
+Motion Planning Diffusion / MPD
+RDM
+RTI-DP
+Sum of Costs Diffusion with Dynamic Guidance
+GPD
+ABPolicy
+B-spline Policy
+Spline Policy
+SIPP
+Kinodynamic SIPP
+Safe Interval Motion Planning for Quadrotors
+SI-RRT for Manipulators
+ST-RRT*
+TOPP / TOPP-RA
+Continuous Trajectory Optimization via B-splines for Multi-jointed Robotic Systems
+Temporal Safe Corridors
+DYNUS
+V-STC
+cuRobo / cuRoboV2
+nvblox
+Voxblox
+FIESTA
+TE-SDF
+FoundationPose
+Grounding DINO
+SAM2
+DINO-WM
+RoboOccWorld
+Robot-Factored World Models
+
