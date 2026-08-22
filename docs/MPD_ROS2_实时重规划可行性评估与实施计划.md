@@ -742,7 +742,7 @@ unit、真实 CUDA、ROS 2 fake hardware 和 IsaacLab 离线回放通过；真�
 fake hardware 和 replay 不模拟 Franka 真实跟踪误差、制动距离或 protective stop。因此 Phase 4
 是后续研究的可靠 baseline，不是可直接无条件上真机的最终系统。
 
-### Phase 5：Inference-only Timing Spline 与联合梯度（下一步，2–4 周）
+### Phase 5：Inference-only Timing Spline 与联合梯度（工程闭环已完成，消融待运行）
 
 目标：在不改训练和 checkpoint 的前提下，把固定 10 s phase-time 替换为候选可优化的
 `t(s;c)`，并在一次 guidance 中同时计算空间 `∂C/∂P` 和时间 `∂C/∂c`。详细设计见第 8 节。
@@ -765,6 +765,29 @@ fake hardware 和 replay 不模拟 Franka 真实跟踪误差、制动距离或 p
    - 恢复逐项等价验证过的 shape grouping、融合规约和 pruning；
    - runtime top-K、ROS quintic bridge、共同窗口选择、最新 world 复验全部支持变时长轨迹；
    - 在 moving-gate、ToDrawer 两障碍交叉和静态环境跑固定 10 s/scalar/time-only/joint 四组消融。
+
+| 模式 | 5A | 5B | 5C | 5D |
+|---|---|---|---|---|
+| `phase4_fixed` | 不进入新路径 | 否 | 否 | 使用原 Phase 4 |
+| `phase5_scalar_duration` | 是 | 是 | scalar `T` | 是 |
+| `phase5_timing_only` | 是 | 是 | 只更新 `c`，冻结 `P` guidance 对比项 | 是 |
+| `phase5_joint` | 是 | 是 | 同时更新 `P,c` | 是 |
+
+截至 **2026-08-23**，Phase 5 的工程实现和 ROS fake-hardware 闭环已经完成：
+
+- 5A `96e3de9`：inference-only timing spline、解析导数、duration bound 与数学测试；
+- 5B `c1c05df`：candidate-specific 动态查询、trajectory artifact schema v3 / timing schema v1；
+- 5C `e68f4f9`：scalar、time-only 和 joint `(P,c)` guidance，以及独立时间优化状态；
+- 5D `495e916`：全候选、无最终剪枝的 candidate-specific DenseCheck 和 runtime top-K；
+- ROS2 `3796525`：独立 Phase 5 node/config/launch、非均匀时间读取、quintic bridge、共同窗口选择、
+  guard 与最新 world 复验；Phase 4 入口和 socket 保持不变；
+- MPD 全量测试 `163 passed`，ROS 包回归 `42 passed`；真实 CUDA worker 输出严格递增时间及有限
+  `q/dq/ddq`，Franka fake hardware 的 JTC 执行到 `Goal reached, success`，诊断为
+  `accepted=1`、`invalid=0`、`deadline_miss=0`、`world_revalidation_rejected=0`。
+
+尚未完成的是 moving-gate、ToDrawer 两障碍交叉和静态环境上的四模式等预算统计消融、manifest/
+视频归档及 P50/P95/P99 报告。因此当前结论是“Phase 5 工程 baseline 可运行”，尚不能据此触发
+Phase 6/8 的研究 Go 决策。
 
 Phase 5 验收门槛：
 
@@ -910,44 +933,44 @@ Phase 4 的障碍时间表缓存建立在所有候选共享固定时间的前提
 
 ### Milestone 1：时间表示与独立数学测试
 
-- [ ] 冻结 Phase 4 的静态、动态 fixed-timing 请求、seed、输出与 profiler 基线；
-- [ ] 在 `mpd/parametric_trajectory/` 新增独立 timing spline 实现，不改变
+- [x] 冻结 Phase 4 的静态、动态 fixed-timing 请求、seed、输出与 profiler 基线；
+- [x] 在 `mpd/parametric_trajectory/` 新增独立 timing spline 实现，不改变
   `PhaseTimeLinear` 的现有语义；
-- [ ] 预计算固定 knot、basis、derivative 和 quadrature tensor；
-- [ ] 输出 `u(s)`、`t(s)`、`T`、`q/dq/ddq`，补齐 batch/candidate 维；
-- [ ] 固定首版 `u/u_s` 端点并验证非零 `dq/ddq` 边界；为未来可微边界耦合预留接口；
-- [ ] 增加 linear 10 s、严格单调、duration bound、finite-difference 单测；
-- [ ] 明确 `u_min`、timing CP 数、`T_min/T_max` 的配置位置和单位。
+- [x] 预计算固定 knot、basis、derivative 和 quadrature tensor；
+- [x] 输出 `u(s)`、`t(s)`、`T`、`q/dq/ddq`，补齐 batch/candidate 维；
+- [x] 固定首版 `u/u_s` 端点并验证非零 `dq/ddq` 边界；为未来可微边界耦合预留接口；
+- [x] 增加 linear 10 s、严格单调、duration bound、finite-difference 单测；
+- [x] 明确 `u_min`、timing CP 数、`T_min/T_max` 的配置位置和单位。
 
 完成标准：纯数学测试不依赖 ROS/CUDA 场景，线性 timing 与旧实现数值一致，所有极端输入 fail fast。
 
 ### Milestone 2：Candidate-specific 动态查询与 artifact schema
 
-- [ ] 扩展 [`dynamic_collision.py`](../mpd/inference/dynamic_collision.py)，接受显式 `trajectory_times[B,H]`；
-- [ ] CV center、linear/covariance inflation 对候选时间保持可微；
-- [ ] static/global SDF 与 dynamic/local SDF 仍做同一最小距离规约；
-- [ ] runtime request/response、NPZ 和 replay manifest 携带真实时间数组与 timing schema version；
-- [ ] final DenseCheck 使用每条候选自己的时间，禁止共享时间表和最终剪枝；
-- [ ] 用同一 `P`、不同 `c` 构造会碰撞/不会碰撞的 moving-gate 单测。
+- [x] 扩展 [`dynamic_collision.py`](../mpd/inference/dynamic_collision.py)，接受显式 `trajectory_times[B,H]`；
+- [x] CV center、linear/covariance inflation 对候选时间保持可微；
+- [x] static/global SDF 与 dynamic/local SDF 仍做同一最小距离规约；
+- [x] runtime request/response、NPZ 和 replay manifest 携带真实时间数组与 timing schema version；
+- [x] final DenseCheck 使用每条候选自己的时间，禁止共享时间表和最终剪枝；
+- [x] 用同一 `P`、不同 `c` 构造会碰撞/不会碰撞的 moving-gate 单测。
 
 完成标准：固定空间路径仅改变 timing 即可改变动态碰撞判定，且 CPU/reference 与 GPU 结果一致。
 
 ### Milestone 3：联合 `(P,c)` Guidance
 
-- [ ] 在 [`cost_guides.py`](../mpd/inference/cost_guides.py) 中建立统一 `C(P,c)` 接口；
-- [ ] 保留 pretrained DDIM 对 `P` 的原更新，增加 `c` 的独立 optimizer state；
-- [ ] 实现 dynamic SDF、velocity、acceleration、duration、timing smoothness 成本及 breakdown；
-- [ ] 分别记录每步 `||∂C/∂P||`、`||∂C/∂c||`、clip 比例和 timing mode；
-- [ ] 以固定 population 分配 linear/scalar/slow-zone modes，不扩大候选总数；
-- [ ] 对 `P` 冻结的 time-only 和 `(P,c)` joint 两条路径使用独立开关。
+- [x] 在 [`space_time_guidance.py`](../mpd/inference/space_time_guidance.py) 中建立统一 `C(P,c)` 接口；
+- [x] 保留 pretrained DDIM 对 `P` 的原更新，增加 `c` 的独立 optimizer state；
+- [x] 实现 dynamic SDF、velocity、acceleration、duration、timing smoothness 成本及 breakdown；
+- [x] 分别记录每步 `||∂C/∂P||`、`||∂C/∂c||`、clip 比例和 timing mode；
+- [x] 以固定 population 分配 linear/scalar/slow-zone modes，不扩大候选总数；
+- [x] 对 `P` 冻结的 time-only 和 `(P,c)` joint 两条路径使用独立开关。
 
 完成标准：moving-gate 中时间梯度方向与有限差分一致；联合优化不会通过违反速度/加速度或无限延时降低碰撞成本。
 
 ### Milestone 4：ROS/IsaacLab 闭环和消融决策
 
-- [ ] adapter 读取非均匀时间点，quintic bridge 和共同窗口成本统一使用绝对时间；
+- [x] adapter 读取非均匀时间点，quintic bridge 和共同窗口成本统一使用绝对时间；
 - [ ] 对每条 candidate 按 `ΔT_bridge` 平移 MPD 后缀时间并做最新世界复验；统计 nominal 与实际时间差导致的拒绝；
-- [ ] old-vs-new、hysteresis、min commit interval、goal-hold guard 和 latest-world revalidation 回归；
+- [x] old-vs-new、hysteresis、min commit interval、goal-hold guard 和 latest-world revalidation 回归；
 - [ ] 运行固定 10 s、scalar duration、time-only spline、joint `(P,c)` 四组等预算测试；
 - [ ] 对静态 ToDrawer、单 moving gate、两个垂直穿越障碍分别保存 manifest 和视频；
 - [ ] 报告成功率、clearance、duration、path length、v/a/jerk、P50/P95/P99 与阶段时间占比；
