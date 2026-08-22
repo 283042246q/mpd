@@ -127,3 +127,54 @@ def test_standalone_runner_reuses_engine_and_exports_each_repeat(tmp_path):
         with np.load(run_dir / "trajectory.npz", allow_pickle=False) as data:
             assert int(data["artifact_schema_version"]) == 3
             assert data["topk_time_from_start"].shape == (2, 3)
+
+
+def test_standalone_runner_accepts_embedded_dynamic_world(tmp_path):
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "request_id": "embedded-world",
+                "seed": 10,
+                "dynamic_world": {
+                    "world_version": 7,
+                    "frame_id": "fr3_link0",
+                    "stamp_unix_ns": 1,
+                    "valid_until_unix_ns": 20_000_000_001,
+                    "objects": [
+                        {
+                            "id": "moving-box",
+                            "local_sdf": {
+                                "type": "box",
+                                "size_xyz": [0.16, 0.12, 0.18],
+                            },
+                            "pose": {
+                                "position": [0.4, 0.4, 0.38],
+                                "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                            },
+                            "linear_velocity": [-0.045, 0.0, 0.0],
+                            "inflation": {
+                                "mode": "linear",
+                                "base_m": 0.03,
+                                "horizon_rate_m_s": 0.02,
+                            },
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "output"
+    args = _build_parser().parse_args(
+        ["--request", str(request_path), "--output-dir", str(output_dir)]
+    )
+
+    summary_path = run(args, engine_factory=FakeEngine)
+
+    engine = FakeEngine.instances[-1]
+    assert engine.world["world_version"] == 7
+    assert engine.world["objects"][0]["id"] == "moving-box"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["world_source"] == "request.dynamic_world"
+    assert summary["dynamic_object_count"] == 1

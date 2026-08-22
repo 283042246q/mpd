@@ -162,7 +162,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--world",
         type=Path,
         default=None,
-        help="Dynamic-world snapshot JSON; omit for the configured static scene only.",
+        help=(
+            "Dynamic-world snapshot JSON. When omitted, request.dynamic_world is "
+            "used if present; otherwise only the configured static scene is used."
+        ),
     )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
@@ -215,7 +218,22 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     raw_request, request_sha256 = _load_request(request_path)
-    world = _static_world() if args.world is None else _load_json_object(args.world)
+    embedded_world = raw_request.get("dynamic_world")
+    if args.world is not None and embedded_world is not None:
+        raise ValueError(
+            "dynamic world is ambiguous: use either --world or request.dynamic_world"
+        )
+    if args.world is not None:
+        world = _load_json_object(args.world)
+        world_source = "--world"
+    elif embedded_world is not None:
+        if not isinstance(embedded_world, dict):
+            raise ValueError("request.dynamic_world must be a JSON object")
+        world = deepcopy(embedded_world)
+        world_source = "request.dynamic_world"
+    else:
+        world = _static_world()
+        world_source = "static"
     world_version = world.get("world_version")
     stamp_unix_ns = world.get("stamp_unix_ns")
     valid_until_unix_ns = world.get("valid_until_unix_ns")
@@ -297,6 +315,7 @@ def run(
             "world_path": (
                 None if args.world is None else args.world.expanduser().resolve().as_posix()
             ),
+            "world_source": world_source,
             "socket_used": False,
             "ros_used": False,
         }
@@ -335,6 +354,7 @@ def run(
         "world_path": (
             None if args.world is None else args.world.expanduser().resolve().as_posix()
         ),
+        "world_source": world_source,
         "world_version": world_version,
         "dynamic_object_count": len(world.get("objects", [])),
         "trajectory_start_unix_ns": trajectory_start_unix_ns,

@@ -30,5 +30,38 @@
     1.0201799869537354
   ],
   "scene_id": "EnvOpenDrawerShelf",
-  "seed": 123
+  "seed": 123,
+  "dynamic_world": {
+    "world_version": 1,
+    "frame_id": "fr3_link0",
+    "stamp_unix_ns": 1,
+    "valid_until_unix_ns": 20000000001,
+    "objects": [
+      {
+        "id": "demo-box-crossing-2",
+        "local_sdf": {
+          "type": "box",
+          "size_xyz": [0.12, 0.12, 0.16]
+        },
+        "pose": {
+          "position": [-2.2682787325, 0.5285470325, 0.46108561],
+          "orientation_xyzw": [0.0, 0.0, 0.0, 1.0]
+        },
+        "linear_velocity": [0.1797447402, -0.0095827266, 0.0],
+        "covariance_6x6": [
+          0.0001, 0.0, 0.0, 0.0, 0.0, 0.0,
+          0.0, 0.0001, 0.0, 0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0001, 0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "inflation": {
+          "mode": "linear",
+          "base_m": 0.02,
+          "horizon_rate_m_s": 0.01
+        }
+      }
+    ]
+  }
 }

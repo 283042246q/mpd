@@ -130,7 +130,9 @@ cache/pruning，最终候选仍必须由下游 latest-world revalidation 复验�
 
 不需要 socket/ROS 的单进程入口位于 `scripts/inference/infer_space_time.py`。
 它一次加载模型，可用 `--repeats` 连续运行同一请求；省略 `--world` 时只使用
-配置中的静态场景，提供 `--world` 时加载一份动态世界快照：
+配置中的静态场景，提供 `--world` 时加载一份动态世界快照。也可以把同一
+份快照放在 request 顶层的 `dynamic_world` 字段中，使单次实验输入自包含；
+`--world` 与 `request.dynamic_world` 不允许同时提供：
 
 ```bash
 conda run --no-capture-output -n mpd-splines-public \
