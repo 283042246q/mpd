@@ -590,7 +590,8 @@ def _validate_best_trajectory(
     q_vel_start: Any,
     q_acc_start: Any,
     expected_horizon: int,
-    expected_duration: float,
+    expected_duration: float | None,
+    skip_collision_check: bool = False,
 ) -> dict[str, float]:
     import torch
 
@@ -620,7 +621,9 @@ def _validate_best_trajectory(
         raise ResultValidationError("time_from_start must begin at 0 seconds.")
     if not bool(torch.all(torch.diff(timesteps) > 0).item()):
         raise ResultValidationError("time_from_start must be strictly increasing.")
-    if not math.isclose(float(timesteps[-1].item()), expected_duration, abs_tol=1e-5):
+    if expected_duration is not None and not math.isclose(
+        float(timesteps[-1].item()), expected_duration, abs_tol=1e-5
+    ):
         raise ResultValidationError(
             f"Final time must be {expected_duration:.6f} seconds, got {timesteps[-1].item():.6f}."
         )
@@ -667,12 +670,13 @@ def _validate_best_trajectory(
                 "Best trajectory exceeds MPD acceleration limits " f"(utilization={acceleration_utilization:.6f})."
             )
 
-    collisions = planning_task.compute_collision(
-        positions,
-        margin=planning_task.margin_for_dense_collision_checking,
-    )
-    if bool(torch.as_tensor(collisions).any().item()):
-        raise ResultValidationError("Best trajectory collides in the configured MPD scene.")
+    if not skip_collision_check:
+        collisions = planning_task.compute_collision(
+            positions,
+            margin=planning_task.margin_for_dense_collision_checking,
+        )
+        if bool(torch.as_tensor(collisions).any().item()):
+            raise ResultValidationError("Best trajectory collides in the configured MPD scene.")
 
     return {
         "start_max_abs_error_rad": start_errors["position"],

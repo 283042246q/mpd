@@ -49,6 +49,40 @@ class FakeTask:
 
 
 class DenseTrajectoryValidatorTest(unittest.TestCase):
+    def test_candidate_specific_times_are_used_by_full_environment_check(self):
+        class CandidateTimeField:
+            dynamic_world = object()
+            collision_margins = torch.tensor([0.05], dtype=torch.float64)
+
+            @staticmethod
+            def object_signed_distances(positions, trajectory_times=None):
+                assert trajectory_times is not None
+                return torch.abs(trajectory_times - 1.0)[..., None, None]
+
+        class CandidateTimeTask(FakeTask):
+            @staticmethod
+            def get_collision_objects_field():
+                return CandidateTimeField()
+
+        validator = DenseTrajectoryValidator(CandidateTimeTask())
+        q_position = torch.zeros((2, 3, 2), dtype=torch.float64)
+        zeros = torch.zeros_like(q_position)
+        times = torch.tensor(
+            [[0.0, 1.0, 2.0], [0.0, 0.4, 0.8]], dtype=torch.float64
+        )
+
+        result = validator.validate(
+            q_position=q_position,
+            q_velocity=zeros,
+            q_acceleration=zeros,
+            trajectory_times=times,
+            num_points=3,
+            check_self_collision=False,
+        )
+
+        self.assertEqual(result.trajectory_valid_mask.tolist(), [False, True])
+        self.assertEqual(result.trajectory_checked_mask.tolist(), [True, True])
+
     def test_dense_bspline_uses_structural_degree_when_public_degree_is_overwritten(self):
         trajectory = ParametricTrajectoryBspline(
             n_control_points=8,

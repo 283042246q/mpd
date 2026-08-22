@@ -156,6 +156,26 @@ class MpdRuntimeEngine:
             },
         }
 
+    def _postprocess_plan_results(self, results):
+        return results
+
+    def _validate_plan_results(
+        self,
+        results,
+        q_pos_start,
+        q_vel_start,
+        q_acc_start,
+    ):
+        return _validate_best_trajectory(
+            results,
+            self.planning_task,
+            q_pos_start,
+            q_vel_start,
+            q_acc_start,
+            expected_horizon=int(self.args_inference.num_T_pts),
+            expected_duration=float(self.args_inference.trajectory_duration),
+        )
+
     def plan(self, raw_request: dict[str, Any]) -> PlanArtifacts:
         import numpy as np
         import torch
@@ -217,6 +237,7 @@ class MpdRuntimeEngine:
         # Phase-5 keeps the planner result device-resident long enough for its
         # separate runtime subclass to attach candidate-specific timing.  The
         # Phase-3/4 artifact path below is unchanged.
+        results = self._postprocess_plan_results(results)
         self._last_plan_results = results
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
@@ -226,14 +247,8 @@ class MpdRuntimeEngine:
         if valid_trajectory_count == 0 or results.q_trajs_pos_best is None:
             raise NoValidTrajectoryError("MPD produced no valid trajectory for this request.")
 
-        trajectory_validation = _validate_best_trajectory(
-            results,
-            self.planning_task,
-            q_pos_start,
-            q_vel_start,
-            q_acc_start,
-            expected_horizon=int(self.args_inference.num_T_pts),
-            expected_duration=float(self.args_inference.trajectory_duration),
+        trajectory_validation = self._validate_plan_results(
+            results, q_pos_start, q_vel_start, q_acc_start
         )
         results.metrics = PlanningMetricsCalculator(self.planning_task).compute_metrics(results)
 

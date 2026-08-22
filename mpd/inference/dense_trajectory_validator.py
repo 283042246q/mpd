@@ -202,7 +202,7 @@ class DenseTrajectoryValidator:
             q_position, q_velocity, q_acceleration = trajectory["pos"], trajectory["vel"], trajectory["acc"]
         return _resample(q_position, num_points), _resample(q_velocity, num_points), _resample(q_acceleration, num_points)
 
-    def _environment_clearance(self, positions):
+    def _environment_clearance(self, positions, trajectory_times=None):
         clearances = []
         for field in (
             self.planning_task.get_collision_objects_field(),
@@ -210,7 +210,12 @@ class DenseTrajectoryValidator:
         ):
             if field is None:
                 continue
-            signed = field.object_signed_distances(positions)
+            if trajectory_times is not None and hasattr(field, "dynamic_world"):
+                signed = field.object_signed_distances(
+                    positions, trajectory_times=trajectory_times
+                )
+            else:
+                signed = field.object_signed_distances(positions)
             radii = torch.as_tensor(field.collision_margins, dtype=positions.dtype, device=positions.device)
             while radii.ndim < signed.ndim:
                 radii = radii.unsqueeze(0)
@@ -235,6 +240,7 @@ class DenseTrajectoryValidator:
         check_joint_velocity=True,
         check_joint_acceleration=True,
         check_joint_limits=None,
+        trajectory_times=None,
     ):
         if check_joint_limits is not None:
             check_joint_position = bool(check_joint_limits)
@@ -251,11 +257,32 @@ class DenseTrajectoryValidator:
             raise ValueError("DenseTrajectoryValidator expects [batch, time, dof] trajectories.")
 
         batch, horizon, _ = q_position.shape
+        if trajectory_times is not None:
+            if trajectory_times.shape != (batch, horizon):
+                raise ValueError(
+                    f"trajectory_times must have shape {(batch, horizon)}, "
+                    f"got {tuple(trajectory_times.shape)}"
+                )
+            if trajectory_times.dtype != q_position.dtype or trajectory_times.device != q_position.device:
+                raise ValueError("trajectory_times must match trajectory dtype and device")
+            if not torch.isfinite(trajectory_times).all().item():
+                raise ValueError("trajectory_times contains NaN or Inf")
+            if not torch.allclose(
+                trajectory_times[:, 0],
+                torch.zeros_like(trajectory_times[:, 0]),
+                atol=1e-8,
+                rtol=0.0,
+            ):
+                raise ValueError("trajectory_times must begin at zero")
+            if not (torch.diff(trajectory_times, dim=-1) > 0.0).all().item():
+                raise ValueError("trajectory_times must be strictly increasing")
         poses = self.robot.fk_collision_spheres(q_position.reshape(batch * horizon, -1))
         poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
         positions = link_pos_from_link_tensor(poses)[..., : self.robot.task_space_dim]
 
-        environment_clearance = self._environment_clearance(positions)
+        environment_clearance = self._environment_clearance(
+            positions, trajectory_times=trajectory_times
+        )
         environment_collision_mask = environment_clearance <= 0 if check_environment else torch.zeros_like(
             environment_clearance, dtype=torch.bool
         )
