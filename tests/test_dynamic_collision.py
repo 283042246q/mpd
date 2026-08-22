@@ -33,6 +33,36 @@ def _sphere(**overrides):
     return item
 
 
+def _mixed_objects():
+    covariance = [0.0] * 36
+    for axis in range(3):
+        covariance[axis * 6 + axis] = 0.01
+    return [
+        _sphere(id="sphere"),
+        {
+            "id": "box",
+            "local_sdf": {"type": "box", "size_xyz": [0.4, 0.6, 0.8]},
+            "pose": {
+                "position": [0.5, -0.2, 0.1],
+                "orientation_xyzw": [0.0, 0.0, 2**-0.5, 2**-0.5],
+            },
+            "linear_velocity": [0.0, 0.1, 0.0],
+            "inflation": {"mode": "covariance", "base_m": 0.02},
+            "covariance_6x6": covariance,
+        },
+        {
+            "id": "capsule",
+            "local_sdf": {"type": "capsule", "radius": 0.1, "length": 0.6},
+            "pose": {
+                "position": [-0.2, 0.3, 0.0],
+                "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+            "linear_velocity": [0.0, 0.0, 0.1],
+            "inflation": {"mode": "linear", "horizon_rate_m_s": 0.01},
+        },
+    ]
+
+
 def test_constant_velocity_and_linear_horizon_inflation_use_fixed_timing():
     world = FixedCapacityDynamicWorld(4, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS)
     world.update(_world([_sphere()]))
@@ -127,3 +157,89 @@ def test_combined_field_selects_deepest_static_or_dynamic_cost_and_gradient():
     # Dynamic distance=.05, link+cutoff margin=.12, penetration=.07.
     assert cost.item() == pytest.approx(0.07)
     assert gradient.flatten().tolist() == pytest.approx([-1.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "capacity_buckets_enabled",
+        "shape_grouping_enabled",
+        "time_table_cache_enabled",
+    ],
+)
+def test_each_dynamic_query_optimization_matches_baseline(option):
+    baseline = FixedCapacityDynamicWorld(
+        8, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    optimized = FixedCapacityDynamicWorld(
+        8, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS, **{option: True}
+    )
+    for world in (baseline, optimized):
+        world.update(_world(_mixed_objects()))
+        world.set_plan_start(1_000_000_000, world_version=1)
+    points = torch.tensor(
+        [
+            [
+                [[0.2, 0.1, 0.0], [0.7, -0.2, 0.1]],
+                [[1.2, 0.0, 0.0], [-0.2, 0.3, 0.4]],
+            ]
+        ],
+        **TENSOR_ARGS,
+    )
+    expected_distance, expected_gradient = baseline.signed_distances_and_gradients(points)
+    actual_distance, actual_gradient = optimized.signed_distances_and_gradients(points)
+    active = len(_mixed_objects())
+    assert torch.allclose(
+        actual_distance[..., :active, :], expected_distance[..., :active, :]
+    )
+    assert torch.allclose(
+        actual_gradient[..., :active, :, :], expected_gradient[..., :active, :, :]
+    )
+    if option == "capacity_buckets_enabled":
+        assert actual_distance.shape[-2] == 4
+
+
+def test_time_table_cache_is_reused_then_invalidated_by_plan_start():
+    world = FixedCapacityDynamicWorld(
+        4,
+        trajectory_duration_s=2.0,
+        tensor_args=TENSOR_ARGS,
+        time_table_cache_enabled=True,
+    )
+    world.update(_world([_sphere()]))
+    world.set_plan_start(1_000_000_000, world_version=1)
+    first = world._time_table(128, torch.float64, torch.device("cpu"))
+    second = world._time_table(128, torch.float64, torch.device("cpu"))
+    assert first is second
+    world.set_plan_start(2_000_000_000, world_version=1)
+    third = world._time_table(128, torch.float64, torch.device("cpu"))
+    assert third is not first
+
+
+def test_grouped_fused_minimum_matches_materialized_object_reduction():
+    baseline = FixedCapacityDynamicWorld(
+        8, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    optimized = FixedCapacityDynamicWorld(
+        8,
+        trajectory_duration_s=2.0,
+        tensor_args=TENSOR_ARGS,
+        capacity_buckets_enabled=True,
+        shape_grouping_enabled=True,
+        time_table_cache_enabled=True,
+        fused_reduction_enabled=True,
+    )
+    for world in (baseline, optimized):
+        world.update(_world(_mixed_objects()))
+        world.set_plan_start(1_000_000_000, world_version=1)
+    torch.manual_seed(7)
+    points = torch.randn((2, 5, 4, 3), **TENSOR_ARGS)
+    distances, gradients = baseline.signed_distances_and_gradients(points)
+    expected_distance, active_object = distances.min(dim=-2)
+    gather_index = active_object.unsqueeze(-2).unsqueeze(-1).expand(
+        *active_object.shape[:-1], 1, active_object.shape[-1], 3
+    )
+    expected_gradient = gradients.gather(-3, gather_index).squeeze(-3)
+    actual_distance, actual_gradient = optimized.minimum_signed_distance_and_gradient(points)
+    assert torch.allclose(actual_distance, expected_distance)
+    assert torch.allclose(actual_gradient, expected_gradient)

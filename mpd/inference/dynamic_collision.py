@@ -55,6 +55,10 @@ class FixedCapacityDynamicWorld:
         tensor_args: dict[str, Any],
         covariance_sigma: float = 3.0,
         process_acceleration_std_m_s2: float = 0.01,
+        capacity_buckets_enabled: bool = False,
+        shape_grouping_enabled: bool = False,
+        time_table_cache_enabled: bool = False,
+        fused_reduction_enabled: bool = False,
     ) -> None:
         if max_objects < 1:
             raise ValueError("max_objects must be positive")
@@ -65,6 +69,13 @@ class FixedCapacityDynamicWorld:
         self.tensor_args = dict(tensor_args)
         self.covariance_sigma = float(covariance_sigma)
         self.process_variance = float(process_acceleration_std_m_s2) ** 2
+        self.capacity_buckets_enabled = bool(capacity_buckets_enabled)
+        self.shape_grouping_enabled = bool(shape_grouping_enabled)
+        self.time_table_cache_enabled = bool(time_table_cache_enabled)
+        self.fused_reduction_enabled = bool(fused_reduction_enabled)
+        self.capacity_buckets = tuple(
+            size for size in (1, 2, 4, 8, 16, 32, 64) if size < self.max_objects
+        ) + (self.max_objects,)
 
         def zeros(*shape, dtype=None):
             args = dict(self.tensor_args)
@@ -100,6 +111,13 @@ class FixedCapacityDynamicWorld:
         self.stamp_unix_ns = 0
         self.valid_until_unix_ns = 0
         self.plan_start_unix_ns = 0
+        self.active_count = 0
+        self.sphere_indices = zeros(0, dtype=torch.long)
+        self.box_indices = zeros(0, dtype=torch.long)
+        self.capsule_indices = zeros(0, dtype=torch.long)
+        self.linear_inflation_indices = zeros(0, dtype=torch.long)
+        self.covariance_inflation_indices = zeros(0, dtype=torch.long)
+        self._time_table_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
 
     def update(self, snapshot: dict[str, Any]) -> int:
         if not isinstance(snapshot, dict):
@@ -217,6 +235,20 @@ class FixedCapacityDynamicWorld:
         self.stamp_unix_ns = stamp
         self.valid_until_unix_ns = valid_until
         self.world_version = version
+        self.active_count = len(objects)
+        active_slice = slice(0, self.active_count)
+        active_shape_codes = self.shape_code[active_slice]
+        active_inflation_codes = self.inflation_code[active_slice]
+        self.sphere_indices = torch.nonzero(active_shape_codes == 0, as_tuple=False).flatten()
+        self.box_indices = torch.nonzero(active_shape_codes == 1, as_tuple=False).flatten()
+        self.capsule_indices = torch.nonzero(active_shape_codes == 2, as_tuple=False).flatten()
+        self.linear_inflation_indices = torch.nonzero(
+            active_inflation_codes == 0, as_tuple=False
+        ).flatten()
+        self.covariance_inflation_indices = torch.nonzero(
+            active_inflation_codes == 1, as_tuple=False
+        ).flatten()
+        self._time_table_cache.clear()
         return version
 
     def set_plan_start(self, plan_start_unix_ns: int, *, world_version: int) -> None:
@@ -228,6 +260,14 @@ class FixedCapacityDynamicWorld:
         if horizon_end > self.valid_until_unix_ns:
             raise DynamicWorldError("trajectory exceeds dynamic-world prediction validity")
         self.plan_start_unix_ns = plan_start_unix_ns
+        self._time_table_cache.clear()
+
+    def _active_capacity(self) -> int:
+        if not self.capacity_buckets_enabled:
+            return self.max_objects
+        if self.active_count == 0:
+            return 0
+        return next(size for size in self.capacity_buckets if size >= self.active_count)
 
     def _relative_times(self, horizon: int, dtype, device) -> torch.Tensor:
         if self.plan_start_unix_ns <= 0:
@@ -236,14 +276,37 @@ class FixedCapacityDynamicWorld:
         trajectory_times = torch.linspace(0.0, self.trajectory_duration_s, horizon, dtype=dtype, device=device)
         return trajectory_times + plan_offset
 
-    def _inflation(self, relative_times: torch.Tensor) -> torch.Tensor:
+    def _inflation(self, relative_times: torch.Tensor, capacity: int) -> torch.Tensor:
         # [H,M], where covariance is propagated by the constant-velocity model.
         dt = relative_times[:, None]
-        linear = self.base_inflation[None, :] + self.horizon_inflation_rate[None, :] * dt
-        p_pp = self.covariance[:, :3, :3]
-        p_pv = self.covariance[:, :3, 3:]
-        p_vp = self.covariance[:, 3:, :3]
-        p_vv = self.covariance[:, 3:, 3:]
+        base = self.base_inflation[:capacity]
+        rate = self.horizon_inflation_rate[:capacity]
+        if self.shape_grouping_enabled:
+            inflation = torch.zeros(
+                (relative_times.shape[0], capacity),
+                dtype=relative_times.dtype,
+                device=relative_times.device,
+            )
+            linear_indices = self.linear_inflation_indices
+            if linear_indices.numel():
+                linear = base.index_select(0, linear_indices)[None, :] + rate.index_select(
+                    0, linear_indices
+                )[None, :] * dt
+                inflation = inflation.index_copy(1, linear_indices, linear)
+            covariance_indices = self.covariance_inflation_indices
+            if not covariance_indices.numel():
+                return inflation
+            selected_covariance = self.covariance.index_select(0, covariance_indices)
+            selected_base = base.index_select(0, covariance_indices)
+        else:
+            linear = base[None, :] + rate[None, :] * dt
+            covariance_indices = None
+            selected_covariance = self.covariance[:capacity]
+            selected_base = base
+        p_pp = selected_covariance[:, :3, :3]
+        p_pv = selected_covariance[:, :3, 3:]
+        p_vp = selected_covariance[:, 3:, :3]
+        p_vv = selected_covariance[:, 3:, 3:]
         propagated = p_pp[None] + dt[..., None, None] * (p_pv + p_vp)[None] + dt[..., None, None].square() * p_vv[None]
         process = self.process_variance * dt.pow(3) / 3.0
         propagated = propagated + process[..., None, None] * torch.eye(
@@ -251,65 +314,206 @@ class FixedCapacityDynamicWorld:
         )
         # eigvalsh is deterministic and the object count is deliberately small.
         sigma = torch.linalg.eigvalsh(propagated).amax(dim=-1).clamp_min(0.0).sqrt()
-        covariance = self.base_inflation[None, :] + self.covariance_sigma * sigma
-        return torch.where(self.inflation_code[None, :] == 1, covariance, linear)
+        covariance = selected_base[None, :] + self.covariance_sigma * sigma
+        if covariance_indices is not None:
+            return inflation.index_copy(1, covariance_indices, covariance)
+        return torch.where(self.inflation_code[None, :capacity] == 1, covariance, linear)
+
+    def _time_table(self, horizon: int, dtype, device) -> dict[str, Any]:
+        capacity = self._active_capacity()
+        key = (
+            self.world_version,
+            self.plan_start_unix_ns,
+            horizon,
+            dtype,
+            device.type,
+            device.index,
+            capacity,
+            self.shape_grouping_enabled,
+        )
+        if self.time_table_cache_enabled and key in self._time_table_cache:
+            return self._time_table_cache[key]
+        relative_times = self._relative_times(horizon, dtype, device)
+        centers = self.position[None, :capacity, :] + relative_times[:, None, None] * self.velocity[
+            None, :capacity, :
+        ]
+        table = {
+            "relative_times": relative_times,
+            "centers": centers,
+            "inflation": self._inflation(relative_times, capacity),
+            "rotation": self.rotation[:capacity],
+            "parameters": self.parameters[:capacity],
+            "capacity": capacity,
+        }
+        if self.time_table_cache_enabled:
+            self._time_table_cache.clear()
+            self._time_table_cache[key] = table
+        return table
+
+    @staticmethod
+    def _shape_distance_and_gradient(
+        local: torch.Tensor,
+        parameters: torch.Tensor,
+        shape_code: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        eps = torch.finfo(local.dtype).eps
+        if shape_code == 0:
+            norm = torch.linalg.norm(local, dim=-1)
+            return norm - parameters[None, None, :, None, 0], local / norm.clamp_min(eps)[..., None]
+        if shape_code == 1:
+            half_extents = parameters[None, None, :, None, :]
+            box_q = torch.abs(local) - half_extents
+            box_outside = torch.relu(box_q)
+            outside_norm = torch.linalg.norm(box_outside, dim=-1)
+            distance = outside_norm + torch.clamp(box_q.amax(dim=-1), max=0.0)
+            outside_gradient = torch.sign(local) * box_outside / outside_norm.clamp_min(eps)[..., None]
+            axis = box_q.argmax(dim=-1)
+            inside_gradient = torch.zeros_like(local).scatter_(
+                -1, axis[..., None], torch.gather(torch.sign(local), -1, axis[..., None])
+            )
+            gradient = torch.where(
+                (outside_norm > eps)[..., None], outside_gradient, inside_gradient
+            )
+            return distance, gradient
+        capsule_half = parameters[None, None, :, None, 1]
+        closest_z = local[..., 2].clamp(-capsule_half, capsule_half)
+        capsule_delta = local.clone()
+        capsule_delta[..., 2] = capsule_delta[..., 2] - closest_z
+        norm = torch.linalg.norm(capsule_delta, dim=-1)
+        return (
+            norm - parameters[None, None, :, None, 0],
+            capsule_delta / norm.clamp_min(eps)[..., None],
+        )
+
+    def _evaluate_indices(
+        self,
+        points: torch.Tensor,
+        table: dict[str, Any],
+        indices: torch.Tensor,
+        shape_code: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        centers = table["centers"].index_select(1, indices)
+        rotation = table["rotation"].index_select(0, indices)
+        parameters = table["parameters"].index_select(0, indices)
+        world_delta = points[:, :, None, :, :] - centers[None, :, :, None, :]
+        local = torch.einsum("bhmld,mdk->bhmlk", world_delta, rotation)
+        distance, gradient_local = self._shape_distance_and_gradient(local, parameters, shape_code)
+        gradient_world = torch.einsum(
+            "bhmld,mdk->bhmlk", gradient_local, rotation.transpose(-1, -2)
+        )
+        distance = distance - table["inflation"].index_select(1, indices)[None, :, :, None]
+        return distance, gradient_world
+
+    def _evaluate_all_shapes(
+        self, points: torch.Tensor, table: dict[str, Any]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        capacity = table["capacity"]
+        world_delta = points[:, :, None, :, :] - table["centers"][None, :, :, None, :]
+        local = torch.einsum("bhmld,mdk->bhmlk", world_delta, table["rotation"])
+        distances_by_shape = []
+        gradients_by_shape = []
+        for shape_code in range(3):
+            distance, gradient = self._shape_distance_and_gradient(
+                local, table["parameters"], shape_code
+            )
+            distances_by_shape.append(distance)
+            gradients_by_shape.append(gradient)
+        shape = self.shape_code[None, None, :capacity, None]
+        distances = torch.where(
+            shape == 0,
+            distances_by_shape[0],
+            torch.where(shape == 1, distances_by_shape[1], distances_by_shape[2]),
+        )
+        gradients_local = torch.where(
+            (shape == 0)[..., None],
+            gradients_by_shape[0],
+            torch.where(
+                (shape == 1)[..., None], gradients_by_shape[1], gradients_by_shape[2]
+            ),
+        )
+        gradients_world = torch.einsum(
+            "bhmld,mdk->bhmlk",
+            gradients_local,
+            table["rotation"].transpose(-1, -2),
+        )
+        return (
+            distances - table["inflation"][None, :, :, None],
+            gradients_world,
+        )
+
+    def _shape_groups(self, capacity: int) -> tuple[tuple[int, torch.Tensor], ...]:
+        if self.shape_grouping_enabled:
+            return (
+                (0, self.sphere_indices),
+                (1, self.box_indices),
+                (2, self.capsule_indices),
+            )
+        indices = torch.arange(capacity, dtype=torch.long, device=self.active.device)
+        return tuple((code, indices[self.shape_code[:capacity] == code]) for code in range(3))
 
     def signed_distances_and_gradients(self, points: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Return effective distances/gradients as ``[B,H,M,L(,3)]``."""
 
         if points.ndim != 4 or points.shape[-1] != 3:
             raise ValueError("dynamic SDF expects [batch,time,links,3] points")
-        _, horizon, _, _ = points.shape
-        relative_times = self._relative_times(horizon, points.dtype, points.device)
-        centers = self.position[None, :, :] + relative_times[:, None, None] * self.velocity[None, :, :]
-        world_delta = points[:, :, None, :, :] - centers[None, :, :, None, :]
-        # R maps local to world, so row-vector world points transform with R.
-        local = torch.einsum("bhmld,mdk->bhmlk", world_delta, self.rotation)
-        eps = torch.finfo(points.dtype).eps
-
-        norm = torch.linalg.norm(local, dim=-1)
-        sphere_distance = norm - self.parameters[None, None, :, None, 0]
-        sphere_gradient_local = local / norm.clamp_min(eps)[..., None]
-
-        half_extents = self.parameters[None, None, :, None, :]
-        box_q = torch.abs(local) - half_extents
-        box_outside = torch.relu(box_q)
-        box_outside_norm = torch.linalg.norm(box_outside, dim=-1)
-        box_distance = box_outside_norm + torch.clamp(box_q.amax(dim=-1), max=0.0)
-        box_outside_gradient = torch.sign(local) * box_outside / box_outside_norm.clamp_min(eps)[..., None]
-        box_axis = box_q.argmax(dim=-1)
-        box_inside_gradient = torch.zeros_like(local).scatter_(
-            -1,
-            box_axis[..., None],
-            torch.gather(torch.sign(local), -1, box_axis[..., None]),
+        batch, horizon, links, _ = points.shape
+        table = self._time_table(horizon, points.dtype, points.device)
+        capacity = table["capacity"]
+        distances = torch.full(
+            (batch, horizon, capacity, links), torch.inf, dtype=points.dtype, device=points.device
         )
-        box_gradient_local = torch.where((box_outside_norm > eps)[..., None], box_outside_gradient, box_inside_gradient)
-
-        capsule_half = self.parameters[None, None, :, None, 1]
-        closest_z = local[..., 2].clamp(-capsule_half, capsule_half)
-        capsule_delta = local.clone()
-        capsule_delta[..., 2] = capsule_delta[..., 2] - closest_z
-        capsule_norm = torch.linalg.norm(capsule_delta, dim=-1)
-        capsule_distance = capsule_norm - self.parameters[None, None, :, None, 0]
-        capsule_gradient_local = capsule_delta / capsule_norm.clamp_min(eps)[..., None]
-
-        shape = self.shape_code[None, None, :, None]
-        distances = torch.where(
-            shape == 0,
-            sphere_distance,
-            torch.where(shape == 1, box_distance, capsule_distance),
+        gradients_world = torch.zeros(
+            (batch, horizon, capacity, links, 3), dtype=points.dtype, device=points.device
         )
-        gradients_local = torch.where(
-            (shape == 0)[..., None],
-            sphere_gradient_local,
-            torch.where((shape == 1)[..., None], box_gradient_local, capsule_gradient_local),
-        )
-        gradients_world = torch.einsum("bhmld,mdk->bhmlk", gradients_local, self.rotation.transpose(-1, -2))
-        distances = distances - self._inflation(relative_times)[None, :, :, None]
-        inactive = ~self.active[None, None, :, None]
+        if capacity and not self.shape_grouping_enabled:
+            distances, gradients_world = self._evaluate_all_shapes(points, table)
+        else:
+            for shape_code, indices in self._shape_groups(capacity):
+                if not indices.numel():
+                    continue
+                group_distance, group_gradient = self._evaluate_indices(
+                    points, table, indices, shape_code
+                )
+                distances = distances.index_copy(2, indices, group_distance)
+                gradients_world = gradients_world.index_copy(2, indices, group_gradient)
+        inactive = ~self.active[None, None, :capacity, None]
         distances = torch.where(inactive, torch.full_like(distances, torch.inf), distances)
-        gradients_world = torch.where(inactive[..., None], torch.zeros_like(gradients_world), gradients_world)
+        gradients_world = torch.where(
+            inactive[..., None], torch.zeros_like(gradients_world), gradients_world
+        )
         return distances, gradients_world
+
+    def minimum_signed_distance_and_gradient(
+        self, points: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Reduce local SDFs without materializing the full object dimension."""
+
+        if not self.fused_reduction_enabled or not self.shape_grouping_enabled:
+            distances, gradients = self.signed_distances_and_gradients(points)
+            minimum, active_object = distances.min(dim=-2)
+            gather_index = active_object.unsqueeze(-2).unsqueeze(-1).expand(
+                *active_object.shape[:-1], 1, active_object.shape[-1], 3
+            )
+            return minimum, gradients.gather(-3, gather_index).squeeze(-3)
+        _, horizon, links, _ = points.shape
+        table = self._time_table(horizon, points.dtype, points.device)
+        best_distance = torch.full(
+            points.shape[:-2] + (links,), torch.inf, dtype=points.dtype, device=points.device
+        )
+        best_gradient = torch.zeros_like(points)
+        for shape_code, indices in self._shape_groups(table["capacity"]):
+            if not indices.numel():
+                continue
+            distances, gradients = self._evaluate_indices(points, table, indices, shape_code)
+            group_distance, group_object = distances.min(dim=-2)
+            gather_index = group_object.unsqueeze(-2).unsqueeze(-1).expand(
+                *group_object.shape[:-1], 1, group_object.shape[-1], 3
+            )
+            group_gradient = gradients.gather(-3, gather_index).squeeze(-3)
+            replace = group_distance < best_distance
+            best_distance = torch.where(replace, group_distance, best_distance)
+            best_gradient = torch.where(replace[..., None], group_gradient, best_gradient)
+        return best_distance, best_gradient
 
 
 class StaticDynamicCollisionField:
@@ -342,6 +546,31 @@ class StaticDynamicCollisionField:
         return torch.cat((static_gradient, dynamic_gradient), dim=-3)
 
     def compute_embodiment_taskspace_sdf_and_gradient(self, link_pos, **kwargs):
+        if self.dynamic_world.fused_reduction_enabled:
+            static_cost, static_gradient = self.static_field.compute_distance_field_cost_and_gradient(
+                link_pos, **kwargs
+            )
+            dynamic_distance, dynamic_distance_gradient = (
+                self.dynamic_world.minimum_signed_distance_and_gradient(link_pos)
+            )
+            margins = self.collision_margins
+            link_indices = kwargs.get("link_indices")
+            if link_indices is not None:
+                margins = margins.index_select(
+                    0,
+                    torch.as_tensor(link_indices, dtype=torch.long, device=link_pos.device),
+                )
+            dynamic_cost = torch.relu(margins + self.cutoff_margin - dynamic_distance)
+            dynamic_gradient = torch.where(
+                (dynamic_cost > 0.0)[..., None],
+                -dynamic_distance_gradient,
+                torch.zeros_like(dynamic_distance_gradient),
+            )
+            use_dynamic = dynamic_cost > static_cost
+            return (
+                torch.where(use_dynamic, dynamic_cost, static_cost),
+                torch.where(use_dynamic[..., None], dynamic_gradient, static_gradient),
+            )
         distances, gradients = self.object_signed_distances(link_pos, get_gradient=True)
         margins = self.collision_margins
         link_indices = kwargs.get("link_indices")
@@ -372,9 +601,23 @@ class StaticDynamicCollisionField:
             link_pos = link_pos.unsqueeze(0)
         if link_pos.ndim != 4:
             raise ValueError("collision field expects [batch,time,links,3] positions")
-        distances = self.object_signed_distances(link_pos, **kwargs)
         cutoff = float(kwargs.get("margin", self.cutoff_margin))
         margins = self.collision_margins + cutoff
+        if self.dynamic_world.fused_reduction_enabled:
+            static_distances = self.static_field.object_signed_distances(link_pos, **kwargs)
+            dynamic_distance, _ = self.dynamic_world.minimum_signed_distance_and_gradient(link_pos)
+            if field_type == "occupancy":
+                result = (
+                    (static_distances <= margins).any(dim=-2) | (dynamic_distance <= margins)
+                ).any(dim=-1)
+            elif field_type == "sdf":
+                static_penetration = torch.relu(margins - static_distances).max(dim=-2).values
+                dynamic_penetration = torch.relu(margins - dynamic_distance)
+                result = torch.maximum(static_penetration, dynamic_penetration).sum(dim=-1)
+            else:
+                raise ValueError(f"unsupported field_type {field_type!r}")
+            return result.squeeze(0) if squeeze_batch else result
+        distances = self.object_signed_distances(link_pos, **kwargs)
         collisions = distances <= margins
         if field_type == "occupancy":
             result = collisions.any(dim=-1).any(dim=-1)

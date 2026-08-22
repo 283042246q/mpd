@@ -26,6 +26,11 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         max_dynamic_objects: int = 16,
         covariance_sigma: float = 3.0,
         process_acceleration_std_m_s2: float = 0.01,
+        capacity_buckets_enabled: bool = True,
+        shape_grouping_enabled: bool = True,
+        time_table_cache_enabled: bool = True,
+        fused_reduction_enabled: bool = True,
+        dynamic_guide_pruning_enabled: bool = True,
     ) -> None:
         import torch
 
@@ -44,6 +49,10 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             tensor_args=self.tensor_args,
             covariance_sigma=covariance_sigma,
             process_acceleration_std_m_s2=process_acceleration_std_m_s2,
+            capacity_buckets_enabled=capacity_buckets_enabled,
+            shape_grouping_enabled=shape_grouping_enabled,
+            time_table_cache_enabled=time_table_cache_enabled,
+            fused_reduction_enabled=fused_reduction_enabled,
         )
         self.dynamic_field = StaticDynamicCollisionField(static_field, self.dynamic_world)
         self.planning_task.df_collision_objects = self.dynamic_field
@@ -57,9 +66,12 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             collision_cost = self.planner.cost_guide.costs.get("CostTaskSpaceCollisionObjects")
             if collision_cost is not None:
                 collision_cost.cost.collision_objects_field = self.dynamic_field
-            # Dynamic timing must retain the complete phase axis.  Phase 4 has
-            # its own entry so Phase 3's production pruning settings are untouched.
-            self.planner.cost_guide.gradient_pruning_enabled = False
+            if dynamic_guide_pruning_enabled:
+                self._validate_fixed_timing_pruning()
+            self.planner.cost_guide.gradient_pruning_enabled = bool(
+                dynamic_guide_pruning_enabled
+            )
+        self.dynamic_guide_pruning_enabled = bool(dynamic_guide_pruning_enabled)
 
         ranked = self.planner.dense_validation_config.get("ranked_early_exit", {})
         ranked["enabled"] = False
@@ -106,6 +118,14 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             "valid_until_unix_ns": self.dynamic_world.valid_until_unix_ns,
             "orientation_model": "constant",
             "motion_model": "constant_velocity",
+            "active_capacity": self.dynamic_world._active_capacity(),
+            "optimizations": {
+                "capacity_buckets": self.dynamic_world.capacity_buckets_enabled,
+                "shape_and_inflation_grouping": self.dynamic_world.shape_grouping_enabled,
+                "time_table_cache": self.dynamic_world.time_table_cache_enabled,
+                "fused_local_sdf_reduction": self.dynamic_world.fused_reduction_enabled,
+                "dynamic_guide_pruning": self.dynamic_guide_pruning_enabled,
+            },
         }
         response["dense_validation"].update(
             fully_warmed=True,
@@ -113,6 +133,36 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             pruning_used=False,
         )
         return response
+
+    def _validate_fixed_timing_pruning(self) -> None:
+        """Reject pruning modes that can remove candidates or future timestamps."""
+
+        config = self.planner.cost_guide.gradient_pruning_config
+        unsafe = {
+            "candidate.enabled": bool(config["candidate"]["enabled"]),
+            "temporal.enabled": bool(config["temporal"]["enabled"]),
+            "temporal.conditional_enabled": bool(
+                config["temporal"].get("conditional_enabled", False)
+            ),
+            "preselection.parent_bounds_scan": bool(
+                config["preselection"].get("parent_bounds_scan", False)
+            ),
+            "span_certificate.enabled": bool(
+                config.get("span_certificate", {}).get("enabled", False)
+            ),
+            "spatial.link_broad_phase.enabled": bool(
+                config["spatial"].get("link_broad_phase", {}).get("enabled", False)
+            ),
+            "scheduling.skip_safe_candidates": bool(
+                config["scheduling"].get("skip_safe_candidates", False)
+            ),
+        }
+        enabled = [name for name, value in unsafe.items() if value]
+        if enabled:
+            raise DynamicWorldError(
+                "dynamic guide pruning must preserve every candidate and all fixed timing points; "
+                f"disable: {', '.join(enabled)}"
+            )
 
     def plan(self, raw_request: dict[str, Any]) -> PlanArtifacts:
         import numpy as np

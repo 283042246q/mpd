@@ -14,6 +14,14 @@ from scripts.runtime.infer_server import ResidentPlannerService
 from scripts.runtime.ipc_protocol import PROTOCOL_SCHEMA_VERSION, ProtocolError
 
 
+def _add_boolean_switch(parser: argparse.ArgumentParser, name: str, *, default: bool) -> None:
+    destination = name.replace("-", "_")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(f"--{name}", dest=destination, action="store_true")
+    group.add_argument(f"--no-{name}", dest=destination, action="store_false")
+    parser.set_defaults(**{destination: default})
+
+
 class DynamicResidentPlannerService(ResidentPlannerService):
     def _update_world(self, message: dict[str, Any]) -> dict[str, Any]:
         if self.state != "READY":
@@ -79,6 +87,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-dynamic-objects", type=int, default=16)
     parser.add_argument("--covariance-sigma", type=float, default=3.0)
     parser.add_argument("--process-acceleration-std", type=float, default=0.01)
+    _add_boolean_switch(parser, "capacity-buckets", default=True)
+    _add_boolean_switch(parser, "shape-grouping", default=True)
+    _add_boolean_switch(parser, "time-table-cache", default=True)
+    _add_boolean_switch(parser, "fused-reduction", default=True)
+    _add_boolean_switch(parser, "dynamic-guide-pruning", default=True)
     return parser
 
 
@@ -94,6 +107,11 @@ def main(argv=None) -> int:
             max_dynamic_objects=args.max_dynamic_objects,
             covariance_sigma=args.covariance_sigma,
             process_acceleration_std_m_s2=args.process_acceleration_std,
+            capacity_buckets_enabled=args.capacity_buckets,
+            shape_grouping_enabled=args.shape_grouping,
+            time_table_cache_enabled=args.time_table_cache,
+            fused_reduction_enabled=args.fused_reduction,
+            dynamic_guide_pruning_enabled=args.dynamic_guide_pruning,
         )
 
     service = DynamicResidentPlannerService(args.socket, args.output_root, engine_factory)
