@@ -107,6 +107,24 @@ def test_manifest_drives_active_pending_and_obsolete_colors(tmp_path):
     assert segment_color(old, 1.2, COLOR_GRAY) == COLOR_RED
 
 
+def test_manifest_reads_deduplicated_trajectory_schema_v2(tmp_path):
+    path = _manifest(tmp_path)
+    np.savez(
+        tmp_path / "new.npz",
+        artifact_schema_version=np.asarray(2, dtype=np.int64),
+        best_trajectory_topk_index=np.asarray(1, dtype=np.int64),
+        topk_positions=np.asarray(
+            [
+                [[30.0] * 7, [31.0] * 7, [32.0] * 7],
+                [[10.0] * 7, [11.0] * 7, [12.0] * 7],
+            ]
+        ),
+        time_from_start=np.asarray([0.0, 1.0, 2.0]),
+    )
+    manifest = load_dynamic_replay_manifest(path)
+    assert manifest.plans[1].trajectory.positions[0].tolist() == [10.0] * 7
+
+
 def test_robot_command_is_interpolated_across_handoff(tmp_path):
     manifest = load_dynamic_replay_manifest(_manifest(tmp_path))
     assert robot_position_at(manifest, 1.0) == pytest.approx([0.5] * 7)

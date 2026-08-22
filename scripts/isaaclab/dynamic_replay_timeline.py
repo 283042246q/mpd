@@ -133,8 +133,28 @@ def _vector(value: Any, size: int, name: str) -> np.ndarray:
 def _load_trajectory(path: Path) -> TrajectoryData:
     try:
         with np.load(path, allow_pickle=False) as data:
-            positions = np.asarray(data["positions"], dtype=np.float64)
+            if "positions" in data:
+                positions = np.asarray(data["positions"], dtype=np.float64)
+            else:
+                schema_version = int(
+                    np.asarray(data["artifact_schema_version"]).item()
+                )
+                if schema_version != 2:
+                    raise DynamicReplayError(
+                        f"{path}: omitted positions require trajectory schema v2"
+                    )
+                best_index = int(
+                    np.asarray(data["best_trajectory_topk_index"]).item()
+                )
+                topk_positions = np.asarray(data["topk_positions"], dtype=np.float64)
+                if best_index < 0 or best_index >= len(topk_positions):
+                    raise DynamicReplayError(
+                        f"{path}: best trajectory top-K index is out of range"
+                    )
+                positions = topk_positions[best_index]
             times_s = np.asarray(data["time_from_start"], dtype=np.float64)
+    except DynamicReplayError:
+        raise
     except (OSError, KeyError, ValueError) as error:
         raise DynamicReplayError(f"cannot load trajectory {path}: {error}") from error
     if positions.ndim != 2 or positions.shape[0] < 2 or positions.shape[1] not in (7, 9):
