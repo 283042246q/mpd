@@ -42,6 +42,8 @@ class ResidentPlannerService:
         socket_path: Path,
         output_root: Path,
         engine_factory: Callable[[Callable[[str], None]], Any],
+        *,
+        trajectory_compression: bool = True,
     ) -> None:
         self.socket_path = Path(socket_path).expanduser().resolve()
         self.output_root = Path(output_root).expanduser().resolve()
@@ -54,6 +56,7 @@ class ResidentPlannerService:
         self._startup_error = None
         self._server = None
         self._engine_factory = engine_factory
+        self.trajectory_compression = bool(trajectory_compression)
 
     @property
     def state(self) -> str:
@@ -150,7 +153,11 @@ class ResidentPlannerService:
         started = time.perf_counter()
         try:
             artifacts = self._engine.plan(raw_request)
-            _atomic_write_npz(trajectory_path, **artifacts.trajectory_arrays)
+            _atomic_write_npz(
+                trajectory_path,
+                compressed=self.trajectory_compression,
+                **artifacts.trajectory_arrays,
+            )
             _atomic_write_json(result_path, artifacts.result_payload)
             finished_unix_ns = time.time_ns()
             if deadline_unix_ns is not None and finished_unix_ns >= deadline_unix_ns:
@@ -171,6 +178,13 @@ class ResidentPlannerService:
                 "trajectory_path": trajectory_path.as_posix(),
                 "elapsed_sec": time.perf_counter() - started,
                 "engine_instance_id": self._engine.instance_id,
+                "trajectory_artifact": artifacts.result_payload.get(
+                    "trajectory_artifact",
+                    {
+                        "schema_version": 1,
+                        "compression": "zlib" if self.trajectory_compression else "none",
+                    },
+                ),
             }
         except RuntimeContractError as error:
             trajectory_path.unlink(missing_ok=True)

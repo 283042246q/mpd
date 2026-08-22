@@ -31,8 +31,19 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         time_table_cache_enabled: bool = True,
         fused_reduction_enabled: bool = True,
         dynamic_guide_pruning_enabled: bool = True,
+        trajectory_schema_version: int = 2,
+        collision_spheres_float32: bool = True,
+        deduplicate_best_trajectory: bool = True,
     ) -> None:
         import torch
+
+        if trajectory_schema_version not in (1, 2):
+            raise ValueError("trajectory_schema_version must be 1 or 2")
+        if deduplicate_best_trajectory and trajectory_schema_version != 2:
+            raise ValueError("best-trajectory deduplication requires trajectory schema v2")
+        self.trajectory_schema_version = int(trajectory_schema_version)
+        self.collision_spheres_float32 = bool(collision_spheres_float32)
+        self.deduplicate_best_trajectory = bool(deduplicate_best_trajectory)
 
         super().__init__(
             config_path=config_path,
@@ -125,7 +136,10 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
                 "time_table_cache": self.dynamic_world.time_table_cache_enabled,
                 "fused_local_sdf_reduction": self.dynamic_world.fused_reduction_enabled,
                 "dynamic_guide_pruning": self.dynamic_guide_pruning_enabled,
+                "collision_spheres_float32": self.collision_spheres_float32,
+                "deduplicate_best_trajectory": self.deduplicate_best_trajectory,
             },
+            "trajectory_schema_version": self.trajectory_schema_version,
         }
         response["dense_validation"].update(
             fully_warmed=True,
@@ -190,11 +204,6 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         if checked != generated or not complete:
             raise DynamicWorldError("Phase-4 final DenseCheck did not evaluate every candidate")
 
-        q_position = torch.as_tensor(artifacts.trajectory_arrays["positions"], **self.tensor_args)
-        poses = torch.stack(
-            self.planning_task.robot.fk_collision_spheres(q_position), dim=-3
-        )
-        sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
         topk_q_position = torch.as_tensor(
             artifacts.trajectory_arrays["topk_positions"], **self.tensor_args
         )
@@ -208,16 +217,58 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         topk_sphere_positions = link_pos_from_link_tensor(topk_poses)[..., :3].reshape(
             *topk_shape, topk_poses.shape[-3], 3
         )
+        sphere_dtype = np.float32 if self.collision_spheres_float32 else np.float64
         artifacts.trajectory_arrays.update(
-            collision_sphere_positions=to_numpy(sphere_positions, dtype=np.float64),
-            topk_collision_sphere_positions=to_numpy(
-                topk_sphere_positions, dtype=np.float64
-            ),
+            topk_collision_sphere_positions=to_numpy(topk_sphere_positions, dtype=sphere_dtype),
             collision_sphere_radii=to_numpy(
                 self.planning_task.robot.link_collision_spheres_radii,
-                dtype=np.float64,
+                dtype=sphere_dtype,
             ),
         )
+        if not self.deduplicate_best_trajectory:
+            q_position = torch.as_tensor(
+                artifacts.trajectory_arrays["positions"], **self.tensor_args
+            )
+            poses = torch.stack(
+                self.planning_task.robot.fk_collision_spheres(q_position), dim=-3
+            )
+            sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
+            artifacts.trajectory_arrays["collision_sphere_positions"] = to_numpy(
+                sphere_positions, dtype=sphere_dtype
+            )
+        if self.trajectory_schema_version == 2:
+            artifacts.trajectory_arrays.update(
+                artifact_schema_version=np.asarray(2, dtype=np.int64),
+                best_trajectory_topk_index=np.asarray(0, dtype=np.int64),
+            )
+            if self.deduplicate_best_trajectory:
+                for best_key, topk_key in (
+                    ("positions", "topk_positions"),
+                    ("velocities", "topk_velocities"),
+                    ("accelerations", "topk_accelerations"),
+                ):
+                    if not np.allclose(
+                        artifacts.trajectory_arrays[best_key],
+                        artifacts.trajectory_arrays[topk_key][0],
+                        rtol=0.0,
+                        atol=1e-7,
+                    ):
+                        raise DynamicWorldError(
+                            f"cannot deduplicate {best_key}: top-K[0] is not the selected best trajectory"
+                        )
+                for key in (
+                    "positions",
+                    "velocities",
+                    "accelerations",
+                    "collision_sphere_positions",
+                ):
+                    artifacts.trajectory_arrays.pop(key, None)
+        artifacts.result_payload["trajectory_artifact"] = {
+            "schema_version": self.trajectory_schema_version,
+            "best_trajectory_topk_index": 0,
+            "best_trajectory_deduplicated": self.deduplicate_best_trajectory,
+            "collision_sphere_dtype": "float32" if self.collision_spheres_float32 else "float64",
+        }
         artifacts.result_payload["dynamic_world"] = {
             "world_version": world_version,
             "frame_id": self.dynamic_world.frame_id,

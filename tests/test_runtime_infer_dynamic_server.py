@@ -79,6 +79,10 @@ def test_world_update_and_matching_plan_contract(tmp_path):
     )
     assert response["status"] == "OK"
     assert response["world_version"] == 7
+    assert response["trajectory_artifact"] == {
+        "schema_version": 1,
+        "compression": "zlib",
+    }
 
 
 def test_plan_rejects_world_version_that_is_not_loaded(tmp_path):

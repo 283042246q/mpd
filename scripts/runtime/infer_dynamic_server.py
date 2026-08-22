@@ -92,6 +92,12 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_boolean_switch(parser, "time-table-cache", default=True)
     _add_boolean_switch(parser, "fused-reduction", default=True)
     _add_boolean_switch(parser, "dynamic-guide-pruning", default=True)
+    parser.add_argument("--trajectory-schema-version", type=int, choices=(1, 2), default=2)
+    parser.add_argument(
+        "--trajectory-compression", choices=("none", "zlib"), default="none"
+    )
+    _add_boolean_switch(parser, "collision-spheres-float32", default=True)
+    _add_boolean_switch(parser, "deduplicate-best-trajectory", default=True)
     return parser
 
 
@@ -112,9 +118,17 @@ def main(argv=None) -> int:
             time_table_cache_enabled=args.time_table_cache,
             fused_reduction_enabled=args.fused_reduction,
             dynamic_guide_pruning_enabled=args.dynamic_guide_pruning,
+            trajectory_schema_version=args.trajectory_schema_version,
+            collision_spheres_float32=args.collision_spheres_float32,
+            deduplicate_best_trajectory=args.deduplicate_best_trajectory,
         )
 
-    service = DynamicResidentPlannerService(args.socket, args.output_root, engine_factory)
+    service = DynamicResidentPlannerService(
+        args.socket,
+        args.output_root,
+        engine_factory,
+        trajectory_compression=args.trajectory_compression == "zlib",
+    )
     service.serve_forever()
     return 0
 

@@ -140,7 +140,9 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary_path.replace(path)
 
 
-def _atomic_write_npz(path: Path, **arrays: np.ndarray) -> None:
+def _atomic_write_npz(
+    path: Path, *, compressed: bool = True, **arrays: np.ndarray
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w+b",
@@ -150,7 +152,8 @@ def _atomic_write_npz(path: Path, **arrays: np.ndarray) -> None:
         delete=False,
     ) as stream:
         temporary_path = Path(stream.name)
-        np.savez_compressed(stream, **arrays)
+        writer = np.savez_compressed if compressed else np.savez
+        writer(stream, **arrays)
         stream.flush()
         os.fsync(stream.fileno())
     temporary_path.replace(path)
