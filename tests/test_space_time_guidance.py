@@ -63,7 +63,6 @@ def _problem():
         velocity_weight=0.0,
         acceleration_weight=0.0,
         duration_weight=0.01,
-        duration_bound_weight=20.0,
         timing_smoothness_weight=0.01,
     )
     evaluator = SpaceTimeCostEvaluator(
@@ -93,6 +92,34 @@ def _cost(evaluator, controls, q, q_s, q_ss, sphere_positions):
         q_ss=q_ss,
         collision_sphere_positions=sphere_positions,
     )[0].sum()
+
+
+def test_duration_cost_is_single_normalized_makespan_term():
+    timing, evaluator, controls, q, q_s, q_ss, sphere_positions = _problem()
+    _, breakdown, evaluation = evaluator(
+        controls,
+        q=q,
+        q_s=q_s,
+        q_ss=q_ss,
+        collision_sphere_positions=sphere_positions,
+    )
+    shorter_controls = timing.linear_control_points(1.5, batch_shape=(1,))
+    _, shorter_breakdown, shorter_evaluation = evaluator(
+        shorter_controls,
+        q=q,
+        q_s=q_s,
+        q_ss=q_ss,
+        collision_sphere_positions=sphere_positions,
+    )
+
+    torch.testing.assert_close(
+        breakdown["duration"], evaluation.duration / 10.0
+    )
+    torch.testing.assert_close(
+        shorter_breakdown["duration"], shorter_evaluation.duration / 10.0
+    )
+    assert shorter_breakdown["duration"].item() < breakdown["duration"].item()
+    assert "duration_bounds" not in breakdown
 
 
 def test_joint_dynamic_cost_gradients_match_central_difference():

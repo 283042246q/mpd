@@ -25,6 +25,8 @@ SPACE_TIME_MODES = {
     "phase5_joint",
 }
 
+DURATION_COST_NORMALIZER_S = 10.0
+
 
 @dataclass(frozen=True)
 class SpaceTimeGuidanceSettings:
@@ -46,7 +48,6 @@ class SpaceTimeGuidanceSettings:
     velocity_weight: float = 0.02
     acceleration_weight: float = 0.005
     duration_weight: float = 0.02
-    duration_bound_weight: float = 20.0
     timing_smoothness_weight: float = 0.02
     collision_power: float = 2.0
 
@@ -145,12 +146,7 @@ class SpaceTimeCostEvaluator:
                 acceleration_density * evaluation.u, evaluation.phase, dim=-1
             )
 
-        duration = (evaluation.duration - self.settings.nominal_duration).square()
-        duration_bounds = torch.relu(
-            self.settings.duration_min - evaluation.duration
-        ).square() + torch.relu(
-            evaluation.duration - self.settings.duration_max
-        ).square()
+        duration = evaluation.duration / DURATION_COST_NORMALIZER_S
         timing_smoothness = torch.trapezoid(
             (evaluation.u_s / evaluation.u).square(), evaluation.phase, dim=-1
         )
@@ -159,7 +155,6 @@ class SpaceTimeCostEvaluator:
             "velocity": velocity,
             "acceleration": acceleration,
             "duration": duration,
-            "duration_bounds": duration_bounds,
             "timing_smoothness": timing_smoothness,
         }
         total = (
@@ -167,7 +162,6 @@ class SpaceTimeCostEvaluator:
             + self.settings.velocity_weight * velocity
             + self.settings.acceleration_weight * acceleration
             + self.settings.duration_weight * duration
-            + self.settings.duration_bound_weight * duration_bounds
             + self.settings.timing_smoothness_weight * timing_smoothness
         )
         return total, breakdown, evaluation

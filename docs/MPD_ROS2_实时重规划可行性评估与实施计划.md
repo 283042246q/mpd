@@ -483,8 +483,11 @@ c ──> u(s), t(s), u_s ─> x_o(t) ───┘
 | 动态 local-SDF collision | 是 | 是 | 同时决定“往哪绕”和“何时到” |
 | goal/boundary/path geometry | 是 | 视定义而定 | 保持任务目标和路径质量 |
 | joint velocity/acceleration | 是 | 是 | 防止通过压缩时间投机 |
-| timing smoothness、`T_min/T_max` | 否 | 是 | 防止停滞、抖动和无限拖延 |
+| timing smoothness | 否 | 是 | 防止时间分配抖动 |
 | duration/arrival preference | 否 | 是 | 在安全前提下避免无谓等待 |
+
+当前 duration/arrival preference 仅保留单项 `C_duration=T/10`，越短越好；
+`T_min <= T <= T_max` 不再重复写成软成本，而是在每次 timing 更新后通过回溯投影强制满足。
 
 工程上必须为两类变量设置独立的归一化、gradient clipping 和 step size。`P` 的量纲是 rad，`c/u/t` 的量纲最终落在秒；直接拼接后使用同一梯度尺度很容易让某一侧完全主导。建议保留现有空间 guidance 更新，只给 timing 参数增加独立优化器状态，第一版优先采用可解释的 projected gradient/Adam-like update，不改变 DDIM 的噪声日程。
 
@@ -784,6 +787,20 @@ fake hardware 和 replay 不模拟 Franka 真实跟踪误差、制动距离或 p
 - MPD 全量测试 `163 passed`，ROS 包回归 `42 passed`；真实 CUDA worker 输出严格递增时间及有限
   `q/dq/ddq`，Franka fake hardware 的 JTC 执行到 `Goal reached, success`，诊断为
   `accepted=1`、`invalid=0`、`deadline_miss=0`、`world_revalidation_rejected=0`。
+
+2026-08-24 将两个 duration 软项收敛为单项 `C_duration=T/10`，保留
+`[6,14] s` 硬投影。ToDrawer 两个移动箱子、seed 123 的单次 CUDA smoke 对比如下；
+两组均对 `100/100` 候选执行无剪枝最终 DenseCheck：
+
+| 模式 | 有效候选 | 碰撞候选 | 最优时长 | 路径长度 | request total | guide |
+|---|---:|---:|---:|---:|---:|---:|
+| Phase 5 joint，`T/10` | 38/100 | 52/100 | 9.615 s | 7.114 | 1.364 s | 1.224 s |
+| Phase 4 fixed timing | 2/100 | 98/100 | 10.000 s | 6.248 | 0.291 s | 0.219 s |
+
+这组单 seed 结果证明新 duration 项可运行，且在该输入上候选有效率明显高于
+固定 10 s 对照；但尚不是多 seed 成功率或 P50/P95 结论。旧 `infer_once.py`
+在同一静态 ToDrawer 场景也成功输出固定 10 s 轨迹，但它不解析
+`request.dynamic_world`，因而不能与上表的双移动箱子结果作等价比较。
 
 尚未完成的是 moving-gate、ToDrawer 两障碍交叉和静态环境上的四模式等预算统计消融、manifest/
 视频归档及 P50/P95/P99 报告。因此当前结论是“Phase 5 工程 baseline 可运行”，尚不能据此触发
