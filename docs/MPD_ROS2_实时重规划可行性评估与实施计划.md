@@ -789,18 +789,22 @@ fake hardware 和 replay 不模拟 Franka 真实跟踪误差、制动距离或 p
   `accepted=1`、`invalid=0`、`deadline_miss=0`、`world_revalidation_rejected=0`。
 
 2026-08-24 将两个 duration 软项收敛为单项 `C_duration=T/10`，保留
-`[6,14] s` 硬投影。ToDrawer 两个移动箱子、seed 123 的单次 CUDA smoke 对比如下；
-两组均对 `100/100` 候选执行无剪枝最终 DenseCheck：
+`[6,14] s` 硬投影。在相同 ToDrawer 起终点、seeds 123–127 上进行了有/无两个移动
+箱子的 CUDA 对比。四组每次均对 `100/100` 候选执行无剪枝最终 DenseCheck：
 
-| 模式 | 有效候选 | 碰撞候选 | 最优时长 | 路径长度 | request total | guide |
-|---|---:|---:|---:|---:|---:|---:|
-| Phase 5 joint，`T/10` | 38/100 | 52/100 | 9.615 s | 7.114 | 1.364 s | 1.224 s |
-| Phase 4 fixed timing | 2/100 | 98/100 | 10.000 s | 6.248 | 0.291 s | 0.219 s |
+| 环境 | 模式 | 成功 | 平均有效候选（范围） | 平均碰撞候选 | 平均最优时长 | 平均 request total | 平均 guide |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 双移动箱子 | Phase 5 joint，`T/10` | 5/5 | 38.2（31–43） | 52.6 | 9.683 s | 1.336 s | 1.212 s |
+| 双移动箱子 | Phase 4 fixed timing | 5/5 | 3.0（2–4） | 96.8 | 10.000 s | 0.277 s | 0.212 s |
+| 纯静态 ToDrawer | Phase 5 joint，`T/10` | 5/5 | 40.8（35–43） | 49.4 | 9.681 s | 1.321 s | 1.200 s |
+| 纯静态 ToDrawer | Phase 4 fixed timing | 5/5 | 40.8（35–43） | 49.4 | 10.000 s | 0.260 s | 0.194 s |
 
-这组单 seed 结果证明新 duration 项可运行，且在该输入上候选有效率明显高于
-固定 10 s 对照；但尚不是多 seed 成功率或 P50/P95 结论。旧 `infer_once.py`
-在同一静态 ToDrawer 场景也成功输出固定 10 s 轨迹，但它不解析
-`request.dynamic_world`，因而不能与上表的双移动箱子结果作等价比较。
+静态组中两种模式在每个 seed 的有效候选数完全一致，表明 timing 自由度没有虚假改变
+静态几何可行性；动态组的明显改善则来自 candidate-specific 时间和联合时空 guidance。
+代价是当前 Phase 5 未启用 fixed-timing 优化，平均请求延迟约为 Phase 4 的 4.8–5.1 倍。
+该结果是小样本功能消融，仍不替代更多场景、更多 seed 的 P50/P95/P99 验收。
+旧 `infer_once.py` 也可在静态 ToDrawer 成功输出固定 10 s 轨迹，但它不解析
+`request.dynamic_world` 且使用 ranked early exit，因而不作为上表的全候选等价对照。
 
 尚未完成的是 moving-gate、ToDrawer 两障碍交叉和静态环境上的四模式等预算统计消融、manifest/
 视频归档及 P50/P95/P99 报告。因此当前结论是“Phase 5 工程 baseline 可运行”，尚不能据此触发
