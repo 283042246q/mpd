@@ -47,7 +47,7 @@ class SpaceTimeGuidanceSettings:
     dynamic_collision_weight: float = 10.0
     velocity_weight: float = 0.02
     acceleration_weight: float = 0.005
-    duration_weight: float = 0.02
+    duration_weight: float = 1.0
     timing_smoothness_weight: float = 0.02
     collision_power: float = 2.0
 

@@ -127,7 +127,7 @@ conda run --no-capture-output -n mpd-splines-public \
 候选的真实时间数组，`timing_schema_version=1`。旧 schema v2 reader 不应把
 变时长轨迹当作共享 10 s 轨迹。Phase 5 worker 首版关闭依赖共享时间表的
 cache/pruning，最终候选仍必须由下游 latest-world revalidation 复验。
-时长软成本仅为 `C_duration=T/10`；默认 `[6,14] s` 上下限由 timing
+时长软成本仅为 `C_duration=T/10`，默认权重为 `1.0`；默认 `[6,14] s` 上下限由 timing
 更新后的回溯投影强制保证，不再叠加 duration-bound 软惩罚。
 
 不需要 socket/ROS 的单进程入口位于 `scripts/inference/infer_space_time.py`。

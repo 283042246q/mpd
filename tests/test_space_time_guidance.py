@@ -122,6 +122,10 @@ def test_duration_cost_is_single_normalized_makespan_term():
     assert "duration_bounds" not in breakdown
 
 
+def test_default_duration_weight_is_one():
+    assert SpaceTimeGuidanceSettings().duration_weight == 1.0
+
+
 def test_joint_dynamic_cost_gradients_match_central_difference():
     _, evaluator, controls, q, q_s, q_ss, sphere_positions = _problem()
     controls.requires_grad_(True)
