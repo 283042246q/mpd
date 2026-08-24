@@ -131,7 +131,6 @@ OUTPUT_DIR="$(realpath -m "$OUTPUT_DIR")"
 STATIC_SCENE="${OUTPUT_DIR}/static-scene.json"
 RECORD_DIR="${OUTPUT_DIR}/episode"
 MANIFEST="${RECORD_DIR}/replay-manifest.json"
-SOCKET_PATH="${OUTPUT_DIR}/${SOCKET_BASENAME}"
 PLANNER_RESULTS="${OUTPUT_DIR}/planner-results"
 VIDEO_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay.mp4"
 SCREENSHOT_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-final.png"
@@ -144,13 +143,12 @@ for required in "$MPD_PYTHON" "$CONDA_EXECUTABLE" "${ISAACLAB_ROOT}/isaaclab.sh"
     exit 1
   fi
 done
-mkdir -p "$OUTPUT_DIR" "$PLANNER_RESULTS" "$RECORD_DIR"
-export ROS_HOME="${OUTPUT_DIR}/ros-home"
-mkdir -p "$ROS_HOME"
 
 SERVER_PID=""
+SOCKET_RUNTIME_DIR=""
+SOCKET_PATH=""
 cleanup() {
-  if [[ -S "$SOCKET_PATH" ]]; then
+  if [[ -n "$SOCKET_PATH" && -S "$SOCKET_PATH" ]]; then
     env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
       "${MPD_ROOT}/scripts/runtime/infer_dynamic_client.py" \
       --socket "$SOCKET_PATH" --timeout-sec 5 shutdown >/dev/null 2>&1 || true
@@ -159,8 +157,22 @@ cleanup() {
     kill -TERM "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
+  if [[ -n "$SOCKET_PATH" && -S "$SOCKET_PATH" ]]; then
+    unlink "$SOCKET_PATH" 2>/dev/null || true
+  fi
+  if [[ -n "$SOCKET_RUNTIME_DIR" && -d "$SOCKET_RUNTIME_DIR" ]]; then
+    rmdir "$SOCKET_RUNTIME_DIR" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
+
+SOCKET_RUNTIME_DIR="$(
+  mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/mpd-${PHASE}.XXXXXX"
+)"
+SOCKET_PATH="${SOCKET_RUNTIME_DIR}/${SOCKET_BASENAME}"
+mkdir -p "$OUTPUT_DIR" "$PLANNER_RESULTS" "$RECORD_DIR"
+export ROS_HOME="${OUTPUT_DIR}/ros-home"
+mkdir -p "$ROS_HOME"
 
 printf '[1/6] Exporting static scene for %s\n' "$ENV_NAME"
 cd "$MPD_ROOT"
@@ -169,6 +181,7 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   --profile "$PROFILE" --output "$STATIC_SCENE"
 
 printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
+printf '  runtime socket: %s\n' "$SOCKET_PATH"
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$CONDA_EXECUTABLE" run --no-capture-output \
   -n mpd-splines-public python "$SERVER_SCRIPT" \
   --socket "$SOCKET_PATH" \

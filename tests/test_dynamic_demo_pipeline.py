@@ -50,3 +50,13 @@ def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     assert 'ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"' in source
     assert 'SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")' in source
     assert 'ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")' in source
+
+
+def test_pipeline_keeps_runtime_socket_out_of_artifact_directory():
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/mpd-${PHASE}.XXXXXX"' in source
+    assert 'SOCKET_PATH="${SOCKET_RUNTIME_DIR}/${SOCKET_BASENAME}"' in source
+    assert 'SOCKET_PATH="${OUTPUT_DIR}/${SOCKET_BASENAME}"' not in source
+    assert 'unlink "$SOCKET_PATH"' in source
+    assert 'rmdir "$SOCKET_RUNTIME_DIR"' in source
