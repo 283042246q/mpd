@@ -122,6 +122,48 @@ def test_duration_cost_is_single_normalized_makespan_term():
     assert "duration_bounds" not in breakdown
 
 
+def test_time_integrated_costs_are_normalized_by_candidate_duration():
+    timing, evaluator, _, q, _, _, sphere_positions = _problem()
+
+    class _ConstantDistanceWorld:
+        @staticmethod
+        def minimum_signed_distance_and_gradient(points, **_kwargs):
+            return (
+                torch.zeros(points.shape[:-1], **TENSOR_ARGS),
+                torch.zeros_like(points),
+            )
+
+    evaluator.dynamic_world = _ConstantDistanceWorld()
+    evaluator.velocity_limits = torch.tensor([1.0], **TENSOR_ARGS)
+    evaluator.acceleration_limits = torch.tensor([1.0], **TENSOR_ARGS)
+    controls = torch.cat(
+        (
+            timing.linear_control_points(1.5, batch_shape=(1,)),
+            timing.linear_control_points(3.0, batch_shape=(1,)),
+        ),
+        dim=0,
+    )
+    timing_evaluation = timing.evaluate(controls)
+    q = q.expand(2, -1, -1).clone()
+    q_s = 2.0 * timing_evaluation.u[..., None]
+    q_ss = 2.0 * timing_evaluation.u[..., None].square()
+    sphere_positions = sphere_positions.expand(2, -1, -1, -1).clone()
+
+    _, breakdown, _ = evaluator(
+        controls,
+        q=q,
+        q_s=q_s,
+        q_ss=q_ss,
+        collision_sphere_positions=sphere_positions,
+    )
+
+    for name in ("dynamic_collision", "velocity", "acceleration"):
+        assert breakdown[name][0].item() == pytest.approx(
+            breakdown[name][1].item(), rel=1e-10, abs=1e-10
+        )
+    assert breakdown["duration"][0].item() < breakdown["duration"][1].item()
+
+
 def test_default_duration_weight_is_one():
     assert SpaceTimeGuidanceSettings().duration_weight == 1.0
 

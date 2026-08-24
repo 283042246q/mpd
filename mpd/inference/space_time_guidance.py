@@ -125,11 +125,17 @@ class SpaceTimeCostEvaluator:
         ) + self.cutoff_margin
         penetration = torch.relu(margins - minimum_distance)
         collision_density = penetration.pow(self.settings.collision_power).sum(dim=-1)
+        candidate_duration = evaluation.duration
+        inverse_duration = candidate_duration.clamp_min(
+            torch.finfo(candidate_duration.dtype).eps
+        ).reciprocal()
+        # Compare time-distributed penalties as mean density. Candidate
+        # makespan is charged exactly once by the explicit duration term.
         dynamic_collision = torch.trapezoid(
             collision_density * evaluation.u,
             evaluation.phase,
             dim=-1,
-        )
+        ) * inverse_duration
 
         velocity = torch.zeros_like(dynamic_collision)
         if self.velocity_limits is not None:
@@ -137,16 +143,16 @@ class SpaceTimeCostEvaluator:
             velocity_density = torch.relu(utilization - 1.0).square().sum(dim=-1)
             velocity = torch.trapezoid(
                 velocity_density * evaluation.u, evaluation.phase, dim=-1
-            )
+            ) * inverse_duration
         acceleration = torch.zeros_like(dynamic_collision)
         if self.acceleration_limits is not None:
             utilization = torch.abs(evaluation.ddq) / self.acceleration_limits
             acceleration_density = torch.relu(utilization - 1.0).square().sum(dim=-1)
             acceleration = torch.trapezoid(
                 acceleration_density * evaluation.u, evaluation.phase, dim=-1
-            )
+            ) * inverse_duration
 
-        duration = evaluation.duration / DURATION_COST_NORMALIZER_S
+        duration_cost = candidate_duration / DURATION_COST_NORMALIZER_S
         timing_smoothness = torch.trapezoid(
             (evaluation.u_s / evaluation.u).square(), evaluation.phase, dim=-1
         )
@@ -154,14 +160,14 @@ class SpaceTimeCostEvaluator:
             "dynamic_collision": dynamic_collision,
             "velocity": velocity,
             "acceleration": acceleration,
-            "duration": duration,
+            "duration": duration_cost,
             "timing_smoothness": timing_smoothness,
         }
         total = (
             self.settings.dynamic_collision_weight * dynamic_collision
             + self.settings.velocity_weight * velocity
             + self.settings.acceleration_weight * acceleration
-            + self.settings.duration_weight * duration
+            + self.settings.duration_weight * duration_cost
             + self.settings.timing_smoothness_weight * timing_smoothness
         )
         return total, breakdown, evaluation

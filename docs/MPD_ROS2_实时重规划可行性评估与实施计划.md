@@ -813,6 +813,17 @@ clearance 均不变。静态最优轨迹的平均速度 limit utilization 从 `0
 旧 `infer_once.py` 也可在静态 ToDrawer 成功输出固定 10 s 轨迹，但它不解析
 `request.dynamic_world` 且使用 ranked early exit，因而不作为上表的全候选等价对照。
 
+2026-08-24 进一步将 Phase 5 候选的 ROS 硬动态碰撞窗口改为该候选的实际
+duration，不再将终点保持扩展到固定 14 s 后拒绝候选。固定 14 s 仍用于公共
+kinematic/tail 比较窗口和预测有效性管理。Phase 5 guidance 中的 dynamic-collision、
+velocity-limit 和 acceleration-limit 时间积分除以候选 duration，变为单位时间
+平均密度；候选时长只由显式 `C_duration=T/10` 收费一次。硬碰撞、minimum
+clearance 和 timing smoothness 不做 duration 除法，以免削弱真实安全约束或破坏
+对整体时间缩放不变的时间形状正则。双箱 ToDrawer 35 s fake-hardware 复验录制
+5 条计划、293 个世界快照，接受 1 次、handoff 1 次、brake 0 次、最大指令间隙 0 s。
+纯静态 ToDrawer 单次 CUDA 复验对 100 条候选完成全量 DenseCheck，42 条有效，最优
+duration 为 8.752 s，minimum environment clearance 为 0.0109 m。
+
 尚未完成的是 moving-gate、ToDrawer 两障碍交叉和静态环境上的四模式等预算统计消融、manifest/
 视频归档及 P50/P95/P99 报告。因此当前结论是“Phase 5 工程 baseline 可运行”，尚不能据此触发
 Phase 6/8 的研究 Go 决策。
