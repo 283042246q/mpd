@@ -12,6 +12,9 @@ CONDA_EXECUTABLE="${CONDA_EXECUTABLE:-/home/eric/anaconda3/bin/conda}"
 ISAAC_PYTHON_PREFIX="${ISAAC_PYTHON_PREFIX:-/home/eric/anaconda3/envs/env_isaaclab}"
 
 PROFILE="to_drawer"
+PHASE="phase5"
+TIMING_MODE="phase5_joint"
+TIMING_MODE_EXPLICIT=false
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=1.0
@@ -26,9 +29,11 @@ usage() {
   printf '%s\n' \
     "Usage: $0 [options]" \
     "  --profile NAME          Environment profile (currently: to_drawer)" \
+    "  --phase NAME            Planner phase: phase4 or phase5 (default: phase5)" \
+    "  --timing-mode MODE      Phase-5 mode (default: phase5_joint)" \
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
-    "  --plan-rate-hz HZ       Replan rate (default: 0.5)" \
+    "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
     "  --world-scenario NAME   Override the profile's dynamic-world scenario" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
@@ -41,6 +46,8 @@ usage() {
 while (($#)); do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
+    --phase) PHASE="$2"; shift 2 ;;
+    --timing-mode) TIMING_MODE="$2"; TIMING_MODE_EXPLICIT=true; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
@@ -54,6 +61,26 @@ while (($#)); do
     *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+case "$PHASE" in
+  4|phase4) PHASE="phase4" ;;
+  5|phase5) PHASE="phase5" ;;
+  *)
+    printf 'Unsupported phase: %s (supported: phase4, phase5)\n' "$PHASE" >&2
+    exit 2
+    ;;
+esac
+case "$TIMING_MODE" in
+  phase5_scalar_duration|phase5_timing_only|phase5_joint) ;;
+  *)
+    printf 'Unsupported Phase-5 timing mode: %s\n' "$TIMING_MODE" >&2
+    exit 2
+    ;;
+esac
+if [[ "$PHASE" == "phase4" && "$TIMING_MODE_EXPLICIT" == true ]]; then
+  printf '%s\n' '--timing-mode is only valid with --phase phase5' >&2
+  exit 2
+fi
 
 case "$PROFILE" in
   to_drawer)
@@ -71,14 +98,40 @@ if [[ -n "$WORLD_SCENARIO_OVERRIDE" ]]; then
   WORLD_SCENARIO="$WORLD_SCENARIO_OVERRIDE"
 fi
 
+SERVER_EXTRA_ARGS=()
+ROS_EXTRA_ARGS=()
+case "$PHASE" in
+  phase4)
+    SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_dynamic_server.py"
+    ROS_LAUNCH="replan_dynamic_fake_hardware.launch.py"
+    SOCKET_BASENAME="mpd-dynamic-runtime.sock"
+    TIMING_LABEL="fixed"
+    HEALTH_TIMEOUT_S=2
+    ;;
+  phase5)
+    SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_space_time_server.py"
+    ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"
+    SOCKET_BASENAME="mpd-space-time-runtime.sock"
+    TIMING_LABEL="$TIMING_MODE"
+    HEALTH_TIMEOUT_S=10
+    SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")
+    ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")
+    ;;
+esac
+
 if [[ -z "$OUTPUT_DIR" ]]; then
-  OUTPUT_DIR="${MPD_ROOT}/scripts/inference/logs/dynamic-replay-${PROFILE}/$(date +%Y%m%d-%H%M%S)"
+  if [[ "$PHASE" == "phase4" ]]; then
+    LOG_GROUP="dynamic-replay-${PROFILE}"
+  else
+    LOG_GROUP="dynamic-replay-${PROFILE}-phase5"
+  fi
+  OUTPUT_DIR="${MPD_ROOT}/scripts/inference/logs/${LOG_GROUP}/$(date +%Y%m%d-%H%M%S)"
 fi
 OUTPUT_DIR="$(realpath -m "$OUTPUT_DIR")"
 STATIC_SCENE="${OUTPUT_DIR}/static-scene.json"
 RECORD_DIR="${OUTPUT_DIR}/episode"
 MANIFEST="${RECORD_DIR}/replay-manifest.json"
-SOCKET_PATH="${OUTPUT_DIR}/mpd-dynamic-runtime.sock"
+SOCKET_PATH="${OUTPUT_DIR}/${SOCKET_BASENAME}"
 PLANNER_RESULTS="${OUTPUT_DIR}/planner-results"
 VIDEO_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay.mp4"
 SCREENSHOT_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-final.png"
@@ -115,13 +168,14 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   scripts/isaaclab/export_replay_static_scene.py \
   --profile "$PROFILE" --output "$STATIC_SCENE"
 
-printf '[2/6] Starting resident MPD worker (cold model load occurs once)\n'
+printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$CONDA_EXECUTABLE" run --no-capture-output \
-  -n mpd-splines-public python scripts/runtime/infer_dynamic_server.py \
+  -n mpd-splines-public python "$SERVER_SCRIPT" \
   --socket "$SOCKET_PATH" \
   --output-root "$PLANNER_RESULTS" \
   --config "$MPD_CONFIG" \
-  --device cuda:0 >"${OUTPUT_DIR}/mpd-server.log" 2>&1 &
+  --device cuda:0 \
+  "${SERVER_EXTRA_ARGS[@]}" >"${OUTPUT_DIR}/mpd-server.log" 2>&1 &
 SERVER_PID=$!
 
 READY=false
@@ -132,7 +186,7 @@ for _ in $(seq 1 180); do
   fi
   if env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
     scripts/runtime/infer_dynamic_client.py \
-    --socket "$SOCKET_PATH" --timeout-sec 2 health >/dev/null 2>&1; then
+    --socket "$SOCKET_PATH" --timeout-sec "$HEALTH_TIMEOUT_S" health >/dev/null 2>&1; then
     READY=true
     break
   fi
@@ -143,7 +197,7 @@ if [[ "$READY" != true ]]; then
   exit 1
 fi
 
-printf '[3/6] Running fake hardware, moving obstacle, replanning, and passive trace recording\n'
+printf '[3/6] Running %s fake hardware, moving obstacle, replanning, and passive trace recording\n' "$PHASE"
 cd "$AIRUNTIME_ROOT"
 if [[ "$SKIP_BUILD" != true ]]; then
   pixi run build --packages-up-to mpd_dynamic_planner_adapter \
@@ -152,7 +206,7 @@ fi
 set +e
 timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
   pixi run bash -lc 'source install/setup.bash && exec "$@"' bash \
-  ros2 launch mpd_dynamic_planner_adapter replan_dynamic_fake_hardware.launch.py \
+  ros2 launch mpd_dynamic_planner_adapter "$ROS_LAUNCH" \
   plan_only:=false \
   "plan_rate_hz:=${PLAN_RATE_HZ}" \
   "world_scenario:=${WORLD_SCENARIO}" \
@@ -162,6 +216,7 @@ timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
   "replay_env_name:=${ENV_NAME}" \
   "replay_static_scene_json:=${STATIC_SCENE}" \
   "target_pose_xyzw:=${TARGET_POSE}" \
+  "${ROS_EXTRA_ARGS[@]}" \
   >"${OUTPUT_DIR}/ros-replan.log" 2>&1
 ROS_STATUS=$?
 set -e
@@ -223,9 +278,11 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
 trap - EXIT INT TERM
 printf '%s\n' \
   "Done." \
+  "  phase:    $PHASE" \
+  "  timing:   $TIMING_LABEL" \
   "  manifest: $MANIFEST" \
   "  video:    $VIDEO_PATH" \
   "  frame:    $SCREENSHOT_PATH" \
   "  summary:  $SUMMARY_PATH" \
-  "  timing:   $TIMING_SUMMARY_PATH" \
+  "  metrics:  $TIMING_SUMMARY_PATH" \
   "  logs:     $OUTPUT_DIR"

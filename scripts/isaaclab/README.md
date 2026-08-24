@@ -100,8 +100,29 @@ scripts/isaaclab/run_dynamic_demo_pipeline.sh \
   --duration-sec 35
 ```
 
+The pipeline defaults to Phase 5 joint space-time replanning. Select the preserved
+Phase 4 fixed-timing path, or another Phase 5 ablation mode, explicitly:
+
+```bash
+# Default; --phase phase5 may be omitted.
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer \
+  --phase phase5 \
+  --timing-mode phase5_joint
+
+# Preserved Phase 4 fixed-timing pipeline.
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer \
+  --phase phase4
+```
+
+Valid Phase 5 timing modes are `phase5_joint`, `phase5_timing_only`, and
+`phase5_scalar_duration`. `--timing-mode` is rejected with `--phase phase4` so a
+requested ablation cannot be silently ignored.
+
 Omit `--output-dir` for a timestamped directory below
-`scripts/inference/logs/dynamic-replay-to_drawer/`. Use `--skip-build` only after the
+`scripts/inference/logs/dynamic-replay-to_drawer-phase5/`. Explicit Phase 4 keeps its
+legacy `scripts/inference/logs/dynamic-replay-to_drawer/` location. Use `--skip-build` only after the
 ROS workspace has already been rebuilt. The current profile maps to:
 
 - static MPD/IsaacLab scene: `EnvOpenDrawerShelf`;
