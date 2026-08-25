@@ -275,6 +275,15 @@ class _SpatialGuide:
         return torch.ones_like(control_points)
 
 
+class _RecordingSpatialGuide(_SpatialGuide):
+    def __init__(self):
+        self.call_kwargs = None
+
+    def __call__(self, control_points, **kwargs):
+        self.call_kwargs = kwargs
+        return torch.ones_like(control_points)
+
+
 class _PlanningTask:
     def __init__(self):
         self.robot = _Robot()
@@ -292,6 +301,41 @@ class _PlanningTask:
             q_pos_start=torch.tensor([-1.0], **TENSOR_ARGS),
             q_pos_goal=torch.tensor([1.0], **TENSOR_ARGS),
         )
+
+
+def test_phase5_spatial_descent_disables_fixed_time_kinematic_costs():
+    settings = SpaceTimeGuidanceSettings.from_mapping(
+        {
+            "mode": "phase5_joint",
+            "duration_min": 1.0,
+            "duration_max": 4.0,
+            "nominal_duration": 2.0,
+        }
+    )
+    spatial_guide = _RecordingSpatialGuide()
+    guide = InferenceOnlySpaceTimeGuide(
+        spatial_guide,
+        _PlanningTask(),
+        _Dataset(),
+        _DynamicField(_moving_gate_world()),
+        settings,
+        TENSOR_ARGS,
+    )
+    control_points = torch.zeros((2, 7, 1), **TENSOR_ARGS)
+
+    guide._spatial_descent(
+        control_points,
+        cost_weight_overrides={
+            "CostJointSpaceVelocity": 99.0,
+            "CostTaskSpaceEEGoalPosition": 3.0,
+        },
+    )
+
+    assert spatial_guide.call_kwargs["cost_weight_overrides"] == {
+        "CostJointSpaceVelocity": 0.0,
+        "CostTaskSpaceEEGoalPosition": 3.0,
+        "CostJointSpaceAcceleration": 0.0,
+    }
 
 
 @pytest.mark.parametrize(

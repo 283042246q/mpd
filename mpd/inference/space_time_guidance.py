@@ -27,6 +27,11 @@ SPACE_TIME_MODES = {
 
 DURATION_COST_NORMALIZER_S = 10.0
 
+FIXED_TIME_KINEMATIC_COSTS = (
+    "CostJointSpaceVelocity",
+    "CostJointSpaceAcceleration",
+)
+
 
 @dataclass(frozen=True)
 class SpaceTimeGuidanceSettings:
@@ -330,13 +335,24 @@ class InferenceOnlySpaceTimeGuide:
     def _spatial_descent(self, control_points_normalized, **kwargs):
         if self.settings.mode == "phase5_timing_only":
             return torch.zeros_like(control_points_normalized)
+        cost_weight_overrides = dict(kwargs.pop("cost_weight_overrides", None) or {})
+        # Phase 5 evaluates velocity and acceleration with the candidate's
+        # current timing spline.  The legacy CostGuide variants assume the
+        # fixed trajectory duration and would count the same constraints twice.
+        cost_weight_overrides.update(
+            {cost_name: 0.0 for cost_name in FIXED_TIME_KINEMATIC_COSTS}
+        )
         collision_entry = self.spatial_guide.costs.get("CostTaskSpaceCollisionObjects")
         original_field = None
         if collision_entry is not None:
             original_field = collision_entry.cost.collision_objects_field
             collision_entry.cost.collision_objects_field = self.dynamic_field.static_field
         try:
-            return self.spatial_guide(control_points_normalized, **kwargs)
+            return self.spatial_guide(
+                control_points_normalized,
+                cost_weight_overrides=cost_weight_overrides,
+                **kwargs,
+            )
         finally:
             if collision_entry is not None:
                 collision_entry.cost.collision_objects_field = original_field
