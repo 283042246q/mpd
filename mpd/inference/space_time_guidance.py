@@ -149,7 +149,7 @@ class SpaceTimeCostEvaluator:
             collision_sphere_positions = trajectory_state.collision_sphere_positions
         if collision_sphere_positions is None:
             raise ValueError("collision_sphere_positions are required")
-        minimum_distance, _ = self.dynamic_world.minimum_signed_distance_and_gradient(
+        minimum_distance = self.dynamic_world.minimum_signed_distance(
             collision_sphere_positions,
             trajectory_times=evaluation.time_from_start,
         )

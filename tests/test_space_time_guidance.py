@@ -127,11 +127,8 @@ def test_time_integrated_costs_are_normalized_by_candidate_duration():
 
     class _ConstantDistanceWorld:
         @staticmethod
-        def minimum_signed_distance_and_gradient(points, **_kwargs):
-            return (
-                torch.zeros(points.shape[:-1], **TENSOR_ARGS),
-                torch.zeros_like(points),
-            )
+        def minimum_signed_distance(points, **_kwargs):
+            return torch.zeros(points.shape[:-1], **TENSOR_ARGS)
 
     evaluator.dynamic_world = _ConstantDistanceWorld()
     evaluator.velocity_limits = torch.tensor([1.0], **TENSOR_ARGS)

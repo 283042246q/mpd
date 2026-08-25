@@ -406,6 +406,33 @@ class FixedCapacityDynamicWorld:
         return self._candidate_time_table(trajectory_times)
 
     @staticmethod
+    def _shape_distance(
+        local: torch.Tensor,
+        parameters: torch.Tensor,
+        shape_code: int,
+    ) -> torch.Tensor:
+        if shape_code == 0:
+            return (
+                torch.linalg.norm(local, dim=-1)
+                - parameters[None, None, :, None, 0]
+            )
+        if shape_code == 1:
+            half_extents = parameters[None, None, :, None, :]
+            box_q = torch.abs(local) - half_extents
+            return torch.linalg.norm(torch.relu(box_q), dim=-1) + torch.clamp(
+                box_q.amax(dim=-1), max=0.0
+            )
+        capsule_half = parameters[None, None, :, None, 1]
+        closest_z = local[..., 2].clamp(-capsule_half, capsule_half)
+        capsule_delta = torch.cat(
+            (local[..., :2], (local[..., 2] - closest_z)[..., None]), dim=-1
+        )
+        return (
+            torch.linalg.norm(capsule_delta, dim=-1)
+            - parameters[None, None, :, None, 0]
+        )
+
+    @staticmethod
     def _shape_distance_and_gradient(
         local: torch.Tensor,
         parameters: torch.Tensor,
@@ -439,6 +466,21 @@ class FixedCapacityDynamicWorld:
             norm - parameters[None, None, :, None, 0],
             capsule_delta / norm.clamp_min(eps)[..., None],
         )
+
+    def _evaluate_indices_distance(
+        self,
+        points: torch.Tensor,
+        table: dict[str, Any],
+        indices: torch.Tensor,
+        shape_code: int,
+    ) -> torch.Tensor:
+        centers = table["centers"].index_select(2, indices)
+        rotation = table["rotation"].index_select(0, indices)
+        parameters = table["parameters"].index_select(0, indices)
+        world_delta = points[:, :, None, :, :] - centers[:, :, :, None, :]
+        local = torch.einsum("bhmld,mdk->bhmlk", world_delta, rotation)
+        distance = self._shape_distance(local, parameters, shape_code)
+        return distance - table["inflation"].index_select(2, indices)[..., None]
 
     def _evaluate_indices(
         self,
@@ -496,6 +538,24 @@ class FixedCapacityDynamicWorld:
             gradients_world,
         )
 
+    def _evaluate_all_shapes_distance(
+        self, points: torch.Tensor, table: dict[str, Any]
+    ) -> torch.Tensor:
+        capacity = table["capacity"]
+        world_delta = points[:, :, None, :, :] - table["centers"][:, :, :, None, :]
+        local = torch.einsum("bhmld,mdk->bhmlk", world_delta, table["rotation"])
+        distances_by_shape = [
+            self._shape_distance(local, table["parameters"], shape_code)
+            for shape_code in range(3)
+        ]
+        shape = self.shape_code[None, None, :capacity, None]
+        distances = torch.where(
+            shape == 0,
+            distances_by_shape[0],
+            torch.where(shape == 1, distances_by_shape[1], distances_by_shape[2]),
+        )
+        return distances - table["inflation"][..., None]
+
     def _shape_groups(self, capacity: int) -> tuple[tuple[int, torch.Tensor], ...]:
         if self.shape_grouping_enabled:
             return (
@@ -541,6 +601,75 @@ class FixedCapacityDynamicWorld:
             inactive[..., None], torch.zeros_like(gradients_world), gradients_world
         )
         return distances, gradients_world
+
+    def signed_distances(
+        self,
+        points: torch.Tensor,
+        trajectory_times: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return effective distances as ``[B,H,M,L]`` without SDF gradients."""
+
+        if points.ndim != 4 or points.shape[-1] != 3:
+            raise ValueError("dynamic SDF expects [batch,time,links,3] points")
+        batch, horizon, links, _ = points.shape
+        table = self._query_table(points, trajectory_times)
+        capacity = table["capacity"]
+        distances = torch.full(
+            (batch, horizon, capacity, links),
+            torch.inf,
+            dtype=points.dtype,
+            device=points.device,
+        )
+        if capacity and not self.shape_grouping_enabled:
+            distances = self._evaluate_all_shapes_distance(points, table)
+        else:
+            for shape_code, indices in self._shape_groups(capacity):
+                if not indices.numel():
+                    continue
+                group_distance = self._evaluate_indices_distance(
+                    points, table, indices, shape_code
+                )
+                distances = distances.index_copy(2, indices, group_distance)
+        inactive = ~self.active[None, None, :capacity, None]
+        return torch.where(inactive, torch.full_like(distances, torch.inf), distances)
+
+    def minimum_signed_distance(
+        self,
+        points: torch.Tensor,
+        trajectory_times: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Reduce dynamic SDF distances without constructing analytic gradients."""
+
+        if not self.fused_reduction_enabled or not self.shape_grouping_enabled:
+            distances = self.signed_distances(
+                points, trajectory_times=trajectory_times
+            )
+            if not distances.shape[-2]:
+                return torch.full(
+                    points.shape[:-2] + (points.shape[-2],),
+                    torch.inf,
+                    dtype=points.dtype,
+                    device=points.device,
+                )
+            return distances.min(dim=-2).values
+        if points.ndim != 4 or points.shape[-1] != 3:
+            raise ValueError("dynamic SDF expects [batch,time,links,3] points")
+        links = points.shape[-2]
+        table = self._query_table(points, trajectory_times)
+        best_distance = torch.full(
+            points.shape[:-2] + (links,),
+            torch.inf,
+            dtype=points.dtype,
+            device=points.device,
+        )
+        for shape_code, indices in self._shape_groups(table["capacity"]):
+            if not indices.numel():
+                continue
+            distances = self._evaluate_indices_distance(
+                points, table, indices, shape_code
+            )
+            best_distance = torch.minimum(best_distance, distances.min(dim=-2).values)
+        return best_distance
 
     def minimum_signed_distance_and_gradient(
         self,
@@ -592,10 +721,12 @@ class StaticDynamicCollisionField:
 
     def object_signed_distances(self, link_pos, get_gradient=False, **kwargs):
         trajectory_times = kwargs.pop("trajectory_times", None)
-        dynamic_distance, dynamic_gradient = self.dynamic_world.signed_distances_and_gradients(
-            link_pos, trajectory_times=trajectory_times
-        )
         if get_gradient:
+            dynamic_distance, dynamic_gradient = (
+                self.dynamic_world.signed_distances_and_gradients(
+                    link_pos, trajectory_times=trajectory_times
+                )
+            )
             static_distance, static_gradient = self.static_field.object_signed_distances(
                 link_pos, get_gradient=True, **kwargs
             )
@@ -603,6 +734,9 @@ class StaticDynamicCollisionField:
                 torch.cat((static_distance, dynamic_distance), dim=-2),
                 torch.cat((static_gradient, dynamic_gradient), dim=-3),
             )
+        dynamic_distance = self.dynamic_world.signed_distances(
+            link_pos, trajectory_times=trajectory_times
+        )
         static_distance = self.static_field.object_signed_distances(link_pos, **kwargs)
         return torch.cat((static_distance, dynamic_distance), dim=-2)
 
@@ -680,7 +814,7 @@ class StaticDynamicCollisionField:
         trajectory_times = kwargs.pop("trajectory_times", None)
         if self.dynamic_world.fused_reduction_enabled:
             static_distances = self.static_field.object_signed_distances(link_pos, **kwargs)
-            dynamic_distance, _ = self.dynamic_world.minimum_signed_distance_and_gradient(
+            dynamic_distance = self.dynamic_world.minimum_signed_distance(
                 link_pos, trajectory_times=trajectory_times
             )
             if field_type == "occupancy":
