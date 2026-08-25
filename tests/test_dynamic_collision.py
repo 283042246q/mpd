@@ -245,6 +245,47 @@ def test_grouped_fused_minimum_matches_materialized_object_reduction():
     assert torch.allclose(actual_gradient, expected_gradient)
 
 
+def test_candidate_specific_grouped_fused_distance_and_gradients_match_baseline():
+    baseline = FixedCapacityDynamicWorld(
+        8, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    optimized = FixedCapacityDynamicWorld(
+        8,
+        trajectory_duration_s=2.0,
+        tensor_args=TENSOR_ARGS,
+        capacity_buckets_enabled=True,
+        shape_grouping_enabled=True,
+        fused_reduction_enabled=True,
+    )
+    for world in (baseline, optimized):
+        world.update(_world(_mixed_objects()))
+        world.set_plan_start(1_000_000_000, world_version=1)
+
+    torch.manual_seed(17)
+    points_value = torch.randn((2, 5, 4, 3), **TENSOR_ARGS)
+    times_value = torch.tensor(
+        [[0.0, 0.25, 0.7, 1.2, 1.8], [0.0, 0.4, 0.9, 1.4, 2.0]],
+        **TENSOR_ARGS,
+    )
+    weights = torch.linspace(0.2, 1.0, 2 * 5 * 4, **TENSOR_ARGS).reshape(2, 5, 4)
+
+    def evaluate(world):
+        points = points_value.clone().requires_grad_(True)
+        times = times_value.clone().requires_grad_(True)
+        distance, analytic_gradient = world.minimum_signed_distance_and_gradient(
+            points, trajectory_times=times
+        )
+        point_gradient, time_gradient = torch.autograd.grad(
+            (distance * weights).sum(), (points, times)
+        )
+        return distance, analytic_gradient, point_gradient, time_gradient
+
+    expected = evaluate(baseline)
+    actual = evaluate(optimized)
+    for actual_value, expected_value in zip(actual, expected):
+        torch.testing.assert_close(actual_value, expected_value, atol=1e-9, rtol=1e-8)
+
+
 def test_candidate_specific_times_change_collision_for_same_spatial_path():
     world = FixedCapacityDynamicWorld(
         1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS

@@ -42,11 +42,12 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             max_dynamic_objects=max_dynamic_objects,
             covariance_sigma=covariance_sigma,
             process_acceleration_std_m_s2=process_acceleration_std_m_s2,
-            # Establish the full candidate-specific correctness baseline first.
-            capacity_buckets_enabled=False,
-            shape_grouping_enabled=False,
+            # Candidate-specific timing uses the uncached table path, while
+            # object-capacity and shape reductions remain algebraically exact.
+            capacity_buckets_enabled=True,
+            shape_grouping_enabled=True,
             time_table_cache_enabled=False,
-            fused_reduction_enabled=False,
+            fused_reduction_enabled=True,
             dynamic_guide_pruning_enabled=False,
             trajectory_schema_version=2,
             collision_spheres_float32=True,
