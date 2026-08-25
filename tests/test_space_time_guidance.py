@@ -338,6 +338,42 @@ def test_phase5_spatial_descent_disables_fixed_time_kinematic_costs():
     }
 
 
+def test_shared_trajectory_state_evaluates_timing_once():
+    settings = SpaceTimeGuidanceSettings.from_mapping(
+        {
+            "mode": "phase5_joint",
+            "duration_min": 1.0,
+            "duration_max": 4.0,
+            "nominal_duration": 2.0,
+        }
+    )
+    guide = InferenceOnlySpaceTimeGuide(
+        _SpatialGuide(),
+        _PlanningTask(),
+        _Dataset(),
+        _DynamicField(_moving_gate_world()),
+        settings,
+        TENSOR_ARGS,
+    )
+    guide.reset(2)
+    original_evaluate = guide.timing_spline.evaluate
+    evaluate_calls = []
+
+    def counted_evaluate(*args, **kwargs):
+        evaluate_calls.append((args, kwargs))
+        return original_evaluate(*args, **kwargs)
+
+    guide.timing_spline.evaluate = counted_evaluate
+    control_points = torch.zeros((2, 7, 1), **TENSOR_ARGS)
+
+    _, _, evaluation = guide.evaluate_control_points(control_points)
+
+    assert len(evaluate_calls) == 1
+    assert evaluation.q is not None
+    assert evaluation.dq is not None
+    assert evaluation.ddq is not None
+
+
 @pytest.mark.parametrize(
     "mode, expect_spatial_update",
     [

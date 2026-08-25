@@ -8,12 +8,15 @@ both variables from the same autograd graph.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
 
-from mpd.parametric_trajectory.timing_spline import TimingSpline
+from mpd.parametric_trajectory.timing_spline import (
+    TimingSpline,
+    TimingSplineEvaluation,
+)
 from torch_robotics.torch_kinematics_tree.geometrics.utils import (
     link_pos_from_link_tensor,
 )
@@ -75,6 +78,17 @@ class SpaceTimeGuidanceSettings:
         return settings
 
 
+@dataclass(frozen=True)
+class SpaceTimeTrajectoryState:
+    """One candidate batch's shared spatial and timing evaluation state."""
+
+    q: torch.Tensor
+    q_s: torch.Tensor
+    q_ss: torch.Tensor
+    timing: TimingSplineEvaluation
+    collision_sphere_positions: torch.Tensor | None = None
+
+
 def _clip_per_candidate(gradient: torch.Tensor, max_norm: float):
     flat = gradient.flatten(start_dim=1)
     norm = torch.linalg.norm(flat, dim=-1)
@@ -107,20 +121,34 @@ class SpaceTimeCostEvaluator:
 
     def __call__(
         self,
-        timing_control_points: torch.Tensor,
+        timing_control_points: torch.Tensor | None = None,
         *,
-        q: torch.Tensor,
-        q_s: torch.Tensor,
-        q_ss: torch.Tensor,
-        collision_sphere_positions: torch.Tensor,
+        q: torch.Tensor | None = None,
+        q_s: torch.Tensor | None = None,
+        q_ss: torch.Tensor | None = None,
+        collision_sphere_positions: torch.Tensor | None = None,
+        trajectory_state: SpaceTimeTrajectoryState | None = None,
     ):
-        evaluation = self.timing_spline.evaluate(
-            timing_control_points,
-            q=q,
-            q_s=q_s,
-            q_ss=q_ss,
-            require_fixed_endpoint_derivatives=True,
-        )
+        if trajectory_state is None:
+            if timing_control_points is None:
+                raise ValueError("timing_control_points or trajectory_state is required")
+            evaluation = self.timing_spline.evaluate(
+                timing_control_points,
+                q=q,
+                q_s=q_s,
+                q_ss=q_ss,
+                require_fixed_endpoint_derivatives=True,
+            )
+        else:
+            if any(value is not None for value in (timing_control_points, q, q_s, q_ss)):
+                raise ValueError(
+                    "trajectory_state cannot be combined with timing or spatial inputs"
+                )
+            evaluation = trajectory_state.timing
+            q = trajectory_state.q
+            collision_sphere_positions = trajectory_state.collision_sphere_positions
+        if collision_sphere_positions is None:
+            raise ValueError("collision_sphere_positions are required")
         minimum_distance, _ = self.dynamic_world.minimum_signed_distance_and_gradient(
             collision_sphere_positions,
             trajectory_times=evaluation.time_from_start,
@@ -311,26 +339,32 @@ class InferenceOnlySpaceTimeGuide:
         q = torch.einsum("hk,bkd->bhd", trajectory.bspline.N.squeeze(0), full)
         q_s = torch.einsum("hk,bkd->bhd", trajectory.bspline.dN.squeeze(0), full)
         q_ss = torch.einsum("hk,bkd->bhd", trajectory.bspline.ddN.squeeze(0), full)
-        return q, q_s, q_ss
+        timing = self.timing_spline.attach_spatial_derivatives(
+            timing,
+            q=q,
+            q_s=q_s,
+            q_ss=q_ss,
+        )
+        return SpaceTimeTrajectoryState(q=q, q_s=q_s, q_ss=q_ss, timing=timing)
 
     def evaluate_control_points(self, control_points_normalized, timing_control_points=None):
         timing_control_points = (
             self.timing_control_points if timing_control_points is None else timing_control_points
         )
-        q, q_s, q_ss = self._phase_trajectory(
+        state = self._phase_trajectory(
             control_points_normalized, timing_control_points
         )
-        batch, horizon, _ = q.shape
-        poses = self.planning_task.robot.fk_collision_spheres(q.reshape(batch * horizon, -1))
+        batch, horizon, _ = state.q.shape
+        poses = self.planning_task.robot.fk_collision_spheres(
+            state.q.reshape(batch * horizon, -1)
+        )
         poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
         sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
-        return self.cost_evaluator(
-            timing_control_points,
-            q=q,
-            q_s=q_s,
-            q_ss=q_ss,
+        state = replace(
+            state,
             collision_sphere_positions=sphere_positions,
         )
+        return self.cost_evaluator(trajectory_state=state)
 
     def _spatial_descent(self, control_points_normalized, **kwargs):
         if self.settings.mode == "phase5_timing_only":

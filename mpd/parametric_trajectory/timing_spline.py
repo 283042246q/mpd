@@ -7,7 +7,7 @@ points.  This module owns the independent timing variables and uses
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import torch
@@ -184,32 +184,49 @@ class TimingSpline:
         supplied = (q is not None, q_s is not None, q_ss is not None)
         if any(supplied) and not all(supplied):
             raise ValueError("q, q_s and q_ss must be supplied together")
-        dq = ddq = None
-        if all(supplied):
-            expected = control_points.shape[:-1] + (self.num_phase_points,)
-            for name, value in (("q", q), ("q_s", q_s), ("q_ss", q_ss)):
-                if value.shape[:-1] != expected:
-                    raise ValueError(
-                        f"{name} must have leading shape {expected}, got {tuple(value.shape)}"
-                    )
-                if value.device != self.phase.device or value.dtype != self.phase.dtype:
-                    raise ValueError(f"{name} must match the timing basis dtype and device")
-                if not torch.isfinite(value).all().item():
-                    raise ValueError(f"{name} contains NaN or Inf")
-            dq = q_s / u[..., None]
-            ddq = q_ss / u[..., None].square() - q_s * u_s[..., None] / u[..., None].pow(3)
-
-        return TimingSplineEvaluation(
+        evaluation = TimingSplineEvaluation(
             phase=self.phase,
             log_density=log_density,
             u=u,
             u_s=u_s,
             time_from_start=time_from_start,
             duration=duration,
-            q=q,
-            dq=dq,
-            ddq=ddq,
         )
+        if all(supplied):
+            evaluation = self.attach_spatial_derivatives(
+                evaluation,
+                q=q,
+                q_s=q_s,
+                q_ss=q_ss,
+            )
+        return evaluation
+
+    def attach_spatial_derivatives(
+        self,
+        evaluation: TimingSplineEvaluation,
+        *,
+        q: torch.Tensor,
+        q_s: torch.Tensor,
+        q_ss: torch.Tensor,
+    ) -> TimingSplineEvaluation:
+        """Attach ``q/dq/ddq`` without rebuilding an existing timing evaluation."""
+
+        expected = evaluation.u.shape
+        for name, value in (("q", q), ("q_s", q_s), ("q_ss", q_ss)):
+            if value.shape[:-1] != expected:
+                raise ValueError(
+                    f"{name} must have leading shape {expected}, got {tuple(value.shape)}"
+                )
+            if value.device != self.phase.device or value.dtype != self.phase.dtype:
+                raise ValueError(f"{name} must match the timing basis dtype and device")
+            if not torch.isfinite(value).all().item():
+                raise ValueError(f"{name} contains NaN or Inf")
+        dq = q_s / evaluation.u[..., None]
+        ddq = (
+            q_ss / evaluation.u[..., None].square()
+            - q_s * evaluation.u_s[..., None] / evaluation.u[..., None].pow(3)
+        )
+        return replace(evaluation, q=q, dq=dq, ddq=ddq)
 
     def evaluate_spatial_control_points(
         self,
