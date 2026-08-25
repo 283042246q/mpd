@@ -89,6 +89,8 @@ def test_parser_exposes_all_phase5_modes_and_repeat_controls(tmp_path):
     assert args.timing_mode == "phase5_timing_only"
     assert args.repeats == 3
     assert args.seed_step == 2
+    assert args.static_spatial_pruning
+    assert not args.dynamic_space_time_pruning
 
 
 def test_standalone_runner_reuses_engine_and_exports_each_repeat(tmp_path):
@@ -113,6 +115,8 @@ def test_standalone_runner_reuses_engine_and_exports_each_repeat(tmp_path):
     summary_path = run(args, engine_factory=FakeEngine)
 
     engine = FakeEngine.instances[-1]
+    assert engine.options["static_spatial_pruning_enabled"]
+    assert not engine.options["dynamic_space_time_pruning_enabled"]
     assert engine.world["objects"] == []
     assert [request["seed"] for request in engine.requests] == [10, 13]
     assert all(request["_dynamic_world_version"] == 1 for request in engine.requests)

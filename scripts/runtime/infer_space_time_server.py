@@ -36,6 +36,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-max", type=float, default=14.0)
     parser.add_argument("--nominal-duration", type=float, default=10.0)
     parser.add_argument("--timing-learning-rate", type=float, default=0.08)
+    parser.add_argument(
+        "--static-spatial-pruning",
+        dest="static_spatial_pruning",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-static-spatial-pruning",
+        dest="static_spatial_pruning",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--dynamic-space-time-pruning",
+        action="store_true",
+        default=False,
+        help="Reserved fail-closed switch; candidate-specific pruning is not implemented.",
+    )
     return parser
 
 
@@ -62,6 +79,8 @@ def main(argv=None) -> int:
             max_dynamic_objects=args.max_dynamic_objects,
             covariance_sigma=args.covariance_sigma,
             process_acceleration_std_m_s2=args.process_acceleration_std,
+            static_spatial_pruning_enabled=args.static_spatial_pruning,
+            dynamic_space_time_pruning_enabled=args.dynamic_space_time_pruning,
         )
 
     service = DynamicResidentPlannerService(

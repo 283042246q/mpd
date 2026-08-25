@@ -71,3 +71,24 @@ def test_phase5_server_has_separate_mode_and_timing_bounds():
     assert args.timing_mode == "phase5_timing_only"
     assert args.duration_min == 7.0
     assert args.duration_max == 13.0
+    assert args.static_spatial_pruning
+    assert not args.dynamic_space_time_pruning
+
+
+def test_phase5_pruning_switches_are_independent_from_phase4_dynamic_pruning():
+    phase4 = _build_parser().parse_args(
+        ["--socket", "/tmp/phase4.sock", "--output-root", "/tmp/phase4-output"]
+    )
+    phase5 = _build_space_time_parser().parse_args(
+        [
+            "--socket",
+            "/tmp/phase5.sock",
+            "--output-root",
+            "/tmp/phase5-output",
+            "--no-static-spatial-pruning",
+            "--dynamic-space-time-pruning",
+        ]
+    )
+    assert phase4.dynamic_guide_pruning
+    assert not phase5.static_spatial_pruning
+    assert phase5.dynamic_space_time_pruning

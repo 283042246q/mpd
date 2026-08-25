@@ -30,7 +30,13 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         max_dynamic_objects: int = 16,
         covariance_sigma: float = 3.0,
         process_acceleration_std_m_s2: float = 0.01,
+        static_spatial_pruning_enabled: bool = True,
+        dynamic_space_time_pruning_enabled: bool = False,
     ) -> None:
+        if dynamic_space_time_pruning_enabled:
+            raise ValueError(
+                "candidate-specific dynamic space-time pruning is not implemented"
+            )
         settings = SpaceTimeGuidanceSettings.from_mapping(
             space_time_settings, mode=timing_mode
         )
@@ -55,9 +61,23 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         )
         if self.planner.cost_guide is None:
             raise ValueError("Phase-5 runtime requires the configured MPD cost guide")
+        spatial_guide = self.planner.cost_guide
+        if static_spatial_pruning_enabled and not spatial_guide.gradient_pruning_config[
+            "enabled"
+        ]:
+            raise ValueError(
+                "static spatial pruning was requested but is disabled in the MPD config"
+            )
+        spatial_guide.gradient_pruning_enabled = bool(
+            static_spatial_pruning_enabled
+        )
+        self.static_spatial_pruning_enabled = bool(
+            static_spatial_pruning_enabled
+        )
+        self.dynamic_space_time_pruning_enabled = False
         self.space_time_settings = settings
         self.space_time_guide = InferenceOnlySpaceTimeGuide(
-            self.planner.cost_guide,
+            spatial_guide,
             self.planning_task,
             self.planner.dataset,
             self.dynamic_field,
@@ -65,6 +85,19 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             self.tensor_args,
         )
         self.planner.cost_guide = self.space_time_guide
+        if self.static_spatial_pruning_enabled:
+            import torch
+
+            template = torch.zeros(
+                (
+                    int(self.args_inference.n_trajectory_samples),
+                    *self.planner.dataset.control_points_dim,
+                ),
+                **self.tensor_args,
+            )
+            self.space_time_guide._spatial_descent(template, warmup=True)
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
 
     def _postprocess_plan_results(self, results):
         import torch
@@ -244,6 +277,10 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             "duration_min_s": self.space_time_settings.duration_min,
             "duration_max_s": self.space_time_settings.duration_max,
             "phase4_entry_unchanged": True,
+            "pruning": {
+                "static_spatial": self.static_spatial_pruning_enabled,
+                "dynamic_space_time": self.dynamic_space_time_pruning_enabled,
+            },
         }
         return response
 
