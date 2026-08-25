@@ -9,7 +9,7 @@ from dotmap import DotMap
 from deps.theseus.torchlie.torchlie.functional.se3_impl import _adjoint_impl
 from mpd.parametric_trajectory.trajectory_waypoints import ParametricTrajectoryWaypoints
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
-from mpd.inference.active_jacobian import ActiveJacobianComputer
+from mpd.inference.active_jacobian import ActiveJacobianComputer, DenseJacobianBatch
 from mpd.inference.collision_risk_selector import CollisionRiskSelector, TemporalSelection
 from mpd.inference.guidance_config import resolve_gradient_pruning_config
 from mpd.inference.guidance_profiler import GuidanceProfiler
@@ -484,6 +484,7 @@ class CostGuideManagerParametricTrajectory:
         cost_weight_overrides=None,
         **kwargs,
     ):
+        phase5_trajectory_state = kwargs.pop("_phase5_trajectory_state", None)
         if self.debug:
             print()
             print(f"Pruned guide step {self.step_guide_call}")
@@ -506,16 +507,23 @@ class CostGuideManagerParametricTrajectory:
 
         with self.guidance_profiler.section("bspline_expansion"):
             control_points = self.dataset.unnormalize_control_points(control_points_normalized)
-            trajectory = self.parametric_trajectory.get_q_trajectory(
-                control_points,
-                None,
-                None,
-                get_type=("pos", "vel", "acc"),
-                get_time_representation=False,
-            )
-            q_dense = trajectory["pos"]
-            q_velocity_dense = trajectory["vel"]
-            q_acceleration_dense = trajectory["acc"]
+            if phase5_trajectory_state is None:
+                trajectory = self.parametric_trajectory.get_q_trajectory(
+                    control_points,
+                    None,
+                    None,
+                    get_type=("pos", "vel", "acc"),
+                    get_time_representation=False,
+                )
+                q_dense = trajectory["pos"]
+                q_velocity_dense = trajectory["vel"]
+                q_acceleration_dense = trajectory["acc"]
+            else:
+                q_dense = phase5_trajectory_state.q
+                q_velocity_dense = phase5_trajectory_state.q_s
+                q_acceleration_dense = phase5_trajectory_state.q_ss
+                if q_dense.shape[0] != batch_size:
+                    raise ValueError("Phase-5 kinematics cache batch size mismatch")
 
         horizon = q_dense.shape[1]
         collision_object_cost = self.costs.get("CostTaskSpaceCollisionObjects")
@@ -606,6 +614,7 @@ class CostGuideManagerParametricTrajectory:
                         }
 
         dense_collision_batch = None
+        phase5_kinematics_cache_reused = False
         link_broad_phase_scan_cache_reused = False
         with self.guidance_profiler.section("collision_jacobian"):
             if self.use_link_broad_phase and selection is not None:
@@ -628,7 +637,32 @@ class CostGuideManagerParametricTrajectory:
                     # iterations keep the masks but must not see stale geometry.
                     selection.fine_sphere_scan_cache = None
             elif use_dense_full_parent_fast:
-                dense_collision_batch = self.active_jacobian_computer.compute_dense(q_dense)
+                cached_poses = (
+                    None
+                    if phase5_trajectory_state is None
+                    else phase5_trajectory_state.collision_sphere_poses
+                )
+                cached_jacobians = (
+                    None
+                    if phase5_trajectory_state is None
+                    else phase5_trajectory_state.collision_sphere_jacobians
+                )
+                if cached_poses is not None and cached_jacobians is not None:
+                    candidate_indices = torch.arange(
+                        batch_size, dtype=torch.long, device=q_dense.device
+                    )
+                    dense_collision_batch = DenseJacobianBatch(
+                        candidate_indices=candidate_indices,
+                        q_dense=q_dense,
+                        poses=cached_poses,
+                        jacobians=cached_jacobians,
+                        covers_full_batch=True,
+                    )
+                    phase5_kinematics_cache_reused = True
+                else:
+                    dense_collision_batch = self.active_jacobian_computer.compute_dense(
+                        q_dense
+                    )
                 active_buckets = []
             else:
                 if self.use_dense_parent_fast_path:
@@ -972,6 +1006,7 @@ class CostGuideManagerParametricTrajectory:
             active_link_pruning=self.use_active_link_pruning,
             link_broad_phase=self.use_link_broad_phase,
             link_broad_phase_scan_cache_reused=link_broad_phase_scan_cache_reused,
+            phase5_kinematics_cache_reused=phase5_kinematics_cache_reused,
             link_broad_phase_scan_geometry=(
                 self.gradient_pruning_config["spatial"]
                 .get("link_broad_phase", {})

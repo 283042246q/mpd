@@ -281,6 +281,9 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                 "static_spatial": self.static_spatial_pruning_enabled,
                 "dynamic_space_time": self.dynamic_space_time_pruning_enabled,
             },
+            "reuse_spatial_kinematics": (
+                self.space_time_guide.reuse_spatial_kinematics_enabled
+            ),
         }
         return response
 

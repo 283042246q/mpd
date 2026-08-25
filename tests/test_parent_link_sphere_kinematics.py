@@ -33,6 +33,33 @@ class ParentLinkSphereKinematicsTest(unittest.TestCase):
             atol=1e-10,
         )
 
+    def test_parent_jfk_pose_autograd_matches_legacy_sphere_fk(self):
+        robot = RobotPanda(tensor_args={"device": "cpu", "dtype": torch.float64})
+        q_value = torch.tensor(
+            [[0.1, -0.2, 0.3, -0.4, 0.2, 0.1, -0.1]], dtype=torch.float64
+        )
+        weights = torch.linspace(
+            0.1,
+            1.0,
+            len(robot.link_collision_spheres_names) * 3,
+            dtype=torch.float64,
+        ).reshape(1, -1, 3)
+
+        def evaluate(use_parent_jfk):
+            q = q_value.clone().requires_grad_(True)
+            if use_parent_jfk:
+                poses = robot.jfk_s_collision_spheres_parent_links(q)[1]
+            else:
+                poses = robot.fk_collision_spheres(q)
+            positions = torch.stack(poses).transpose(0, 1)[..., :3, 3]
+            gradient = torch.autograd.grad((positions * weights).sum(), q)[0]
+            return positions, gradient
+
+        expected = evaluate(False)
+        actual = evaluate(True)
+        torch.testing.assert_close(actual[0], expected[0], rtol=1e-9, atol=1e-10)
+        torch.testing.assert_close(actual[1], expected[1], rtol=1e-9, atol=1e-10)
+
     def test_subset_parent_jfk_matches_full_parent_jfk(self):
         robot = RobotPanda(tensor_args={"device": "cpu", "dtype": torch.float64})
         q = torch.randn(2, 3, 7, dtype=torch.float64) * 0.1

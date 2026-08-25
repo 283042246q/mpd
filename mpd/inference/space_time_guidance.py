@@ -87,6 +87,8 @@ class SpaceTimeTrajectoryState:
     q_ss: torch.Tensor
     timing: TimingSplineEvaluation
     collision_sphere_positions: torch.Tensor | None = None
+    collision_sphere_poses: torch.Tensor | None = None
+    collision_sphere_jacobians: torch.Tensor | None = None
 
 
 def _clip_per_candidate(gradient: torch.Tensor, max_norm: float):
@@ -217,6 +219,7 @@ class InferenceOnlySpaceTimeGuide:
         dynamic_field,
         settings: SpaceTimeGuidanceSettings,
         tensor_args,
+        reuse_spatial_kinematics_enabled: bool = True,
     ) -> None:
         trajectory = planning_task.parametric_trajectory
         if not hasattr(trajectory, "bspline"):
@@ -227,6 +230,9 @@ class InferenceOnlySpaceTimeGuide:
         self.dynamic_field = dynamic_field
         self.settings = settings
         self.tensor_args = dict(tensor_args)
+        self.reuse_spatial_kinematics_enabled = bool(
+            reuse_spatial_kinematics_enabled
+        )
         self.timing_spline = TimingSpline(
             num_control_points=settings.num_timing_control_points,
             degree=settings.timing_degree,
@@ -347,24 +353,60 @@ class InferenceOnlySpaceTimeGuide:
         )
         return SpaceTimeTrajectoryState(q=q, q_s=q_s, q_ss=q_ss, timing=timing)
 
-    def evaluate_control_points(self, control_points_normalized, timing_control_points=None):
+    def _attach_collision_kinematics(
+        self,
+        state: SpaceTimeTrajectoryState,
+        *,
+        include_spatial_jacobians: bool,
+    ) -> SpaceTimeTrajectoryState:
+        dense_batch = None
+        if (
+            include_spatial_jacobians
+            and getattr(self.spatial_guide, "gradient_pruning_enabled", False)
+            and getattr(self.spatial_guide, "use_dense_parent_fast_path", False)
+        ):
+            dense_batch = self.spatial_guide.active_jacobian_computer.compute_dense(
+                state.q
+            )
+            poses = dense_batch.poses
+        else:
+            batch, horizon, _ = state.q.shape
+            poses = self.planning_task.robot.fk_collision_spheres(
+                state.q.reshape(batch * horizon, -1)
+            )
+            poses = torch.stack(poses).transpose(0, 1).reshape(
+                batch, horizon, -1, 3, 4
+            )
+        sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
+        return replace(
+            state,
+            collision_sphere_positions=sphere_positions,
+            collision_sphere_poses=poses if dense_batch is not None else None,
+            collision_sphere_jacobians=(
+                dense_batch.jacobians.detach() if dense_batch is not None else None
+            ),
+        )
+
+    def evaluate_control_points(
+        self,
+        control_points_normalized,
+        timing_control_points=None,
+        *,
+        include_spatial_jacobians=False,
+        return_state=False,
+    ):
         timing_control_points = (
             self.timing_control_points if timing_control_points is None else timing_control_points
         )
         state = self._phase_trajectory(
             control_points_normalized, timing_control_points
         )
-        batch, horizon, _ = state.q.shape
-        poses = self.planning_task.robot.fk_collision_spheres(
-            state.q.reshape(batch * horizon, -1)
-        )
-        poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
-        sphere_positions = link_pos_from_link_tensor(poses)[..., :3]
-        state = replace(
+        state = self._attach_collision_kinematics(
             state,
-            collision_sphere_positions=sphere_positions,
+            include_spatial_jacobians=include_spatial_jacobians,
         )
-        return self.cost_evaluator(trajectory_state=state)
+        result = self.cost_evaluator(trajectory_state=state)
+        return (*result, state) if return_state else result
 
     def _spatial_descent(self, control_points_normalized, **kwargs):
         if self.settings.mode == "phase5_timing_only":
@@ -376,12 +418,17 @@ class InferenceOnlySpaceTimeGuide:
         cost_weight_overrides.update(
             {cost_name: 0.0 for cost_name in FIXED_TIME_KINEMATIC_COSTS}
         )
+        phase5_trajectory_state = kwargs.pop("_phase5_trajectory_state", None)
+        if not getattr(self.spatial_guide, "gradient_pruning_enabled", False):
+            phase5_trajectory_state = None
         collision_entry = self.spatial_guide.costs.get("CostTaskSpaceCollisionObjects")
         original_field = None
         if collision_entry is not None:
             original_field = collision_entry.cost.collision_objects_field
             collision_entry.cost.collision_objects_field = self.dynamic_field.static_field
         try:
+            if phase5_trajectory_state is not None:
+                kwargs["_phase5_trajectory_state"] = phase5_trajectory_state
             return self.spatial_guide(
                 control_points_normalized,
                 cost_weight_overrides=cost_weight_overrides,
@@ -452,18 +499,43 @@ class InferenceOnlySpaceTimeGuide:
         if self.timing_control_points is None or self.timing_control_points.shape[0] != batch:
             self.reset(batch)
 
-        spatial_descent = self._spatial_descent(
-            control_points_normalized,
-            return_cost=False,
-            warmup=warmup,
-            **kwargs,
-        )
         with torch.enable_grad():
             spatial = control_points_normalized.detach().requires_grad_(
                 self.settings.mode == "phase5_joint"
             )
             timing = self.timing_control_points.detach().requires_grad_(True)
-            total, breakdown, evaluation = self.evaluate_control_points(spatial, timing)
+            reuse_kinematics = (
+                self.reuse_spatial_kinematics_enabled
+                and self.settings.mode != "phase5_timing_only"
+                and getattr(self.spatial_guide, "gradient_pruning_enabled", False)
+                and getattr(self.spatial_guide, "use_dense_parent_fast_path", False)
+            )
+            if reuse_kinematics:
+                total, breakdown, evaluation, trajectory_state = (
+                    self.evaluate_control_points(
+                        spatial,
+                        timing,
+                        include_spatial_jacobians=True,
+                        return_state=True,
+                    )
+                )
+                spatial_descent = self._spatial_descent(
+                    control_points_normalized,
+                    return_cost=False,
+                    warmup=warmup,
+                    _phase5_trajectory_state=trajectory_state,
+                    **kwargs,
+                )
+            else:
+                spatial_descent = self._spatial_descent(
+                    control_points_normalized,
+                    return_cost=False,
+                    warmup=warmup,
+                    **kwargs,
+                )
+                total, breakdown, evaluation = self.evaluate_control_points(
+                    spatial, timing
+                )
             variables = [timing]
             if self.settings.mode == "phase5_joint":
                 variables.insert(0, spatial)

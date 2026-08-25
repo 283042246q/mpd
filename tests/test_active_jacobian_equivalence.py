@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
@@ -391,10 +392,41 @@ class ForceAllActiveEquivalenceTest(unittest.TestCase):
         control_points = torch.linspace(0.0, 1.0, 8, dtype=torch.float64).view(1, 8, 1).repeat(2, 1, 2)
         cost_generic, grad_generic = generic(control_points.clone(), return_cost=True)
         cost_fast, grad_fast = fast(control_points.clone(), return_cost=True)
+        trajectory = fast.parametric_trajectory.get_q_trajectory(
+            control_points,
+            None,
+            None,
+            get_type=("pos", "vel", "acc"),
+            get_time_representation=False,
+        )
+        dense = fast.active_jacobian_computer.compute_dense(trajectory["pos"])
+        phase5_state = SimpleNamespace(
+            q=trajectory["pos"],
+            q_s=trajectory["vel"],
+            q_ss=trajectory["acc"],
+            collision_sphere_poses=dense.poses,
+            collision_sphere_jacobians=dense.jacobians,
+        )
+        with mock.patch.object(
+            fast.active_jacobian_computer,
+            "compute_dense",
+            wraps=fast.active_jacobian_computer.compute_dense,
+        ) as compute_dense:
+            cost_cached, grad_cached = fast(
+                control_points.clone(),
+                return_cost=True,
+                _phase5_trajectory_state=phase5_state,
+            )
         torch.testing.assert_close(cost_fast, cost_generic, rtol=1e-7, atol=1e-9)
         torch.testing.assert_close(grad_fast, grad_generic, rtol=1e-7, atol=1e-9)
+        torch.testing.assert_close(cost_cached, cost_fast, rtol=1e-7, atol=1e-9)
+        torch.testing.assert_close(grad_cached, grad_fast, rtol=1e-7, atol=1e-9)
+        compute_dense.assert_not_called()
         self.assertFalse(generic.guidance_profiler.records[-1]["dense_parent_fast_path"])
         self.assertTrue(fast.guidance_profiler.records[-1]["dense_parent_fast_path"])
+        self.assertTrue(
+            fast.guidance_profiler.records[-1]["phase5_kinematics_cache_reused"]
+        )
 
     def test_temporal_mixed_full_and_sparse_buckets_match_generic_parent_path(self):
         trajectory = ParametricTrajectoryBspline(
