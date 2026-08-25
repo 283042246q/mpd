@@ -24,6 +24,7 @@ WIDTH=1280
 HEIGHT=720
 SKIP_BUILD=false
 REQUIRE_NO_BRAKE=true
+PIPELINE_ROS_DOMAIN_ID=""
 
 usage() {
   printf '%s\n' \
@@ -35,6 +36,7 @@ usage() {
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
     "  --world-scenario NAME   Override the profile's dynamic-world scenario" \
+    "  --ros-domain-id ID      Isolated ROS 2 DDS domain (default: auto)" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
@@ -52,6 +54,7 @@ while (($#)); do
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
     --world-scenario) WORLD_SCENARIO_OVERRIDE="$2"; shift 2 ;;
+    --ros-domain-id) PIPELINE_ROS_DOMAIN_ID="$2"; shift 2 ;;
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
@@ -61,6 +64,18 @@ while (($#)); do
     *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ -z "$PIPELINE_ROS_DOMAIN_ID" ]]; then
+  # Keep fake-hardware demos away from stale transient-local publishers in the
+  # user's default DDS domain (especially /robot_description).
+  PIPELINE_ROS_DOMAIN_ID=$((100 + ($$ % 100)))
+fi
+if [[ ! "$PIPELINE_ROS_DOMAIN_ID" =~ ^[0-9]+$ ]] ||
+  ((10#$PIPELINE_ROS_DOMAIN_ID > 232)); then
+  printf 'Invalid ROS domain ID: %s (expected integer 0..232)\n' \
+    "$PIPELINE_ROS_DOMAIN_ID" >&2
+  exit 2
+fi
 
 case "$PHASE" in
   4|phase4) PHASE="phase4" ;;
@@ -97,6 +112,10 @@ esac
 if [[ -n "$WORLD_SCENARIO_OVERRIDE" ]]; then
   WORLD_SCENARIO="$WORLD_SCENARIO_OVERRIDE"
 fi
+case "$WORLD_SCENARIO" in
+  to_drawer-crossing) WORLD_SCENARIO="to_drawer_crossing" ;;
+  to_drawer_bridge-crossing) WORLD_SCENARIO="to_drawer_bridge_crossing" ;;
+esac
 
 SERVER_EXTRA_ARGS=()
 ROS_EXTRA_ARGS=()
@@ -211,6 +230,7 @@ if [[ "$READY" != true ]]; then
 fi
 
 printf '[3/6] Running %s fake hardware, moving obstacle, replanning, and passive trace recording\n' "$PHASE"
+printf '  ROS domain: %s\n' "$PIPELINE_ROS_DOMAIN_ID"
 cd "$AIRUNTIME_ROOT"
 if [[ "$SKIP_BUILD" != true ]]; then
   pixi run build --packages-up-to mpd_dynamic_planner_adapter \
@@ -218,7 +238,8 @@ if [[ "$SKIP_BUILD" != true ]]; then
 fi
 set +e
 timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
-  pixi run bash -lc 'source install/setup.bash && exec "$@"' bash \
+  pixi run env ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID" \
+  bash -lc 'source install/setup.bash && exec "$@"' bash \
   ros2 launch mpd_dynamic_planner_adapter "$ROS_LAUNCH" \
   plan_only:=false \
   "plan_rate_hz:=${PLAN_RATE_HZ}" \

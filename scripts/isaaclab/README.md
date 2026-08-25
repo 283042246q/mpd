@@ -120,6 +120,13 @@ Valid Phase 5 timing modes are `phase5_joint`, `phase5_timing_only`, and
 `phase5_scalar_duration`. `--timing-mode` is rejected with `--phase phase4` so a
 requested ablation cannot be silently ignored.
 
+Every invocation selects an isolated ROS 2 DDS domain after Pixi activation so stale
+transient-local `/robot_description` publishers cannot switch a fake-hardware run onto
+the real Franka interface. Use `--ros-domain-id 146` only when a repeatable explicit
+domain is needed. The CLI spelling `to_drawer_bridge-crossing` is accepted for the
+three-object scenario and normalized to the ROS node's
+`to_drawer_bridge_crossing` identifier.
+
 Omit `--output-dir` for a timestamped directory below
 `scripts/inference/logs/dynamic-replay-to_drawer-phase5/`. Explicit Phase 4 keeps its
 legacy `scripts/inference/logs/dynamic-replay-to_drawer/` location. Use `--skip-build` only after the
@@ -143,7 +150,8 @@ The top-level schema is `mpd_dynamic_replay`, version `1`:
 - `duration_s`: replay duration;
 - `initial_q`: optional 7- or 9-DoF initial joint state;
 - `plans`: planning results ordered by `created_s`. An accepted/superseded plan can have
-  an execution interval, and a rejected plan cannot;
+  an execution interval, while a replacement scheduled after recording ends has none;
+  a rejected plan cannot have one;
 - `world_snapshots`: strictly time/version-increasing world states, starting at
   `time_s=0`. Each snapshot carries a validity deadline and known dynamic objects;
 - `events`: `handoff` and `brake` facts recorded by the execution manager;

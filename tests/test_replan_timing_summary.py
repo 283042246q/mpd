@@ -52,3 +52,23 @@ def test_summary_exposes_command_gap_and_brake():
 
     assert summary["maximum_command_gap_s"] == pytest.approx(0.4)
     assert summary["brake_event_count"] == 1
+
+
+def test_summary_skips_accepted_plan_not_active_before_recording_ends():
+    pending = _plan("pending", 10.0, 10.2, 20.0, 8.0, "accepted")
+    pending.pop("active_from_s")
+    pending.pop("active_until_s")
+
+    summary = summarize_manifest(
+        {
+            "plans": [
+                _plan("executed", 1.0, 1.2, 9.0, 0.0, "superseded"),
+                pending,
+            ],
+            "events": [{"type": "handoff"}, {"type": "handoff"}],
+        }
+    )
+
+    assert summary["executed_plan_count"] == 1
+    assert summary["pending_plan_count"] == 1
+    assert [plan["id"] for plan in summary["plans"]] == ["executed"]

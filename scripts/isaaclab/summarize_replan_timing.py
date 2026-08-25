@@ -27,14 +27,27 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("manifest plans and events must be lists")
 
     executed = []
+    pending_plan_count = 0
     for index, plan in enumerate(plans):
         if not isinstance(plan, dict) or plan.get("status") not in EXECUTED_STATUSES:
             continue
+        active_from_value = plan.get("active_from_s")
+        active_until_value = plan.get("active_until_s")
+        if active_from_value is None and active_until_value is None:
+            # The recorder can accept a replacement whose scheduled bridge is
+            # after recording stops. It has never commanded the robot and must
+            # not participate in execution-continuity metrics.
+            pending_plan_count += 1
+            continue
+        if active_from_value is None or active_until_value is None:
+            raise ValueError(
+                f"plan {index} must provide both active interval endpoints or neither"
+            )
         timing = plan.get("phase_timing")
         if not isinstance(timing, dict):
             raise ValueError(f"executed plan {index} has no phase_timing")
-        active_from = _finite(plan.get("active_from_s"), f"plans[{index}].active_from_s")
-        active_until = _finite(plan.get("active_until_s"), f"plans[{index}].active_until_s")
+        active_from = _finite(active_from_value, f"plans[{index}].active_from_s")
+        active_until = _finite(active_until_value, f"plans[{index}].active_until_s")
         submitted = _finite(
             timing.get("planning_submitted_s"),
             f"plans[{index}].phase_timing.planning_submitted_s",
@@ -115,6 +128,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     }
     return {
         "executed_plan_count": len(executed),
+        "pending_plan_count": pending_plan_count,
         "handoff_event_count": sum(event.get("type") == "handoff" for event in events),
         "brake_event_count": sum(event.get("type") == "brake" for event in events),
         "maximum_command_gap_s": max((item["gap_s"] for item in gaps), default=0.0),
