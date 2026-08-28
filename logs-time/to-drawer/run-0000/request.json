@@ -1,0 +1,38 @@
+{
+  "request": {
+    "goal_type": "joint",
+    "joint_names": [
+      "fr3_joint1",
+      "fr3_joint2",
+      "fr3_joint3",
+      "fr3_joint4",
+      "fr3_joint5",
+      "fr3_joint6",
+      "fr3_joint7"
+    ],
+    "q_pos_goal": [
+      0.2043391615152359,
+      -0.826718807220459,
+      1.735700249671936,
+      -2.1421737670898438,
+      -2.42671799659729,
+      2.640756368637085,
+      1.0201799869537354
+    ],
+    "q_pos_start": [
+      0.9348077774047852,
+      -0.7958131432533264,
+      0.5338113307952881,
+      -2.2410035133361816,
+      0.5321635007858276,
+      1.5732065439224243,
+      -2.7190940380096436
+    ],
+    "request_id": "phase5-to-drawer-static-smoke",
+    "scene_id": "EnvOpenDrawerShelf",
+    "schema_version": 1,
+    "seed": 123
+  },
+  "trajectory_start_unix_ns": 1,
+  "world_version": 1
+}

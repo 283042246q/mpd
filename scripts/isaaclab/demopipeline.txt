@@ -1,0 +1,8 @@
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer \
+  --phase phase5 \
+  --timing-mode phase5_joint \
+  --world-scenario to_drawer_bridge_crossing \
+  --duration-sec 35 \
+  --allow-brake \
+  --output-dir scripts/isaaclab/logs/tspline-3object

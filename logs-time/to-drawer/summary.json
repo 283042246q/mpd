@@ -1,0 +1,129 @@
+{
+  "aggregate": {
+    "duration_s": {
+      "count": 1,
+      "max": 10.003320693969727,
+      "mean": 10.003320693969727,
+      "min": 10.003320693969727,
+      "p50": 10.003320693969727,
+      "p95": 10.003320693969727,
+      "p99": 10.003320693969727
+    },
+    "elapsed_sec": {
+      "count": 1,
+      "max": 1.4308359869755805,
+      "mean": 1.4308359869755805,
+      "min": 1.4308359869755805,
+      "p50": 1.4308359869755805,
+      "p95": 1.4308359869755805,
+      "p99": 1.4308359869755805
+    },
+    "minimum_environment_clearance_m": {
+      "count": 1,
+      "max": 0.0007092803716659546,
+      "mean": 0.0007092803716659546,
+      "min": 0.0007092803716659546,
+      "p50": 0.0007092803716659546,
+      "p95": 0.0007092803716659546,
+      "p99": 0.0007092803716659546
+    },
+    "valid_candidates": {
+      "count": 1,
+      "max": 42.0,
+      "mean": 42.0,
+      "min": 42.0,
+      "p50": 42.0,
+      "p95": 42.0,
+      "p99": 42.0
+    }
+  },
+  "config_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-runtime-to-drawer.yaml",
+  "created_unix_time": 1787427118.6670697,
+  "dynamic_object_count": 0,
+  "engine": {
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "config_sha256": "97d76500dfd667e13499bb1f085db876cb83d9832375a8c7694ae9daa6c980c7",
+    "dense_validation": {
+      "enabled": true,
+      "full_batch": true,
+      "fully_warmed": true,
+      "pruning_used": false,
+      "ranked_batch_buckets": [
+        8,
+        16,
+        32,
+        64
+      ],
+      "runtime_points": 128
+    },
+    "device": "cuda:0",
+    "dynamic_world": {
+      "active_capacity": 16,
+      "active_objects": 0,
+      "frame_id": "fr3_link0",
+      "max_objects": 16,
+      "motion_model": "constant_velocity",
+      "optimizations": {
+        "capacity_buckets": false,
+        "collision_spheres_float32": true,
+        "deduplicate_best_trajectory": true,
+        "dynamic_guide_pruning": false,
+        "fused_local_sdf_reduction": false,
+        "shape_and_inflation_grouping": false,
+        "time_table_cache": false
+      },
+      "orientation_model": "constant",
+      "stamp_unix_ns": 1,
+      "trajectory_schema_version": 3,
+      "valid_until_unix_ns": 9223372036854775807,
+      "world_version": 1
+    },
+    "instance_id": "adf75b54-c687-4ae6-8003-bf6de0e2afda",
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "duration_max_s": 14.0,
+      "duration_min_s": 6.0,
+      "enabled": true,
+      "mode": "phase5_joint",
+      "phase4_entry_unchanged": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "started_unix_time": 1787427115.4682384,
+    "warmup_elapsed_sec": 0.4199325159424916
+  },
+  "repeats": 1,
+  "request_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/tests/data/runtime_to_drawer_request.json",
+  "request_sha256": "7500de5fa3b315e17de4f95e3e47d5b9788b3cfbeb1d5892bba6b2452214b50c",
+  "runs": [
+    {
+      "dense_checked_candidates": 100,
+      "dense_complete": true,
+      "dense_validation_sec": 0.01864944992121309,
+      "duration_s": 10.003320693969727,
+      "elapsed_sec": 1.4308359869755805,
+      "generated_candidates": 100,
+      "guide_sec": 1.1522473470540717,
+      "index": 0,
+      "minimum_environment_clearance_m": 0.0007092803716659546,
+      "minimum_self_clearance_m": 0.14949540793895721,
+      "path_length": 5.879698276519775,
+      "result_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/logs-time/to-drawer/run-0000/result.json",
+      "seed": 123,
+      "status": "success",
+      "trajectory_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/logs-time/to-drawer/run-0000/trajectory.npz",
+      "valid_candidates": 42
+    }
+  ],
+  "schema": "mpd_phase5_standalone_inference",
+  "schema_version": 1,
+  "seed": 123,
+  "seed_step": 0,
+  "status": "success",
+  "timing_mode": "phase5_joint",
+  "trajectory_start_unix_ns": 1,
+  "world_path": null,
+  "world_version": 1
+}
