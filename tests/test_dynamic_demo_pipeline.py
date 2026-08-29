@@ -77,7 +77,9 @@ def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     assert 'SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")' in source
     assert 'ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")' in source
     assert '"planner_seed:=${PLANNER_SEED}"' in source
-    assert '"world_scenario_file:=${WORLD_SCENARIO_FILE}"' in source
+    assert 'if [[ -n "$WORLD_SCENARIO_FILE" ]]; then' in source
+    assert 'ROS_EXTRA_ARGS+=("world_scenario_file:=${WORLD_SCENARIO_FILE}")' in source
+    assert '\n  "world_scenario_file:=${WORLD_SCENARIO_FILE}" \\\n' not in source
     assert 'if [[ "$SKIP_RENDER" == true ]]' in source
 
 

@@ -253,6 +253,9 @@ fi
 
 printf '[3/6] Running %s fake hardware, moving obstacle, replanning, and passive trace recording\n' "$PHASE"
 printf '  ROS domain: %s\n' "$PIPELINE_ROS_DOMAIN_ID"
+if [[ -n "$WORLD_SCENARIO_FILE" ]]; then
+  ROS_EXTRA_ARGS+=("world_scenario_file:=${WORLD_SCENARIO_FILE}")
+fi
 cd "$AIRUNTIME_ROOT"
 if [[ "$SKIP_BUILD" != true ]]; then
   pixi run build --packages-up-to mpd_dynamic_planner_adapter \
@@ -267,7 +270,6 @@ timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
   "plan_rate_hz:=${PLAN_RATE_HZ}" \
   "planner_seed:=${PLANNER_SEED}" \
   "world_scenario:=${WORLD_SCENARIO}" \
-  "world_scenario_file:=${WORLD_SCENARIO_FILE}" \
   "scene_id:=${ENV_NAME}" \
   "socket_path:=${SOCKET_PATH}" \
   "replay_record_dir:=${RECORD_DIR}" \
