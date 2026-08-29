@@ -120,6 +120,49 @@ Valid Phase 5 timing modes are `phase5_joint`, `phase5_timing_only`, and
 `phase5_scalar_duration`. `--timing-mode` is rejected with `--phase phase4` so a
 requested ablation cannot be silently ignored.
 
+### Paired random ToDrawer benchmark
+
+`benchmark_todrawer_random.py` freezes every random world to a repository artifact and
+runs the same scenario/planner seed against Phase 4 and all three Phase-5 timing modes.
+The default 12 scenarios x 3 repeats x 4 modes is a long sequential GPU/ROS run. Start a
+smaller smoke suite before launching the full matrix:
+
+```bash
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-random-smoke \
+  --scenario-count 2 \
+  --repeats 1 \
+  --duration-sec 20
+```
+
+Full benchmark:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-random-12x3 \
+  --scenario-count 12 \
+  --repeats 3 \
+  --duration-sec 35 \
+  --suite-seed 20260829
+```
+
+Completed mode/scenario/repeat triples are skipped when the same output directory is
+resumed. Failed attempts are retained as `attempt-NNN`; nothing is deleted. Reports are
+regenerated after every run under `report/report.md`, `report/summary.json`, and
+`report/runs.csv`. Use `--report-only` to rebuild reports without starting ROS. Video
+rendering is disabled for batch runs; pass `--render` only when every episode needs an
+MP4/PNG.
+
+The report distinguishes guard/DenseCheck collision predictions from physical contact.
+Passive replay does not measure contact forces. It reports dynamic collision rejection,
+brake events, goal/episode/execution duration, realized joint-space path length, selected
+hard/common-window clearance, mean/CVaR clearance cost, dense environment/self
+clearance, and inference latency.
+
 Every invocation selects an isolated ROS 2 DDS domain after Pixi activation so stale
 transient-local `/robot_description` publishers cannot switch a fake-hardware run onto
 the real Franka interface. Use `--ros-domain-id 146` only when a repeatable explicit

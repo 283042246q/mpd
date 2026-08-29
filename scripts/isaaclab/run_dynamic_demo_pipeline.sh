@@ -18,11 +18,14 @@ TIMING_MODE_EXPLICIT=false
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=1.0
+PLANNER_SEED=123
 WORLD_SCENARIO_OVERRIDE=""
+WORLD_SCENARIO_FILE=""
 VIDEO_FPS=24
 WIDTH=1280
 HEIGHT=720
 SKIP_BUILD=false
+SKIP_RENDER=false
 REQUIRE_NO_BRAKE=true
 PIPELINE_ROS_DOMAIN_ID=""
 
@@ -35,13 +38,16 @@ usage() {
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
+    "  --planner-seed N        Paired MPD request seed (default: 123)" \
     "  --world-scenario NAME   Override the profile's dynamic-world scenario" \
+    "  --world-scenario-file P Read deterministic moving objects from JSON" \
     "  --ros-domain-id ID      Isolated ROS 2 DDS domain (default: auto)" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
     "  --allow-brake           Accept recorded safety braking and still render replay" \
     "  --skip-build            Reuse the existing ROS install tree" \
+    "  --skip-render           Validate manifest/timing without IsaacLab video" \
     "  -h, --help              Show this help"
 }
 
@@ -53,17 +59,33 @@ while (($#)); do
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
+    --planner-seed) PLANNER_SEED="$2"; shift 2 ;;
     --world-scenario) WORLD_SCENARIO_OVERRIDE="$2"; shift 2 ;;
+    --world-scenario-file) WORLD_SCENARIO_FILE="$2"; shift 2 ;;
     --ros-domain-id) PIPELINE_ROS_DOMAIN_ID="$2"; shift 2 ;;
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
     --allow-brake) REQUIRE_NO_BRAKE=false; shift ;;
     --skip-build) SKIP_BUILD=true; shift ;;
+    --skip-render) SKIP_RENDER=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ ! "$PLANNER_SEED" =~ ^[0-9]+$ ]]; then
+  printf 'Invalid planner seed: %s (expected non-negative integer)\n' "$PLANNER_SEED" >&2
+  exit 2
+fi
+if [[ -n "$WORLD_SCENARIO_FILE" ]]; then
+  if [[ ! -f "$WORLD_SCENARIO_FILE" ]]; then
+    printf 'Dynamic world scenario file is not a regular file: %s\n' \
+      "$WORLD_SCENARIO_FILE" >&2
+    exit 2
+  fi
+  WORLD_SCENARIO_FILE="$(realpath -e "$WORLD_SCENARIO_FILE")"
+fi
 
 if [[ -z "$PIPELINE_ROS_DOMAIN_ID" ]]; then
   # Keep fake-hardware demos away from stale transient-local publishers in the
@@ -243,7 +265,9 @@ timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
   ros2 launch mpd_dynamic_planner_adapter "$ROS_LAUNCH" \
   plan_only:=false \
   "plan_rate_hz:=${PLAN_RATE_HZ}" \
+  "planner_seed:=${PLANNER_SEED}" \
   "world_scenario:=${WORLD_SCENARIO}" \
+  "world_scenario_file:=${WORLD_SCENARIO_FILE}" \
   "scene_id:=${ENV_NAME}" \
   "socket_path:=${SOCKET_PATH}" \
   "replay_record_dir:=${RECORD_DIR}" \
@@ -296,18 +320,22 @@ if ! env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
 fi
 
 printf '[6/6] Rendering deterministic IsaacLab replay\n'
-env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
-  "${ISAACLAB_ROOT}/isaaclab.sh" -p scripts/isaaclab/replay_mpd_trajectory.py \
-  --manifest "$MANIFEST" \
-  --output_video "$VIDEO_PATH" \
-  --screenshot_path "$SCREENSHOT_PATH" \
-  --output_json "$SUMMARY_PATH" \
-  --video_fps "$VIDEO_FPS" \
-  --width "$WIDTH" \
-  --height "$HEIGHT" \
-  --prediction_horizon_s 3.0 \
-  --prediction_samples 10 \
-  --enable_cameras >"${OUTPUT_DIR}/isaac-replay.log" 2>&1
+if [[ "$SKIP_RENDER" == true ]]; then
+  printf '  skipped by --skip-render\n'
+else
+  env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
+    "${ISAACLAB_ROOT}/isaaclab.sh" -p scripts/isaaclab/replay_mpd_trajectory.py \
+    --manifest "$MANIFEST" \
+    --output_video "$VIDEO_PATH" \
+    --screenshot_path "$SCREENSHOT_PATH" \
+    --output_json "$SUMMARY_PATH" \
+    --video_fps "$VIDEO_FPS" \
+    --width "$WIDTH" \
+    --height "$HEIGHT" \
+    --prediction_horizon_s 3.0 \
+    --prediction_samples 10 \
+    --enable_cameras >"${OUTPUT_DIR}/isaac-replay.log" 2>&1
+fi
 
 trap - EXIT INT TERM
 printf '%s\n' \
@@ -315,8 +343,11 @@ printf '%s\n' \
   "  phase:    $PHASE" \
   "  timing:   $TIMING_LABEL" \
   "  manifest: $MANIFEST" \
-  "  video:    $VIDEO_PATH" \
-  "  frame:    $SCREENSHOT_PATH" \
-  "  summary:  $SUMMARY_PATH" \
   "  metrics:  $TIMING_SUMMARY_PATH" \
   "  logs:     $OUTPUT_DIR"
+if [[ "$SKIP_RENDER" != true ]]; then
+  printf '%s\n' \
+    "  video:    $VIDEO_PATH" \
+    "  frame:    $SCREENSHOT_PATH" \
+    "  summary:  $SUMMARY_PATH"
+fi

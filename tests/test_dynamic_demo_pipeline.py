@@ -25,6 +25,9 @@ def test_pipeline_help_advertises_phase5_default_and_modes():
     assert "--timing-mode MODE" in result.stdout
     assert "default: phase5_joint" in result.stdout
     assert "--ros-domain-id ID" in result.stdout
+    assert "--planner-seed N" in result.stdout
+    assert "--world-scenario-file P" in result.stdout
+    assert "--skip-render" in result.stdout
     assert "default: auto" in result.stdout
 
 
@@ -49,6 +52,20 @@ def test_pipeline_rejects_invalid_ros_domain_before_starting_any_process():
     assert "Invalid ROS domain ID: 233" in result.stderr
 
 
+def test_pipeline_rejects_invalid_planner_seed_before_starting_any_process():
+    result = _run("--planner-seed", "not-an-integer")
+
+    assert result.returncode == 2
+    assert "Invalid planner seed" in result.stderr
+
+
+def test_pipeline_rejects_missing_world_scenario_file():
+    result = _run("--world-scenario-file", "/does/not/exist.json")
+
+    assert result.returncode == 2
+    assert "scenario file is not a regular file" in result.stderr
+
+
 def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     source = SCRIPT.read_text(encoding="utf-8")
 
@@ -59,6 +76,9 @@ def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     assert 'ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"' in source
     assert 'SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")' in source
     assert 'ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")' in source
+    assert '"planner_seed:=${PLANNER_SEED}"' in source
+    assert '"world_scenario_file:=${WORLD_SCENARIO_FILE}"' in source
+    assert 'if [[ "$SKIP_RENDER" == true ]]' in source
 
 
 def test_pipeline_normalizes_documented_world_scenario_aliases():
