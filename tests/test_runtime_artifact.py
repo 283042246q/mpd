@@ -39,6 +39,7 @@ def test_dynamic_artifact_optimizations_are_independently_switchable():
             "zlib",
             "--no-collision-spheres-float32",
             "--no-deduplicate-best-trajectory",
+            "--aligned",
         ]
     )
     assert not args.capacity_buckets
@@ -50,6 +51,7 @@ def test_dynamic_artifact_optimizations_are_independently_switchable():
     assert args.trajectory_compression == "zlib"
     assert not args.collision_spheres_float32
     assert not args.deduplicate_best_trajectory
+    assert args.aligned
 
 
 def test_phase5_server_has_separate_mode_and_timing_bounds():
@@ -90,5 +92,6 @@ def test_phase5_pruning_switches_are_independent_from_phase4_dynamic_pruning():
         ]
     )
     assert phase4.dynamic_guide_pruning
+    assert not phase4.aligned
     assert not phase5.static_spatial_pruning
     assert phase5.dynamic_space_time_pruning

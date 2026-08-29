@@ -45,6 +45,19 @@ def test_pipeline_rejects_phase5_timing_mode_for_phase4():
     assert "--timing-mode is only valid with --phase phase5" in result.stderr
 
 
+def test_pipeline_accepts_phase4_aligned_alias():
+    result = _run(
+        "--phase",
+        "phase4aligned",
+        "--timing-mode",
+        "phase5_joint",
+    )
+
+    assert result.returncode == 2
+    assert "Unsupported phase" not in result.stderr
+    assert "--timing-mode is only valid with --phase phase5" in result.stderr
+
+
 def test_pipeline_rejects_invalid_ros_domain_before_starting_any_process():
     result = _run("--ros-domain-id", "233")
 
@@ -73,8 +86,10 @@ def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     assert 'SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_dynamic_server.py"' in source
     assert 'SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_space_time_server.py"' in source
     assert 'ROS_LAUNCH="replan_dynamic_fake_hardware.launch.py"' in source
+    assert "replan_dynamic_aligned.yaml" in source
     assert 'ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"' in source
     assert 'SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")' in source
+    assert 'SERVER_EXTRA_ARGS+=(--aligned)' in source
     assert 'ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")' in source
     assert '"planner_seed:=${PLANNER_SEED}"' in source
     assert 'if [[ -n "$WORLD_SCENARIO_FILE" ]]; then' in source

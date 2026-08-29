@@ -10,7 +10,38 @@ from mpd.inference.dynamic_collision import (
     FixedCapacityDynamicWorld,
     StaticDynamicCollisionField,
 )
+from mpd.inference.fixed_time_aligned_guidance import (
+    FixedTimeAlignedGuide,
+    FixedTimeAlignedGuidanceSettings,
+    FixedTimeDynamicRiskEvaluator,
+)
+from mpd.inference.inference import _compute_candidate_ranking
 from scripts.runtime.runtime_engine import MpdRuntimeEngine, PlanArtifacts
+
+
+PHASE4_ALIGNED_SPATIAL_SCORE_WEIGHT = 1.0
+PHASE4_ALIGNED_DYNAMIC_RISK_WEIGHT = 0.2
+
+
+def _minmax_normalize(values):
+    import torch
+
+    value_range = torch.max(values) - torch.min(values)
+    if float(value_range.detach().cpu()) <= 1e-12:
+        return torch.zeros_like(values)
+    return (values - torch.min(values)) / value_range
+
+
+def _phase4_aligned_selection_score(spatial_score, dynamic_risk):
+    normalized_dynamic_risk = _minmax_normalize(dynamic_risk)
+    score = (
+        PHASE4_ALIGNED_SPATIAL_SCORE_WEIGHT * spatial_score
+        + PHASE4_ALIGNED_DYNAMIC_RISK_WEIGHT * normalized_dynamic_risk
+    )
+    return score, {
+        "spatial_weighted_metrics": spatial_score,
+        "normalized_dynamic_risk": normalized_dynamic_risk,
+    }
 
 
 class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
@@ -34,6 +65,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         trajectory_schema_version: int = 2,
         collision_spheres_float32: bool = True,
         deduplicate_best_trajectory: bool = True,
+        aligned: bool = False,
     ) -> None:
         import torch
 
@@ -44,6 +76,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         self.trajectory_schema_version = int(trajectory_schema_version)
         self.collision_spheres_float32 = bool(collision_spheres_float32)
         self.deduplicate_best_trajectory = bool(deduplicate_best_trajectory)
+        self.aligned = bool(aligned)
 
         super().__init__(
             config_path=config_path,
@@ -115,6 +148,36 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
 
+        self.aligned_risk_evaluator = None
+        if self.aligned:
+            if self.planner.cost_guide is None:
+                raise DynamicWorldError("Phase-4 aligned mode requires an MPD cost guide")
+            collision_entry = self.planner.cost_guide.costs.get(
+                "CostTaskSpaceCollisionObjects"
+            )
+            if collision_entry is None:
+                raise DynamicWorldError(
+                    "Phase-4 aligned mode requires environment collision guidance"
+                )
+            aligned_settings = FixedTimeAlignedGuidanceSettings()
+            self.aligned_risk_evaluator = FixedTimeDynamicRiskEvaluator(
+                self.planning_task,
+                self.planner.dataset,
+                self.dynamic_world,
+                self.dynamic_field,
+                aligned_settings,
+            )
+            self.planner.cost_guide = FixedTimeAlignedGuide(
+                self.planner.cost_guide,
+                self.aligned_risk_evaluator,
+                self.dynamic_field,
+                dynamic_collision_weight=float(collision_entry.weight),
+                settings=aligned_settings,
+            )
+            self.planner.cost_guide(template, warmup=True)
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+
     def update_world(self, snapshot: dict[str, Any]) -> int:
         return self.dynamic_world.update(snapshot)
 
@@ -146,7 +209,87 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             full_batch=True,
             pruning_used=False,
         )
+        response["phase4_aligned"] = {
+            "enabled": self.aligned,
+            "selection": (
+                "spatial_weighted_metrics_plus_normalized_dynamic_risk"
+                if self.aligned
+                else "legacy"
+            ),
+            "dynamic_collision_alpha": 0.5 if self.aligned else None,
+            "dynamic_collision_cvar_fraction": 0.10 if self.aligned else None,
+        }
         return response
+
+    def _postprocess_plan_results(self, results):
+        if not self.aligned:
+            return results
+        import torch
+
+        valid_indices = torch.nonzero(
+            results.valid_trajectory_mask,
+            as_tuple=False,
+        ).flatten()
+        if not valid_indices.numel():
+            return results
+        spatial_score, _ = _compute_candidate_ranking(
+            "weighted_metrics",
+            self.args_inference,
+            self.planner.dataset,
+            self.planning_task,
+            None,
+            results.control_points_iter_0,
+            results.q_trajs_pos_iter_0,
+            results.q_trajs_vel_iter_0,
+            results.q_trajs_acc_iter_0,
+            results.ee_pose_goal,
+        )
+        with torch.no_grad():
+            dynamic_risk, dynamic_breakdown = self.aligned_risk_evaluator.evaluate_q(
+                results.q_trajs_pos_iter_0
+            )
+        valid_spatial = spatial_score.index_select(0, valid_indices)
+        valid_dynamic = dynamic_risk.index_select(0, valid_indices)
+        valid_score, components = _phase4_aligned_selection_score(
+            valid_spatial,
+            valid_dynamic,
+        )
+        selected_valid = int(torch.argmin(valid_score).item())
+        selected_candidate = int(valid_indices[selected_valid].item())
+        results.update(
+            valid_trajectory_selection_scores=valid_score,
+            control_points_best=results.control_points_iter_0[selected_candidate],
+            q_trajs_pos_best=results.q_trajs_pos_iter_0[selected_candidate],
+            q_trajs_vel_best=results.q_trajs_vel_iter_0[selected_candidate],
+            q_trajs_acc_best=results.q_trajs_acc_iter_0[selected_candidate],
+            best_trajectory_selection_details={
+                "method": "phase4_aligned_spatial_dynamic_risk",
+                "selected_candidate_index": selected_candidate,
+                "selected_valid_index": selected_valid,
+                "score": float(valid_score[selected_valid].item()),
+                "components": {
+                    "spatial_weighted_metrics": {
+                        "value": float(
+                            components["spatial_weighted_metrics"][selected_valid].item()
+                        ),
+                        "weight": PHASE4_ALIGNED_SPATIAL_SCORE_WEIGHT,
+                    },
+                    "normalized_dynamic_risk": {
+                        "value": float(
+                            components["normalized_dynamic_risk"][selected_valid].item()
+                        ),
+                        "weight": PHASE4_ALIGNED_DYNAMIC_RISK_WEIGHT,
+                    },
+                    "dynamic_collision_mean": float(
+                        dynamic_breakdown["mean"][selected_candidate].item()
+                    ),
+                    "dynamic_collision_cvar": float(
+                        dynamic_breakdown["cvar"][selected_candidate].item()
+                    ),
+                },
+            },
+        )
+        return results
 
     def _validate_fixed_timing_pruning(self) -> None:
         """Reject pruning modes that can remove candidates or future timestamps."""

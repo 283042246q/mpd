@@ -33,7 +33,7 @@ usage() {
   printf '%s\n' \
     "Usage: $0 [options]" \
     "  --profile NAME          Environment profile (currently: to_drawer)" \
-    "  --phase NAME            Planner phase: phase4 or phase5 (default: phase5)" \
+    "  --phase NAME            Planner phase: phase4, phase4_aligned, or phase5 (default: phase5)" \
     "  --timing-mode MODE      Phase-5 mode (default: phase5_joint)" \
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
@@ -101,9 +101,10 @@ fi
 
 case "$PHASE" in
   4|phase4) PHASE="phase4" ;;
+  phase4aligned|phase4-aligned|phase4_aligned) PHASE="phase4_aligned" ;;
   5|phase5) PHASE="phase5" ;;
   *)
-    printf 'Unsupported phase: %s (supported: phase4, phase5)\n' "$PHASE" >&2
+    printf 'Unsupported phase: %s (supported: phase4, phase4_aligned, phase5)\n' "$PHASE" >&2
     exit 2
     ;;
 esac
@@ -114,7 +115,7 @@ case "$TIMING_MODE" in
     exit 2
     ;;
 esac
-if [[ "$PHASE" == "phase4" && "$TIMING_MODE_EXPLICIT" == true ]]; then
+if [[ "$PHASE" != "phase5" && "$TIMING_MODE_EXPLICIT" == true ]]; then
   printf '%s\n' '--timing-mode is only valid with --phase phase5' >&2
   exit 2
 fi
@@ -149,6 +150,17 @@ case "$PHASE" in
     TIMING_LABEL="fixed"
     HEALTH_TIMEOUT_S=2
     ;;
+  phase4_aligned)
+    SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_dynamic_server.py"
+    ROS_LAUNCH="replan_dynamic_fake_hardware.launch.py"
+    SOCKET_BASENAME="mpd-dynamic-aligned-runtime.sock"
+    TIMING_LABEL="fixed_aligned"
+    HEALTH_TIMEOUT_S=4
+    SERVER_EXTRA_ARGS+=(--aligned)
+    ROS_EXTRA_ARGS+=(
+      "config:=${AIRUNTIME_ROOT}/src/motion_planning/motion_planners/mpd_dynamic_planner_adapter/config/replan_dynamic_aligned.yaml"
+    )
+    ;;
   phase5)
     SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_space_time_server.py"
     ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"
@@ -163,6 +175,8 @@ esac
 if [[ -z "$OUTPUT_DIR" ]]; then
   if [[ "$PHASE" == "phase4" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}"
+  elif [[ "$PHASE" == "phase4_aligned" ]]; then
+    LOG_GROUP="dynamic-replay-${PROFILE}-phase4-aligned"
   else
     LOG_GROUP="dynamic-replay-${PROFILE}-phase5"
   fi

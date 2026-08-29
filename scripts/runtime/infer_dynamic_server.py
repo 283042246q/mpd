@@ -98,6 +98,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_boolean_switch(parser, "collision-spheres-float32", default=True)
     _add_boolean_switch(parser, "deduplicate-best-trajectory", default=True)
+    _add_boolean_switch(parser, "aligned", default=False)
     return parser
 
 
@@ -121,6 +122,7 @@ def main(argv=None) -> int:
             trajectory_schema_version=args.trajectory_schema_version,
             collision_spheres_float32=args.collision_spheres_float32,
             deduplicate_best_trajectory=args.deduplicate_best_trajectory,
+            aligned=args.aligned,
         )
 
     service = DynamicResidentPlannerService(

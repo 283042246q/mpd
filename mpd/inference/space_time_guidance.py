@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 
+from mpd.inference.dynamic_risk import mean_cvar_dynamic_risk
 from mpd.parametric_trajectory.timing_spline import (
     TimingSpline,
     TimingSplineEvaluation,
@@ -127,34 +128,6 @@ class SpaceTimeCostEvaluator:
         self.acceleration_limits = acceleration_limits
         self.settings = settings
 
-    @staticmethod
-    def _time_cvar(
-        values: torch.Tensor,
-        times: torch.Tensor,
-        fraction: float,
-    ) -> torch.Tensor:
-        """Worst-fraction mean with trapezoidal physical-time weights."""
-
-        intervals = torch.diff(times, dim=-1)
-        weights = torch.zeros_like(values)
-        weights[..., 0] = 0.5 * intervals[..., 0]
-        weights[..., -1] = 0.5 * intervals[..., -1]
-        if values.shape[-1] > 2:
-            weights[..., 1:-1] = 0.5 * (
-                intervals[..., :-1] + intervals[..., 1:]
-            )
-        sorted_values, order = torch.sort(values, dim=-1, descending=True)
-        sorted_weights = torch.gather(weights, -1, order)
-        target_weight = float(fraction) * weights.sum(dim=-1, keepdim=True)
-        cumulative_before = torch.cumsum(sorted_weights, dim=-1) - sorted_weights
-        included = torch.minimum(
-            sorted_weights,
-            torch.clamp(target_weight - cumulative_before, min=0.0),
-        )
-        return (sorted_values * included).sum(dim=-1) / target_weight.squeeze(
-            -1
-        ).clamp_min(torch.finfo(values.dtype).eps)
-
     def __call__(
         self,
         timing_control_points: torch.Tensor | None = None,
@@ -193,7 +166,8 @@ class SpaceTimeCostEvaluator:
             dtype=q.dtype, device=q.device
         ) + self.cutoff_margin
         penetration = torch.relu(margins - minimum_distance)
-        collision_density = penetration.pow(self.settings.collision_power).sum(dim=-1)
+        if self.settings.collision_power != 2.0:
+            raise ValueError("mean/CVaR dynamic risk currently requires collision_power=2")
         candidate_duration = evaluation.duration
         inverse_duration = candidate_duration.clamp_min(
             torch.finfo(candidate_duration.dtype).eps
@@ -201,21 +175,14 @@ class SpaceTimeCostEvaluator:
         # Compare the time-distributed penalty using its physical-time mean
         # and worst-time tail. Candidate makespan is charged exactly once by
         # the explicit duration term.
-        dynamic_collision_mean = torch.trapezoid(
-            collision_density * evaluation.u,
-            evaluation.phase,
-            dim=-1,
-        ) * inverse_duration
-        dynamic_collision_cvar = self._time_cvar(
-            collision_density,
+        dynamic_collision, dynamic_breakdown = mean_cvar_dynamic_risk(
+            penetration,
             evaluation.time_from_start,
-            self.settings.dynamic_collision_cvar_fraction,
+            alpha=self.settings.dynamic_collision_alpha,
+            cvar_fraction=self.settings.dynamic_collision_cvar_fraction,
         )
-        dynamic_collision = (
-            self.settings.dynamic_collision_alpha * dynamic_collision_mean
-            + (1.0 - self.settings.dynamic_collision_alpha)
-            * dynamic_collision_cvar
-        )
+        dynamic_collision_mean = dynamic_breakdown["mean"]
+        dynamic_collision_cvar = dynamic_breakdown["cvar"]
 
         velocity = torch.zeros_like(dynamic_collision)
         if self.velocity_limits is not None:
