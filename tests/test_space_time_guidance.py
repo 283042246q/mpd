@@ -161,12 +161,73 @@ def test_time_integrated_costs_are_normalized_by_candidate_duration():
     assert breakdown["duration"][0].item() < breakdown["duration"][1].item()
 
 
-def test_default_duration_weight_is_one():
-    assert SpaceTimeGuidanceSettings().duration_weight == 1.0
+def test_default_duration_weight_is_point_two():
+    assert SpaceTimeGuidanceSettings().duration_weight == 0.2
+
+
+@pytest.mark.parametrize("alpha", [-0.01, 1.01])
+def test_dynamic_collision_alpha_must_be_a_convex_blend(alpha):
+    with pytest.raises(ValueError, match="alpha"):
+        SpaceTimeGuidanceSettings.from_mapping(
+            {"dynamic_collision_alpha": alpha}
+        )
+
+
+def test_dynamic_collision_blends_time_mean_and_worst_ten_percent():
+    timing, evaluator, controls, q, q_s, q_ss, sphere_positions = _problem()
+
+    class _VaryingDistanceWorld:
+        @staticmethod
+        def minimum_signed_distance(points, **_kwargs):
+            distance = torch.full(points.shape[:-1], 0.08, **TENSOR_ARGS)
+            distance[:, :7] = 0.0
+            return distance
+
+    evaluator.dynamic_world = _VaryingDistanceWorld()
+    evaluator.settings = SpaceTimeGuidanceSettings(
+        mode="phase5_joint",
+        u_min=0.05,
+        duration_min=1.0,
+        duration_max=4.0,
+        nominal_duration=2.0,
+        dynamic_collision_weight=10.0,
+        dynamic_collision_alpha=0.5,
+        dynamic_collision_cvar_fraction=0.10,
+        velocity_weight=0.0,
+        acceleration_weight=0.0,
+        duration_weight=0.0,
+        timing_smoothness_weight=0.0,
+    )
+
+    total, breakdown, _ = evaluator(
+        controls,
+        q=q,
+        q_s=q_s,
+        q_ss=q_ss,
+        collision_sphere_positions=sphere_positions,
+    )
+
+    assert breakdown["dynamic_collision_cvar"].item() > breakdown[
+        "dynamic_collision_mean"
+    ].item()
+    torch.testing.assert_close(
+        breakdown["dynamic_collision"],
+        0.5
+        * (
+            breakdown["dynamic_collision_mean"]
+            + breakdown["dynamic_collision_cvar"]
+        ),
+    )
+    torch.testing.assert_close(
+        total, 10.0 * breakdown["dynamic_collision"]
+    )
 
 
 def test_joint_dynamic_cost_gradients_match_central_difference():
     _, evaluator, controls, q, q_s, q_ss, sphere_positions = _problem()
+    # Avoid the exact symmetric point where CVaR membership has tied values
+    # and therefore has a valid subgradient but no unique central derivative.
+    controls[0, 3] += 0.01
     controls.requires_grad_(True)
     spatial_offset = torch.tensor(0.0, **TENSOR_ARGS, requires_grad=True)
     shifted_q = q + spatial_offset

@@ -53,9 +53,11 @@ class SpaceTimeGuidanceSettings:
     spatial_dynamic_max_grad_norm: float = 1.0
     spatial_dynamic_scale: float = 1.0
     dynamic_collision_weight: float = 10.0
+    dynamic_collision_alpha: float = 0.5
+    dynamic_collision_cvar_fraction: float = 0.10
     velocity_weight: float = 0.02
     acceleration_weight: float = 0.005
-    duration_weight: float = 1.0
+    duration_weight: float = 0.2
     timing_smoothness_weight: float = 0.02
     collision_power: float = 2.0
 
@@ -75,6 +77,10 @@ class SpaceTimeGuidanceSettings:
             raise ValueError("nominal duration must lie strictly inside duration bounds")
         if settings.timing_learning_rate <= 0.0:
             raise ValueError("timing_learning_rate must be positive")
+        if not 0.0 <= settings.dynamic_collision_alpha <= 1.0:
+            raise ValueError("dynamic collision alpha must lie in [0, 1]")
+        if not 0.0 < settings.dynamic_collision_cvar_fraction <= 1.0:
+            raise ValueError("dynamic collision CVaR fraction must lie in (0, 1]")
         return settings
 
 
@@ -121,6 +127,34 @@ class SpaceTimeCostEvaluator:
         self.acceleration_limits = acceleration_limits
         self.settings = settings
 
+    @staticmethod
+    def _time_cvar(
+        values: torch.Tensor,
+        times: torch.Tensor,
+        fraction: float,
+    ) -> torch.Tensor:
+        """Worst-fraction mean with trapezoidal physical-time weights."""
+
+        intervals = torch.diff(times, dim=-1)
+        weights = torch.zeros_like(values)
+        weights[..., 0] = 0.5 * intervals[..., 0]
+        weights[..., -1] = 0.5 * intervals[..., -1]
+        if values.shape[-1] > 2:
+            weights[..., 1:-1] = 0.5 * (
+                intervals[..., :-1] + intervals[..., 1:]
+            )
+        sorted_values, order = torch.sort(values, dim=-1, descending=True)
+        sorted_weights = torch.gather(weights, -1, order)
+        target_weight = float(fraction) * weights.sum(dim=-1, keepdim=True)
+        cumulative_before = torch.cumsum(sorted_weights, dim=-1) - sorted_weights
+        included = torch.minimum(
+            sorted_weights,
+            torch.clamp(target_weight - cumulative_before, min=0.0),
+        )
+        return (sorted_values * included).sum(dim=-1) / target_weight.squeeze(
+            -1
+        ).clamp_min(torch.finfo(values.dtype).eps)
+
     def __call__(
         self,
         timing_control_points: torch.Tensor | None = None,
@@ -164,13 +198,24 @@ class SpaceTimeCostEvaluator:
         inverse_duration = candidate_duration.clamp_min(
             torch.finfo(candidate_duration.dtype).eps
         ).reciprocal()
-        # Compare time-distributed penalties as mean density. Candidate
-        # makespan is charged exactly once by the explicit duration term.
-        dynamic_collision = torch.trapezoid(
+        # Compare the time-distributed penalty using its physical-time mean
+        # and worst-time tail. Candidate makespan is charged exactly once by
+        # the explicit duration term.
+        dynamic_collision_mean = torch.trapezoid(
             collision_density * evaluation.u,
             evaluation.phase,
             dim=-1,
         ) * inverse_duration
+        dynamic_collision_cvar = self._time_cvar(
+            collision_density,
+            evaluation.time_from_start,
+            self.settings.dynamic_collision_cvar_fraction,
+        )
+        dynamic_collision = (
+            self.settings.dynamic_collision_alpha * dynamic_collision_mean
+            + (1.0 - self.settings.dynamic_collision_alpha)
+            * dynamic_collision_cvar
+        )
 
         velocity = torch.zeros_like(dynamic_collision)
         if self.velocity_limits is not None:
@@ -193,6 +238,8 @@ class SpaceTimeCostEvaluator:
         )
         breakdown = {
             "dynamic_collision": dynamic_collision,
+            "dynamic_collision_mean": dynamic_collision_mean,
+            "dynamic_collision_cvar": dynamic_collision_cvar,
             "velocity": velocity,
             "acceleration": acceleration,
             "duration": duration_cost,

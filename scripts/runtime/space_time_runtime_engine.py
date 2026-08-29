@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from mpd.inference.inference import _compute_candidate_ranking
 from mpd.inference.space_time_guidance import (
     InferenceOnlySpaceTimeGuide,
     SpaceTimeGuidanceSettings,
@@ -13,6 +14,46 @@ from scripts.runtime.dynamic_runtime_engine import DynamicMpdRuntimeEngine
 from scripts.runtime.infer_once import _validate_best_trajectory
 from scripts.runtime.runtime_engine import PlanArtifacts
 from scripts.runtime.timing_contract import attach_candidate_timing
+
+PHASE5_SPATIAL_SCORE_WEIGHT = 1.0
+PHASE5_DYNAMIC_RISK_WEIGHT = 0.2
+PHASE5_DURATION_SCORE_WEIGHT = 0.1
+PHASE5_TIMING_SMOOTHNESS_WEIGHT = 0.1
+
+
+def _minmax_normalize(values):
+    import torch
+
+    value_range = torch.max(values) - torch.min(values)
+    if float(value_range.detach().cpu()) <= 1e-12:
+        return torch.zeros_like(values)
+    return (values - torch.min(values)) / value_range
+
+
+def _phase5_selection_score(
+    spatial_score,
+    dynamic_risk,
+    duration,
+    timing_smoothness,
+    *,
+    duration_min: float,
+    duration_max: float,
+):
+    normalized_dynamic_risk = _minmax_normalize(dynamic_risk)
+    normalized_duration = (duration - duration_min) / (duration_max - duration_min)
+    normalized_timing_smoothness = _minmax_normalize(timing_smoothness)
+    total = (
+        PHASE5_SPATIAL_SCORE_WEIGHT * spatial_score
+        + PHASE5_DYNAMIC_RISK_WEIGHT * normalized_dynamic_risk
+        + PHASE5_DURATION_SCORE_WEIGHT * normalized_duration
+        + PHASE5_TIMING_SMOOTHNESS_WEIGHT * normalized_timing_smoothness
+    )
+    return total, {
+        "spatial_weighted_metrics": spatial_score,
+        "normalized_dynamic_risk": normalized_dynamic_risk,
+        "normalized_duration": normalized_duration,
+        "normalized_timing_smoothness": normalized_timing_smoothness,
+    }
 
 
 class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
@@ -106,7 +147,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         normalized = self.planner.dataset.normalize_control_points(control_points)
         timing_control_points = self.space_time_guide.timing_control_points
         with torch.no_grad():
-            candidate_cost, _, timing = self.space_time_guide.evaluate_control_points(
+            _, cost_breakdown, timing = self.space_time_guide.evaluate_control_points(
                 normalized, timing_control_points
             )
             dense_cfg = self.planner.dense_validation_config
@@ -140,6 +181,18 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         )
         valid_mask = dense.trajectory_valid_mask & duration_valid & finite
         valid_indices = torch.nonzero(valid_mask, as_tuple=False).flatten()
+        spatial_score, _ = _compute_candidate_ranking(
+            "weighted_metrics",
+            self.args_inference,
+            self.planner.dataset,
+            self.planning_task,
+            None,
+            control_points,
+            timing.q,
+            timing.dq,
+            timing.ddq,
+            results.ee_pose_goal,
+        )
         collision_waypoint_mask = (
             dense.environment_collision_mask | dense.self_collision_mask
         )
@@ -189,20 +242,35 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                 q_trajs_acc_valid=timing.ddq[:0],
                 valid_candidate_timesteps=timing.time_from_start[:0],
                 valid_timing_control_points=timing_control_points[:0],
-                valid_trajectory_selection_scores=candidate_cost[:0],
+                valid_trajectory_selection_scores=spatial_score[:0],
                 control_points_best=None,
                 q_trajs_pos_best=None,
                 q_trajs_vel_best=None,
                 q_trajs_acc_best=None,
                 best_trajectory_selection_details={
-                    "method": "phase5_space_time_cost",
+                    "method": "phase5_spatial_space_time_cost",
                     "reason": "no_full_candidate_specific_dense_valid_trajectory",
                 },
                 timesteps=None,
             )
             return results
 
-        valid_cost = candidate_cost.index_select(0, valid_indices)
+        valid_spatial_score = spatial_score.index_select(0, valid_indices)
+        valid_dynamic_risk = cost_breakdown["dynamic_collision"].index_select(
+            0, valid_indices
+        )
+        valid_duration = timing.duration.index_select(0, valid_indices)
+        valid_timing_smoothness = cost_breakdown["timing_smoothness"].index_select(
+            0, valid_indices
+        )
+        valid_cost, score_components = _phase5_selection_score(
+            valid_spatial_score,
+            valid_dynamic_risk,
+            valid_duration,
+            valid_timing_smoothness,
+            duration_min=self.space_time_settings.duration_min,
+            duration_max=self.space_time_settings.duration_max,
+        )
         selected_valid = int(torch.argmin(valid_cost).item())
         selected_candidate = int(valid_indices[selected_valid].item())
         results.update(
@@ -222,11 +290,43 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             q_trajs_vel_best=timing.dq[selected_candidate],
             q_trajs_acc_best=timing.ddq[selected_candidate],
             best_trajectory_selection_details={
-                "method": "phase5_space_time_cost",
+                "method": "phase5_spatial_space_time_cost",
                 "selected_candidate_index": selected_candidate,
                 "selected_valid_index": selected_valid,
                 "score": float(valid_cost[selected_valid].item()),
                 "duration_s": float(timing.duration[selected_candidate].item()),
+                "components": {
+                    "spatial_weighted_metrics": {
+                        "value": float(
+                            score_components["spatial_weighted_metrics"][
+                                selected_valid
+                            ].item()
+                        ),
+                        "weight": PHASE5_SPATIAL_SCORE_WEIGHT,
+                    },
+                    "normalized_dynamic_risk": {
+                        "value": float(
+                            score_components["normalized_dynamic_risk"][
+                                selected_valid
+                            ].item()
+                        ),
+                        "weight": PHASE5_DYNAMIC_RISK_WEIGHT,
+                    },
+                    "normalized_duration": {
+                        "value": float(
+                            score_components["normalized_duration"][selected_valid].item()
+                        ),
+                        "weight": PHASE5_DURATION_SCORE_WEIGHT,
+                    },
+                    "normalized_timing_smoothness": {
+                        "value": float(
+                            score_components["normalized_timing_smoothness"][
+                                selected_valid
+                            ].item()
+                        ),
+                        "weight": PHASE5_TIMING_SMOOTHNESS_WEIGHT,
+                    },
+                },
             },
             timesteps=timing.time_from_start[selected_candidate],
         )
