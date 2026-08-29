@@ -11,6 +11,7 @@ from typing import Any
 
 
 EXECUTED_STATUSES = frozenset(("accepted", "superseded"))
+TERMINAL_CLIP_TOLERANCE_S = 1.0e-3
 
 
 def _finite(value: Any, name: str) -> float:
@@ -28,6 +29,11 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
     executed = []
     pending_plan_count = 0
+    terminal_clipped_plan_count = 0
+    duration_value = payload.get("duration_s")
+    manifest_duration = (
+        None if duration_value is None else _finite(duration_value, "manifest.duration_s")
+    )
     for index, plan in enumerate(plans):
         if not isinstance(plan, dict) or plan.get("status") not in EXECUTED_STATUSES:
             continue
@@ -59,10 +65,24 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         handoff = _finite(
             timing.get("handoff_s"), f"plans[{index}].phase_timing.handoff_s"
         )
-        if not submitted <= bridge_start <= handoff <= active_until + 1e-6:
+        if not submitted <= bridge_start <= handoff:
             raise ValueError(f"executed plan {index} has inconsistent phase timing")
         if abs(active_from - bridge_start) > 1e-5:
             raise ValueError(f"executed plan {index} does not start at bridge_start")
+        if handoff > active_until + 1e-6:
+            # A replacement accepted on the final recorder tick can receive an
+            # active interval only a few microseconds long before the episode
+            # is clipped.  No meaningful bridge command was executed, so this
+            # is a terminal recording artifact rather than invalid timing.
+            terminal_clip = (
+                manifest_duration is not None
+                and abs(active_until - manifest_duration) <= TERMINAL_CLIP_TOLERANCE_S
+                and 0.0 <= active_until - active_from <= TERMINAL_CLIP_TOLERANCE_S
+            )
+            if terminal_clip:
+                terminal_clipped_plan_count += 1
+                continue
+            raise ValueError(f"executed plan {index} has inconsistent phase timing")
         executed.append(
             {
                 "id": str(plan.get("id", f"plan-{index}")),
@@ -129,6 +149,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "executed_plan_count": len(executed),
         "pending_plan_count": pending_plan_count,
+        "terminal_clipped_plan_count": terminal_clipped_plan_count,
         "handoff_event_count": sum(event.get("type") == "handoff" for event in events),
         "brake_event_count": sum(event.get("type") == "brake" for event in events),
         "maximum_command_gap_s": max((item["gap_s"] for item in gaps), default=0.0),

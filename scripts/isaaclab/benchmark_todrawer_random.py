@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from scripts.isaaclab.summarize_replan_timing import summarize_manifest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE = REPO_ROOT / "scripts" / "isaaclab" / "run_dynamic_demo_pipeline.sh"
@@ -50,6 +52,11 @@ REPORT_FIELDS = (
     "planner_seed",
     "pipeline_returncode",
     "pipeline_completed",
+    "manifest_available",
+    "failure_class",
+    "pipeline_revalidated",
+    "attempt_count",
+    "infrastructure_failure_attempts",
     "goal_reached",
     "goal_time_s",
     "brake_count",
@@ -317,6 +324,64 @@ def _parse_ros_log(path: Path) -> dict[str, Any]:
     }
 
 
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+
+
+def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Classify old/new attempts and revalidate the fixed terminal-clip case."""
+
+    normalized = dict(metrics)
+    attempt_value = normalized.get("attempt_dir")
+    attempt_dir = Path(str(attempt_value)) if attempt_value else None
+    manifest_path = (
+        attempt_dir / "episode" / "replay-manifest.json"
+        if attempt_dir is not None
+        else None
+    )
+    manifest_available = bool(manifest_path is not None and manifest_path.is_file())
+    normalized["manifest_available"] = manifest_available
+    normalized.setdefault("pipeline_revalidated", False)
+    if normalized.get("pipeline_completed"):
+        normalized["failure_class"] = None
+        return normalized
+
+    ros_log = _read_text(attempt_dir / "ros-replan.log") if attempt_dir else ""
+    pipeline_log = _read_text(attempt_dir / "pipeline.log") if attempt_dir else ""
+    if "rmw_create_node: failed to create domain" in ros_log:
+        normalized["failure_class"] = "dds_startup"
+        return normalized
+
+    maximum_gap = normalized.get("maximum_command_gap_s")
+    if maximum_gap is not None and float(maximum_gap) > 0.05:
+        normalized["failure_class"] = "command_continuity"
+        return normalized
+
+    if manifest_available and "inconsistent phase timing" in pipeline_log:
+        try:
+            timing = summarize_manifest(_read_json(manifest_path))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            normalized["failure_class"] = "timing_summary"
+            return normalized
+        normalized["maximum_command_gap_s"] = timing["maximum_command_gap_s"]
+        normalized["terminal_clipped_plan_count"] = timing[
+            "terminal_clipped_plan_count"
+        ]
+        if timing["maximum_command_gap_s"] <= 0.05:
+            normalized["pipeline_completed"] = True
+            normalized["pipeline_revalidated"] = True
+            normalized["failure_class"] = None
+            normalized["error"] = None
+            return normalized
+        normalized["failure_class"] = "command_continuity"
+        return normalized
+
+    normalized["failure_class"] = (
+        "pipeline_after_manifest" if manifest_available else "pipeline_startup"
+    )
+    return normalized
+
+
 def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode: int) -> dict[str, Any]:
     manifest_path = attempt_dir / "episode" / "replay-manifest.json"
     metrics: dict[str, Any] = {
@@ -328,7 +393,7 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     }
     if not manifest_path.is_file():
         metrics["error"] = "replay manifest missing"
-        return metrics
+        return _normalize_metrics(metrics)
     manifest = _read_json(manifest_path)
     plans = manifest.get("plans", [])
     executed = [plan for plan in plans if "active_from_s" in plan and "active_until_s" in plan]
@@ -403,16 +468,37 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         no_valid_trajectory_count=ros["no_valid_trajectory_count"],
         jtc_error_count=ros["jtc_error_count"],
     )
-    return metrics
+    return _normalize_metrics(metrics)
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    successful = [row for row in rows if row.get("goal_reached")]
     return {
         "runs": len(rows),
         "completed": sum(bool(row.get("pipeline_completed")) for row in rows),
+        "manifest_runs": sum(bool(row.get("manifest_available")) for row in rows),
+        "infrastructure_failure_runs": sum(
+            int(row.get("infrastructure_failure_attempts") or 0) > 0 for row in rows
+        ),
+        "infrastructure_failure_attempts": sum(
+            int(row.get("infrastructure_failure_attempts") or 0) for row in rows
+        ),
+        "unresolved_infrastructure_failures": sum(
+            row.get("failure_class") == "dds_startup" for row in rows
+        ),
         "goal_reached": sum(bool(row.get("goal_reached")) for row in rows),
         "brake_runs": sum(int(row.get("brake_count") or 0) > 0 for row in rows),
         "brake_events": sum(int(row.get("brake_count") or 0) for row in rows),
+        "goal_and_brake_runs": sum(
+            bool(row.get("goal_reached")) and int(row.get("brake_count") or 0) > 0
+            for row in rows
+        ),
+        "no_goal_and_brake_runs": sum(
+            not bool(row.get("goal_reached"))
+            and bool(row.get("manifest_available"))
+            and int(row.get("brake_count") or 0) > 0
+            for row in rows
+        ),
         "guard_dynamic_collision_rejections": sum(
             int(row.get("guard_dynamic_collision_rejections") or 0) for row in rows
         ),
@@ -422,9 +508,18 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "goal_time_s": _describe([row.get("goal_time_s") for row in rows]),
         "episode_duration_s": _describe([row.get("episode_duration_s") for row in rows]),
         "execution_duration_s": _describe([row.get("execution_duration_s") for row in rows]),
+        "successful_execution_duration_s": _describe(
+            [row.get("execution_duration_s") for row in successful]
+        ),
         "planned_duration_s": _describe([row.get("planned_duration_mean_s") for row in rows]),
         "joint_l2_path_rad": _describe([row.get("joint_l2_path_rad") for row in rows]),
         "joint_l1_travel_rad": _describe([row.get("joint_l1_travel_rad") for row in rows]),
+        "successful_joint_l2_path_rad": _describe(
+            [row.get("joint_l2_path_rad") for row in successful]
+        ),
+        "successful_joint_l1_travel_rad": _describe(
+            [row.get("joint_l1_travel_rad") for row in successful]
+        ),
         "hard_minimum_clearance_m": _describe(
             [row.get("hard_minimum_clearance_m") for row in rows]
         ),
@@ -443,6 +538,28 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "maximum_command_gap_s": _describe(
             [row.get("maximum_command_gap_s") for row in rows]
         ),
+    }
+
+
+def _paired_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    grouped: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        key = (str(row.get("scenario_id")), int(row.get("repeat", 0)))
+        grouped.setdefault(key, {})[str(row.get("mode"))] = row
+    complete_cells = [
+        modes
+        for modes in grouped.values()
+        if all(
+            mode in modes and bool(modes[mode].get("manifest_available"))
+            for mode in MODE_SPECS
+        )
+    ]
+    return {
+        "cell_count": len(complete_cells),
+        "by_mode": {
+            mode: _aggregate([cell[mode] for cell in complete_cells])
+            for mode in MODE_SPECS
+        },
     }
 
 
@@ -476,9 +593,10 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         }
         for category in CATEGORIES
     }
+    paired = _paired_summary(rows)
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
-        "schema_version": 1,
+        "schema_version": 2,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "run_count": len(rows),
@@ -489,6 +607,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         },
         "by_mode": by_mode,
         "by_category": by_category,
+        "paired": paired,
         "runs": rows,
     }
     _write_json(reports / "summary.json", summary)
@@ -503,12 +622,12 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         "",
         "## 指标口径",
         "",
-        "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。总路径为实际生效命令区间的关节空间路径。",
+        "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
         "",
         "## 安全与完成情况",
         "",
-        "| 模式 | 完成/总数 | 到达目标 | brake runs | brake events | 动态碰撞拒绝 | 非正 clearance | 最大命令间隙 mean s |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| 模式 | 完成/总数 | 有manifest | 基础设施失败 runs/attempts | 到达目标 | brake runs | goal+brake | no-goal+brake | 动态碰撞拒绝 | 非正 clearance | 最大命令间隙 mean s |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for mode, data in by_mode.items():
         lines.append(
@@ -517,9 +636,12 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                 (
                     mode,
                     f"{data['completed']}/{data['runs']}",
+                    str(data["manifest_runs"]),
+                    f"{data['infrastructure_failure_runs']}/{data['infrastructure_failure_attempts']}",
                     str(data["goal_reached"]),
                     str(data["brake_runs"]),
-                    str(data["brake_events"]),
+                    str(data["goal_and_brake_runs"]),
+                    str(data["no_goal_and_brake_runs"]),
                     str(data["guard_dynamic_collision_rejections"]),
                     str(data["accepted_nonpositive_clearance_count"]),
                     _fmt(data["maximum_command_gap_s"]["mean"]),
@@ -545,6 +667,43 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             f"{_fmt(data['joint_l2_path_rad']['mean'])} | "
             f"{_fmt(data['joint_l1_travel_rad']['mean'])} | "
             f"{_fmt(data['inference_total_s']['mean'])} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 仅到达目标运行的路径与执行时长",
+            "",
+            "失败、brake-only和基础设施失败不参与本表平均，避免零路径让模式看起来虚假变短。",
+            "",
+            "| 模式 | 成功数 | 成功执行时长 mean s | 成功 path L2 mean rad | 成功 joint L1 mean rad |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for mode, data in by_mode.items():
+        lines.append(
+            f"| {mode} | {data['goal_reached']} | "
+            f"{_fmt(data['successful_execution_duration_s']['mean'])} | "
+            f"{_fmt(data['successful_joint_l2_path_rad']['mean'])} | "
+            f"{_fmt(data['successful_joint_l1_travel_rad']['mean'])} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 完整配对结果",
+            "",
+            f"仅统计同一场景、repeat下四种模式都有manifest的 `{paired['cell_count']}` 组运行。",
+            "",
+            "| 模式 | 配对运行 | 到达目标 | brake runs | goal+brake | no-goal+brake | 成功执行时长 mean s | 成功 path L2 mean rad |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for mode, data in paired["by_mode"].items():
+        lines.append(
+            f"| {mode} | {data['runs']} | {data['goal_reached']} | "
+            f"{data['brake_runs']} | {data['goal_and_brake_runs']} | "
+            f"{data['no_goal_and_brake_runs']} | "
+            f"{_fmt(data['successful_execution_duration_s']['mean'])} | "
+            f"{_fmt(data['successful_joint_l2_path_rad']['mean'])} |"
         )
     lines.extend(
         [
@@ -583,22 +742,26 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                 f"{_fmt(data['joint_l2_path_rad']['mean'])} | "
                 f"{_fmt(data['hard_minimum_clearance_m']['min'])} |"
             )
-    completed_modes = {mode: data for mode, data in by_mode.items() if data["completed"]}
+    analyzable_modes = {
+        mode: data for mode, data in by_mode.items() if data["manifest_runs"]
+    }
     lines.extend(["", "## 描述性结论", ""])
-    if completed_modes:
+    if analyzable_modes:
         goal_best = max(
-            completed_modes,
-            key=lambda mode: completed_modes[mode]["goal_reached"] / completed_modes[mode]["completed"],
+            analyzable_modes,
+            key=lambda mode: analyzable_modes[mode]["goal_reached"]
+            / analyzable_modes[mode]["manifest_runs"],
         )
         brake_best = min(
-            completed_modes,
-            key=lambda mode: completed_modes[mode]["brake_runs"] / completed_modes[mode]["completed"],
+            analyzable_modes,
+            key=lambda mode: analyzable_modes[mode]["brake_runs"]
+            / analyzable_modes[mode]["manifest_runs"],
         )
         lines.append(f"- 当前样本目标到达率最高：`{goal_best}`。")
         lines.append(f"- 当前样本 brake run 比例最低：`{brake_best}`。")
         clearance_modes = {
             mode: data
-            for mode, data in completed_modes.items()
+            for mode, data in analyzable_modes.items()
             if data["hard_minimum_clearance_m"]["min"] is not None
         }
         if clearance_modes:
@@ -614,7 +777,8 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         for row in failures:
             lines.append(
                 f"- `{row.get('scenario_id')}/{row.get('repeat')}/{row.get('mode')}`: "
-                f"{row.get('error') or 'pipeline failed'} (`{row.get('attempt_dir')}`)"
+                f"{row.get('failure_class') or row.get('error') or 'pipeline failed'} "
+                f"(`{row.get('attempt_dir')}`)"
             )
     (reports / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -630,12 +794,20 @@ def _existing_rows(output_dir: Path) -> list[dict[str, Any]]:
     rows = []
     for path in sorted(output_dir.glob("runs/**/run-metrics.json")):
         try:
-            rows.append(_read_json(path))
+            rows.append(_normalize_metrics(_read_json(path)))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-    latest: dict[tuple[Any, ...], dict[str, Any]] = {}
+    history: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
         key = (row.get("scenario_id"), row.get("repeat"), row.get("mode"))
+        history.setdefault(key, []).append(row)
+    latest = {}
+    for key, attempts in history.items():
+        row = dict(attempts[-1])
+        row["attempt_count"] = len(attempts)
+        row["infrastructure_failure_attempts"] = sum(
+            attempt.get("failure_class") == "dds_startup" for attempt in attempts
+        )
         latest[key] = row
     return sorted(
         latest.values(),
@@ -685,9 +857,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
             print(f"ROS build failed; see {build_log}", file=sys.stderr)
             return status
 
+    existing_rows = _existing_rows(output_dir)
+    existing_by_key = {
+        (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode")): row
+        for row in existing_rows
+    }
     completed_keys = {
         (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode"))
-        for row in _existing_rows(output_dir)
+        for row in existing_rows
         if row.get("pipeline_completed")
     }
     failures = 0
@@ -702,6 +879,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 key = (scenario["id"], repeat, mode)
                 if key in completed_keys:
                     print(f"[skip] completed {scenario['id']} repeat={repeat} mode={mode}")
+                    continue
+                prior = existing_by_key.get(key)
+                if args.retry_failure_class != "all" and (
+                    prior is None
+                    or prior.get("failure_class") != args.retry_failure_class
+                ):
+                    print(
+                        f"[skip] failure_class={None if prior is None else prior.get('failure_class')} "
+                        f"{scenario['id']} repeat={repeat} mode={mode}"
+                    )
                     continue
                 attempt_dir = _attempt_dir(output_dir, scenario["id"], repeat, mode)
                 phase, timing_mode = MODE_SPECS[mode]
@@ -734,6 +921,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "--allow-brake",
                     "--skip-build",
                 ]
+                if args.ros_domain_id is not None:
+                    command.extend(("--ros-domain-id", str(args.ros_domain_id)))
                 if timing_mode is not None:
                     command.extend(("--timing-mode", timing_mode))
                 if not args.render:
@@ -773,6 +962,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-sec", type=float, default=35.0)
     parser.add_argument("--plan-rate-hz", type=float, default=1.0)
     parser.add_argument(
+        "--ros-domain-id",
+        type=int,
+        help="Explicit DDS domain for selected retries; default lets the pipeline isolate it",
+    )
+    parser.add_argument(
         "--modes",
         nargs="+",
         choices=tuple(MODE_SPECS),
@@ -782,6 +976,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--render", action="store_true", help="Render every episode; disabled by default")
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
+    parser.add_argument(
+        "--retry-failure-class",
+        choices=("all", "dds_startup"),
+        default="all",
+        help="Retry only the selected latest failure class (default: all)",
+    )
     return parser
 
 
@@ -789,6 +989,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
+    if args.ros_domain_id is not None and not 0 <= args.ros_domain_id <= 232:
+        raise SystemExit("ros-domain-id must lie in [0, 232]")
     return run_benchmark(args)
 
 

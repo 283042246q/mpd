@@ -71,4 +71,33 @@ def test_summary_skips_accepted_plan_not_active_before_recording_ends():
 
     assert summary["executed_plan_count"] == 1
     assert summary["pending_plan_count"] == 1
+    assert summary["terminal_clipped_plan_count"] == 0
     assert [plan["id"] for plan in summary["plans"]] == ["executed"]
+
+
+def test_summary_skips_plan_clipped_on_final_recorder_tick():
+    summary = summarize_manifest(
+        {
+            "duration_s": 10.000001,
+            "plans": [
+                _plan("executed", 1.0, 1.2, 9.0, 0.0, "superseded"),
+                _plan("terminal", 10.0, 10.2, 10.000001, 8.0, "accepted"),
+            ],
+            "events": [{"type": "handoff"}],
+        }
+    )
+
+    assert summary["executed_plan_count"] == 1
+    assert summary["terminal_clipped_plan_count"] == 1
+    assert [plan["id"] for plan in summary["plans"]] == ["executed"]
+
+
+def test_summary_rejects_plan_clipped_before_episode_end():
+    with pytest.raises(ValueError, match="inconsistent phase timing"):
+        summarize_manifest(
+            {
+                "duration_s": 12.0,
+                "plans": [_plan("invalid", 10.0, 10.2, 10.000001, 8.0, "accepted")],
+                "events": [],
+            }
+        )

@@ -157,6 +157,27 @@ regenerated after every run under `report/report.md`, `report/summary.json`, and
 rendering is disabled for batch runs; pass `--render` only when every episode needs an
 MP4/PNG.
 
+Retry only CycloneDDS startup failures without replacing algorithm or continuity
+failures:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-random-12x3 \
+  --scenario-count 12 \
+  --repeats 3 \
+  --duration-sec 35 \
+  --skip-build \
+  --retry-failure-class dds_startup \
+  --ros-domain-id 221
+```
+
+The report retains historical infrastructure-failure run/attempt counts while all
+algorithm metrics use the latest attempt. It also separates manifest availability from
+pipeline validation, reports goal-plus-brake and no-goal-plus-brake, gives path and
+execution time conditional on reaching the goal, and includes a strictly paired table
+where every mode has a manifest for the same scenario/repeat.
+
 The report distinguishes guard/DenseCheck collision predictions from physical contact.
 Passive replay does not measure contact forces. It reports dynamic collision rejection,
 brake events, goal/episode/execution duration, realized joint-space path length, selected

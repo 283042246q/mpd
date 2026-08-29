@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     CATEGORIES,
+    _existing_rows,
+    _normalize_metrics,
+    _paired_summary,
     _trajectory_segment_metrics,
     extract_run_metrics,
     generate_suite,
@@ -125,6 +129,8 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     metrics = extract_run_metrics(attempt, run_spec, 0)
 
     assert metrics["pipeline_completed"]
+    assert metrics["manifest_available"]
+    assert metrics["failure_class"] is None
     assert metrics["goal_reached"]
     assert metrics["goal_time_s"] == pytest.approx(2.0)
     assert metrics["joint_l2_path_rad"] == pytest.approx(1.0)
@@ -137,6 +143,164 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "ToDrawer 随机动态重规划基准报告" in report
     assert "joint" in report
     assert "时长、路径与推理耗时" in report
+    assert "仅到达目标运行的路径与执行时长" in report
+    assert "完整配对结果" in report
     assert "Clearance 汇总" in report
     assert "规划轨迹时长 mean s" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
+
+
+def test_missing_manifest_dds_startup_is_infrastructure_failure(tmp_path):
+    attempt = tmp_path / "attempt-001"
+    attempt.mkdir()
+    (attempt / "ros-replan.log").write_text(
+        "rmw_create_node: failed to create domain, error Error\n",
+        encoding="utf-8",
+    )
+
+    metrics = extract_run_metrics(
+        attempt,
+        {
+            "scenario_id": "scenario-001",
+            "category": "staggered_multi",
+            "repeat": 0,
+            "mode": "joint",
+        },
+        1,
+    )
+
+    assert not metrics["manifest_available"]
+    assert not metrics["pipeline_completed"]
+    assert metrics["failure_class"] == "dds_startup"
+
+
+def test_old_terminal_clip_failure_is_revalidated(tmp_path):
+    attempt = tmp_path / "attempt-001"
+    episode = attempt / "episode"
+    episode.mkdir(parents=True)
+    (episode / "replay-manifest.json").write_text(
+        json.dumps(
+            {
+                "duration_s": 10.000001,
+                "plans": [
+                    {
+                        "id": "terminal",
+                        "status": "accepted",
+                        "active_from_s": 10.0,
+                        "active_until_s": 10.000001,
+                        "phase_timing": {
+                            "planning_submitted_s": 8.0,
+                            "bridge_start_s": 10.0,
+                            "handoff_s": 10.2,
+                            "mpd_suffix_s": 8.75,
+                        },
+                    }
+                ],
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (attempt / "pipeline.log").write_text(
+        "ValueError: executed plan 0 has inconsistent phase timing\n",
+        encoding="utf-8",
+    )
+
+    normalized = _normalize_metrics(
+        {
+            "attempt_dir": attempt.as_posix(),
+            "pipeline_completed": False,
+            "pipeline_returncode": 1,
+            "error": None,
+        }
+    )
+
+    assert normalized["pipeline_completed"]
+    assert normalized["pipeline_revalidated"]
+    assert normalized["terminal_clipped_plan_count"] == 1
+    assert normalized["maximum_command_gap_s"] == pytest.approx(0.0)
+    assert normalized["failure_class"] is None
+
+
+def test_paired_summary_requires_manifest_from_all_four_modes():
+    rows = [
+        {
+            "scenario_id": "scenario-000",
+            "repeat": 0,
+            "mode": mode,
+            "manifest_available": True,
+            "pipeline_completed": True,
+            "goal_reached": mode != "joint",
+            "brake_count": int(mode == "phase4"),
+            "execution_duration_s": 2.0,
+            "joint_l2_path_rad": 1.0,
+            "joint_l1_travel_rad": 2.0,
+        }
+        for mode in ("phase4", "scalar_duration", "timing_only", "joint")
+    ]
+
+    paired = _paired_summary(rows)
+
+    assert paired["cell_count"] == 1
+    assert paired["by_mode"]["phase4"]["goal_reached"] == 1
+    assert paired["by_mode"]["phase4"]["goal_and_brake_runs"] == 1
+    assert paired["by_mode"]["joint"]["goal_reached"] == 0
+
+
+def test_existing_rows_keep_historical_infrastructure_attempt_count(tmp_path):
+    root = tmp_path / "runs" / "scenario-000" / "repeat-00" / "joint"
+    first = root / "attempt-001"
+    second = root / "attempt-002"
+    first.mkdir(parents=True)
+    second.mkdir()
+    (first / "ros-replan.log").write_text(
+        "rmw_create_node: failed to create domain\n", encoding="utf-8"
+    )
+    common = {"scenario_id": "scenario-000", "repeat": 0, "mode": "joint"}
+    (first / "run-metrics.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "attempt_dir": first.as_posix(),
+                "pipeline_completed": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (second / "run-metrics.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "attempt_dir": second.as_posix(),
+                "pipeline_completed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = _existing_rows(tmp_path)
+
+    assert len(rows) == 1
+    assert rows[0]["attempt_count"] == 2
+    assert rows[0]["infrastructure_failure_attempts"] == 1
+    assert rows[0]["pipeline_completed"]
+
+
+def test_benchmark_rejects_invalid_explicit_ros_domain():
+    script = Path("scripts/isaaclab/benchmark_todrawer_random.py")
+
+    result = subprocess.run(
+        [
+            "/home/eric/anaconda3/envs/mpd-splines-public/bin/python",
+            script.as_posix(),
+            "--ros-domain-id",
+            "233",
+            "--report-only",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "ros-domain-id must lie in [0, 232]" in result.stderr
