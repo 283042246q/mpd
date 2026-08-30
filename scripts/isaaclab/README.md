@@ -117,15 +117,19 @@ scripts/isaaclab/run_dynamic_demo_pipeline.sh \
 ```
 
 Valid Phase 5 timing modes are `phase5_joint`, `phase5_timing_only`, and
-`phase5_scalar_duration`. `--timing-mode` is rejected with `--phase phase4` so a
-requested ablation cannot be silently ignored.
+`phase5_scalar_duration`. The fixed-time aligned comparison is selected with
+`--phase phase4aligned` (the canonical spelling is `phase4_aligned`).
+`--timing-mode` is rejected with either Phase 4 path so a requested ablation
+cannot be silently ignored.
 
 ### Paired random ToDrawer benchmark
 
 `benchmark_todrawer_random.py` freezes every random world to a repository artifact and
-runs the same scenario/planner seed against Phase 4 and all three Phase-5 timing modes.
-The default 12 scenarios x 3 repeats x 4 modes is a long sequential GPU/ROS run. Start a
-smaller smoke suite before launching the full matrix:
+runs the same scenario/planner seed against Phase 4, Phase 4 aligned, and all three
+Phase-5 timing modes. The default 50 scenarios x 5 repeats x 5 modes is 1250 sequential
+GPU/ROS runs and is intended as the large comparison suite. It gives each of the ten
+environment categories five independently generated worlds and each frozen world five
+independent planner seeds. Start a smaller smoke suite before launching the full matrix:
 
 ```bash
 cd /home/eric/Projects/MotionPlanningDiffusion/mpd
@@ -133,9 +137,11 @@ cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
   --output-dir scripts/isaaclab/logs/todrawer-random-smoke \
-  --scenario-count 2 \
+  --scenario-count 10 \
   --repeats 1 \
-  --duration-sec 20
+  --duration-sec 20 \
+  --categories curved_crossing \
+  --modes phase4 phase4_aligned joint
 ```
 
 Full benchmark:
@@ -143,12 +149,29 @@ Full benchmark:
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-random-12x3 \
-  --scenario-count 12 \
-  --repeats 3 \
+  --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
+  --scenario-count 50 \
+  --repeats 5 \
   --duration-sec 35 \
   --suite-seed 20260829
 ```
+
+The generator retains horizontal and vertical crossings and uses five deterministic
+continuous motion laws: constant velocity, constant longitudinal acceleration,
+sinusoidal curves, smooth speed variation, and curved motion with speed variation.
+The last two freeze their phase/frequency/amplitude in `suite.json`; their stated speed
+and acceleration standard deviations therefore produce repeatable model mismatch for
+the worker's constant-velocity predictor. Motions are combined with single, staggered,
+simultaneous, fast, high-inflation, and mixed multi-object interactions.
+
+Scenarios are tagged `easy`, `moderate`, or `hard`. Hard scenes may use larger objects,
+up to 23 cm prediction-horizon inflation, two near-simultaneous crossings, or a third
+delayed obstacle. They still retain a spatial corridor or later time gap, avoiding an
+obvious permanent wall without making the benchmark artificially easy. This is a
+construction criterion, not a guarantee that every planner run succeeds.
+Use `--categories` and/or `--modes` to run a resumable slice of the frozen large
+suite without changing `suite.json`; omitted filters select all ten categories and all
+five modes.
 
 Completed mode/scenario/repeat triples are skipped when the same output directory is
 resumed. Failed attempts are retained as `attempt-NNN`; nothing is deleted. Reports are
@@ -163,9 +186,9 @@ failures:
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-random-12x3 \
-  --scenario-count 12 \
-  --repeats 3 \
+  --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
+  --scenario-count 50 \
+  --repeats 5 \
   --duration-sec 35 \
   --skip-build \
   --retry-failure-class dds_startup \

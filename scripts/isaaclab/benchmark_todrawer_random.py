@@ -27,6 +27,7 @@ PIPELINE = REPO_ROOT / "scripts" / "isaaclab" / "run_dynamic_demo_pipeline.sh"
 DEFAULT_AIRUNTIME_ROOT = Path("/home/eric/Projects/physical_ai_runtime")
 MODE_SPECS = {
     "phase4": ("phase4", None),
+    "phase4_aligned": ("phase4_aligned", None),
     "scalar_duration": ("phase5", "phase5_scalar_duration"),
     "timing_only": ("phase5", "phase5_timing_only"),
     "joint": ("phase5", "phase5_joint"),
@@ -38,15 +39,47 @@ CATEGORIES = (
     "fast_crossing",
     "inflated_dense",
     "safe_control",
+    "accelerating_crossing",
+    "curved_crossing",
+    "uncertain_motion",
+    "mixed_motion_multi",
 )
+DIFFICULTY_BY_CATEGORY = {
+    "safe_control": "easy",
+    "single_crossing": "easy",
+    "staggered_multi": "moderate",
+    "accelerating_crossing": "moderate",
+    "curved_crossing": "moderate",
+    "simultaneous_multi": "hard",
+    "fast_crossing": "hard",
+    "inflated_dense": "hard",
+    "uncertain_motion": "hard",
+    "mixed_motion_multi": "hard",
+}
+DIFFICULTIES = ("easy", "moderate", "hard")
+CATEGORY_DESCRIPTIONS = {
+    "single_crossing": "单个匀速物体穿越一条路径通道",
+    "staggered_multi": "2--3 个匀速/匀加速物体错峰穿越不同通道",
+    "simultaneous_multi": "匀加速与曲线物体近同时穿越两条通道",
+    "fast_crossing": "1--2 个小型物体高速且平滑变速穿越",
+    "inflated_dense": "3 个较大高膨胀物体依次穿越，混合多种运动",
+    "safe_control": "物体在测试时段保持远离任务通道",
+    "accelerating_crossing": "2 个匀加速物体错峰穿越",
+    "curved_crossing": "2 个正弦曲线物体近同时穿越并保留第三通道",
+    "uncertain_motion": "2 个带速度/加速度方差的物体错峰穿越",
+    "mixed_motion_multi": "匀加速、曲线、曲线变速三物体，两近同时一延后",
+}
 BASE_CROSSINGS = (
     ((-0.68831415, -1.22503140, 0.65347225), (0.61993897, 0.78465003, 0.0)),
     ((-0.02146948, 0.40876295, 0.46108561), (0.99858189, -0.05323737, 0.0)),
     ((-0.2, -0.16, 0.5), (0.0, 0.0, 1.0)),
 )
+PREDICTION_HORIZON_S = 15.0
+DESIGN_EPISODE_DURATION_S = 35.0
 REPORT_FIELDS = (
     "scenario_id",
     "category",
+    "difficulty",
     "repeat",
     "mode",
     "planner_seed",
@@ -105,43 +138,114 @@ def _rotate_xy(direction: tuple[float, float, float], angle: float) -> list[floa
     ]
 
 
+def _lateral_direction(
+    rng: random.Random,
+    direction: list[float],
+) -> list[float]:
+    if abs(direction[2]) > 0.5:
+        angle = rng.uniform(-math.pi, math.pi)
+        return [math.cos(angle), math.sin(angle), 0.0]
+    return [-direction[1], direction[0], 0.0]
+
+
+def _bounded_acceleration(
+    rng: random.Random,
+    speed_m_s: float,
+    crossing_time_s: float,
+) -> float:
+    lower, upper = -0.008, 0.008
+    for relative_time in (
+        -crossing_time_s,
+        DESIGN_EPISODE_DURATION_S - crossing_time_s,
+    ):
+        if abs(relative_time) <= 1.0e-9:
+            continue
+        first = (0.04 - speed_m_s) / relative_time
+        second = (0.38 - speed_m_s) / relative_time
+        lower = max(lower, min(first, second))
+        upper = min(upper, max(first, second))
+    if lower > upper:
+        return 0.0
+    return rng.uniform(lower, upper)
+
+
 def _random_object(
     rng: random.Random,
     *,
     scenario_index: int,
     object_index: int,
+    corridor_index: int,
     category: str,
     crossing_time_s: float,
+    motion_type: str,
 ) -> dict[str, Any]:
-    anchor_base, direction_base = BASE_CROSSINGS[object_index % len(BASE_CROSSINGS)]
-    anchor_jitter = 0.025 if category != "inflated_dense" else 0.05
+    anchor_base, direction_base = BASE_CROSSINGS[corridor_index]
+    anchor_jitter = 0.015 if category != "inflated_dense" else 0.02
     anchor = [value + rng.uniform(-anchor_jitter, anchor_jitter) for value in anchor_base]
-    if abs(direction_base[2]) > 0.5:
-        direction = [0.0, 0.0, rng.choice((-1.0, 1.0))]
-    else:
-        direction = _rotate_xy(direction_base, rng.uniform(-0.22, 0.22))
-        if rng.random() < 0.5:
-            direction = [-value for value in direction]
+    direction = _rotate_xy(direction_base, rng.uniform(-0.18, 0.18))
+    if rng.random() < 0.5:
+        direction = [-value for value in direction]
 
     if category == "fast_crossing":
-        speed = rng.uniform(0.24, 0.38)
+        speed = rng.uniform(0.22, 0.32)
     elif category == "safe_control":
         speed = rng.uniform(0.08, 0.14)
+    elif category == "inflated_dense":
+        speed = rng.uniform(0.10, 0.18)
     else:
-        speed = rng.uniform(0.10, 0.26)
+        speed = rng.uniform(0.10, 0.22)
     if category == "inflated_dense":
         size = [rng.uniform(0.14, 0.22), rng.uniform(0.12, 0.20), rng.uniform(0.18, 0.30)]
-        base_inflation = rng.uniform(0.025, 0.05)
-        horizon_rate = rng.uniform(0.015, 0.03)
+        base_inflation = rng.uniform(0.025, 0.050)
+        horizon_rate = rng.uniform(0.005, 0.012)
         position_std = rng.uniform(0.012, 0.025)
+    elif category == "fast_crossing":
+        size = [rng.uniform(0.08, 0.12), rng.uniform(0.08, 0.12), rng.uniform(0.12, 0.18)]
+        base_inflation = rng.uniform(0.008, 0.018)
+        horizon_rate = rng.uniform(0.001, 0.0025)
+        position_std = rng.uniform(0.004, 0.010)
+    elif category in {"simultaneous_multi", "uncertain_motion", "mixed_motion_multi"}:
+        size = [rng.uniform(0.10, 0.18), rng.uniform(0.10, 0.17), rng.uniform(0.14, 0.24)]
+        base_inflation = rng.uniform(0.015, 0.035)
+        horizon_rate = rng.uniform(0.003, 0.007)
+        position_std = rng.uniform(0.008, 0.020)
     else:
-        size = [rng.uniform(0.08, 0.18), rng.uniform(0.08, 0.16), rng.uniform(0.12, 0.24)]
-        base_inflation = rng.uniform(0.01, 0.03)
-        horizon_rate = rng.uniform(0.005, 0.018)
-        position_std = rng.uniform(0.005, 0.015)
+        size = [rng.uniform(0.08, 0.14), rng.uniform(0.08, 0.14), rng.uniform(0.12, 0.20)]
+        base_inflation = rng.uniform(0.008, 0.020)
+        horizon_rate = rng.uniform(0.001, 0.003)
+        position_std = rng.uniform(0.004, 0.012)
     variance = position_std * position_std
+    motion: dict[str, Any] = {"type": motion_type}
+    if motion_type == "constant_acceleration":
+        motion["longitudinal_acceleration_m_s2"] = _bounded_acceleration(
+            rng,
+            speed,
+            crossing_time_s,
+        )
+    if motion_type in {"sinusoidal_curve", "curved_speed_variation"}:
+        motion.update(
+            lateral_direction=_lateral_direction(rng, direction),
+            lateral_amplitude_m=rng.uniform(0.04, 0.12),
+            lateral_angular_frequency_rad_s=rng.uniform(0.18, 0.48),
+            lateral_phase_rad=rng.uniform(-math.pi, math.pi),
+        )
+    if motion_type in {"smooth_speed_variation", "curved_speed_variation"}:
+        amplitude = rng.uniform(0.015, min(0.055, 0.35 * speed))
+        frequency = rng.uniform(0.22, 0.65)
+        motion.update(
+            speed_variation_amplitude_m_s=amplitude,
+            speed_variation_angular_frequency_rad_s=frequency,
+            speed_variation_phase_rad=rng.uniform(-math.pi, math.pi),
+            speed_variation_std_m_s=amplitude / math.sqrt(2.0),
+            acceleration_variation_std_m_s2=(
+                amplitude * frequency / math.sqrt(2.0)
+            ),
+        )
     return {
         "id": f"random-{scenario_index:03d}-{object_index:02d}",
+        "corridor_id": f"path-crossing-{corridor_index}",
+        "motion_model": motion_type,
+        "motion": motion,
         "local_sdf": {"type": "box", "size_xyz": size},
         "anchor_position": anchor,
         "direction": direction,
@@ -175,50 +279,142 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
     for index in range(count):
         category = CATEGORIES[index % len(CATEGORIES)]
         if category == "single_crossing":
-            object_count, crossing_times = 1, [rng.uniform(9.0, 17.0)]
+            object_count, crossing_times = 1, [rng.uniform(10.0, 19.0)]
+            motion_types = ["constant_velocity"]
+            feasibility_design = "one occupied crossing corridor"
         elif category == "staggered_multi":
-            object_count = rng.randint(2, 4)
-            start = rng.uniform(8.0, 11.0)
-            crossing_times = [start + 2.5 * item + rng.uniform(-0.4, 0.4) for item in range(object_count)]
-        elif category == "simultaneous_multi":
-            object_count = rng.randint(2, 4)
-            center = rng.uniform(11.0, 15.0)
-            crossing_times = [center + rng.uniform(-0.6, 0.6) for _ in range(object_count)]
-        elif category == "fast_crossing":
             object_count = rng.randint(2, 3)
-            crossing_times = [rng.uniform(9.0, 17.0) for _ in range(object_count)]
+            start = rng.uniform(9.0, 12.0)
+            spacing = rng.uniform(5.0, 7.0)
+            crossing_times = [
+                start + spacing * item + rng.uniform(-0.25, 0.25)
+                for item in range(object_count)
+            ]
+            motion_types = [
+                rng.choice(("constant_velocity", "constant_acceleration"))
+                for _ in range(object_count)
+            ]
+            feasibility_design = "distinct corridors with separated crossing windows"
+        elif category == "simultaneous_multi":
+            object_count = 2
+            center = rng.uniform(11.0, 18.0)
+            crossing_times = [center + rng.uniform(-0.6, 0.6) for _ in range(object_count)]
+            motion_types = ["constant_acceleration", "sinusoidal_curve"]
+            feasibility_design = "two occupied corridors with one reserved corridor"
+        elif category == "fast_crossing":
+            object_count = rng.randint(1, 2)
+            start = rng.uniform(10.0, 15.0)
+            crossing_times = [start]
+            if object_count == 2:
+                crossing_times.append(start + rng.uniform(5.0, 8.0))
+            motion_types = ["smooth_speed_variation"] * object_count
+            feasibility_design = "small fast objects with separated crossing windows"
         elif category == "inflated_dense":
-            object_count = rng.randint(4, 5)
-            crossing_times = [rng.uniform(9.0, 17.0) for _ in range(object_count)]
-        else:
+            object_count = 3
+            start = rng.uniform(8.5, 11.0)
+            spacing = rng.uniform(6.0, 8.0)
+            crossing_times = [start + spacing * item for item in range(object_count)]
+            motion_types = [
+                "constant_velocity",
+                "constant_acceleration",
+                "curved_speed_variation",
+            ]
+            feasibility_design = "three uncertain objects crossing one at a time"
+        elif category == "safe_control":
             object_count = rng.randint(1, 2)
             crossing_times = [rng.uniform(55.0, 70.0) for _ in range(object_count)]
+            motion_types = ["constant_velocity"] * object_count
+            feasibility_design = "objects remain outside the task corridor during the episode"
+        elif category == "accelerating_crossing":
+            object_count = 2
+            start = rng.uniform(9.0, 13.0)
+            crossing_times = [start, start + rng.uniform(4.5, 7.0)]
+            motion_types = ["constant_acceleration"] * object_count
+            feasibility_design = "accelerating objects use staggered crossing windows"
+        elif category == "curved_crossing":
+            object_count = 2
+            center = rng.uniform(11.0, 17.0)
+            crossing_times = [center + rng.uniform(-0.7, 0.7) for _ in range(2)]
+            motion_types = ["sinusoidal_curve"] * object_count
+            feasibility_design = "two curved paths occupy distinct corridors"
+        elif category == "uncertain_motion":
+            object_count = 2
+            start = rng.uniform(9.0, 14.0)
+            crossing_times = [start, start + rng.uniform(4.0, 7.0)]
+            motion_types = ["smooth_speed_variation"] * object_count
+            feasibility_design = "speed-varying objects use staggered crossing windows"
+        else:
+            object_count = 3
+            center = rng.uniform(10.0, 15.0)
+            crossing_times = [
+                center + rng.uniform(-0.5, 0.5),
+                center + rng.uniform(-0.5, 0.5),
+                center + rng.uniform(6.0, 9.0),
+            ]
+            motion_types = [
+                "constant_acceleration",
+                "sinusoidal_curve",
+                "curved_speed_variation",
+            ]
+            feasibility_design = "two mixed motions cross together and a third follows later"
+        corridor_indices = rng.sample(range(len(BASE_CROSSINGS)), object_count)
         objects = [
             _random_object(
                 rng,
                 scenario_index=index,
                 object_index=object_index,
+                corridor_index=corridor_indices[object_index],
                 category=category,
                 crossing_time_s=crossing_times[object_index],
+                motion_type=motion_types[object_index],
             )
             for object_index in range(object_count)
         ]
         scenarios.append(
             {
                 "schema": "mpd_todrawer_dynamic_scenario",
-                "schema_version": 1,
+                "schema_version": 2,
                 "id": f"scenario-{index:03d}",
                 "category": category,
+                "difficulty": DIFFICULTY_BY_CATEGORY[category],
                 "frame_id": "fr3_link0",
+                "feasibility_design": feasibility_design,
+                "reserved_corridors": [
+                    f"path-crossing-{corridor}"
+                    for corridor in sorted(set(range(len(BASE_CROSSINGS))) - set(corridor_indices))
+                ],
                 "objects": objects,
             }
         )
     return {
         "schema": "mpd_todrawer_random_suite",
-        "schema_version": 1,
+        "schema_version": 2,
         "suite_seed": seed,
         "scenario_count": count,
         "categories": list(CATEGORIES),
+        "category_definitions": {
+            category: {
+                "difficulty": DIFFICULTY_BY_CATEGORY[category],
+                "description": CATEGORY_DESCRIPTIONS[category],
+            }
+            for category in CATEGORIES
+        },
+        "generation_policy": {
+            "motion_models": [
+                "constant_velocity",
+                "constant_acceleration",
+                "sinusoidal_curve",
+                "smooth_speed_variation",
+                "curved_speed_variation",
+            ],
+            "vertical_crossings_retained": True,
+            "speed_range_m_s": [0.08, 0.32],
+            "prediction_horizon_s": PREDICTION_HORIZON_S,
+            "maximum_inflation_at_prediction_horizon_m": 0.23,
+            "maximum_simultaneous_crossings": 2,
+            "difficulty_levels": list(DIFFICULTIES),
+            "feasibility_scope": "hard scenes retain a spatial corridor or later time gap; not a planner success guarantee",
+        },
         "scenarios": scenarios,
     }
 
@@ -354,6 +550,10 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
     maximum_gap = normalized.get("maximum_command_gap_s")
     if maximum_gap is not None and float(maximum_gap) > 0.05:
+        normalized["failure_class"] = "command_continuity"
+        return normalized
+
+    if manifest_available and "active interval is outside the trajectory duration" in pipeline_log:
         normalized["failure_class"] = "command_continuity"
         return normalized
 
@@ -593,10 +793,24 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         }
         for category in CATEGORIES
     }
+    by_difficulty = {
+        difficulty: {
+            mode: _aggregate(
+                [
+                    row
+                    for row in rows
+                    if row.get("difficulty") == difficulty
+                    and row.get("mode") == mode
+                ]
+            )
+            for mode in MODE_SPECS
+        }
+        for difficulty in DIFFICULTIES
+    }
     paired = _paired_summary(rows)
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
-        "schema_version": 2,
+        "schema_version": 3,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "run_count": len(rows),
@@ -604,9 +818,13 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
             "clearance": "selected candidate guard clearance plus successful MPD DenseCheck clearance",
+            "scenario_feasibility": suite.get("generation_policy", {}).get(
+                "feasibility_scope"
+            ),
         },
         "by_mode": by_mode,
         "by_category": by_category,
+        "by_difficulty": by_difficulty,
         "paired": paired,
         "runs": rows,
     }
@@ -618,17 +836,32 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         f"- suite seed：`{suite['suite_seed']}`",
         f"- 场景数：{suite['scenario_count']}",
         f"- 已发现运行：{len(rows)}",
-        "- 模式：Phase 4、scalar duration、timing only、joint",
+        "- 模式：Phase 4、Phase 4 aligned、scalar duration、timing only、joint",
+        "- 场景构造：包含水平/竖直穿越、匀速、匀加速、曲线和光滑速度/加速度波动；按 easy/moderate/hard 分层。硬场景仍保留一条空间通道或后续时间间隙，但不预先保证规划成功。",
         "",
         "## 指标口径",
         "",
         "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
         "",
+        "## 场景类型与难度",
+        "",
+        "| 场景类型 | 难度 | 运动与交互 |",
+        "|---|---|---|",
+    ]
+    for category in CATEGORIES:
+        lines.append(
+            f"| {category} | {DIFFICULTY_BY_CATEGORY[category]} | "
+            f"{CATEGORY_DESCRIPTIONS[category]} |"
+        )
+    lines.extend(
+        [
+        "",
         "## 安全与完成情况",
         "",
         "| 模式 | 完成/总数 | 有manifest | 基础设施失败 runs/attempts | 到达目标 | brake runs | goal+brake | no-goal+brake | 动态碰撞拒绝 | 非正 clearance | 最大命令间隙 mean s |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
+        ]
+    )
     for mode, data in by_mode.items():
         lines.append(
             "| "
@@ -691,7 +924,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             "",
             "## 完整配对结果",
             "",
-            f"仅统计同一场景、repeat下四种模式都有manifest的 `{paired['cell_count']}` 组运行。",
+            f"仅统计同一场景、repeat下五种模式都有manifest的 `{paired['cell_count']}` 组运行。",
             "",
             "| 模式 | 配对运行 | 到达目标 | brake runs | goal+brake | no-goal+brake | 成功执行时长 mean s | 成功 path L2 mean rad |",
             "|---|---:|---:|---:|---:|---:|---:|---:|",
@@ -738,6 +971,25 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                 continue
             lines.append(
                 f"| {category} | {mode} | {data['completed']}/{data['runs']} | "
+                f"{data['goal_reached']} | {data['brake_runs']} | "
+                f"{_fmt(data['joint_l2_path_rad']['mean'])} | "
+                f"{_fmt(data['hard_minimum_clearance_m']['min'])} |"
+            )
+    lines.extend(
+        [
+            "",
+            "## 难度分层结果",
+            "",
+            "| 难度 | 模式 | 完成/总数 | 到达目标 | brake runs | path L2 mean rad | hard clearance min m |",
+            "|---|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for difficulty in DIFFICULTIES:
+        for mode, data in by_difficulty[difficulty].items():
+            if not data["runs"]:
+                continue
+            lines.append(
+                f"| {difficulty} | {mode} | {data['completed']}/{data['runs']} | "
                 f"{data['goal_reached']} | {data['brake_runs']} | "
                 f"{_fmt(data['joint_l2_path_rad']['mean'])} | "
                 f"{_fmt(data['hard_minimum_clearance_m']['min'])} |"
@@ -843,6 +1095,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
         write_reports(output_dir, rows, suite)
         print(output_dir / "report" / "report.md")
         return 0
+    selected_categories = set(args.categories or CATEGORIES)
+    available_categories = {scenario["category"] for scenario in suite["scenarios"]}
+    missing_categories = selected_categories - available_categories
+    if args.categories is not None and missing_categories:
+        raise ValueError(
+            "selected categories are absent from this suite: "
+            + ", ".join(sorted(missing_categories))
+        )
 
     airuntime_root = Path(os.environ.get("AIRUNTIME_ROOT", DEFAULT_AIRUNTIME_ROOT)).resolve()
     if not args.skip_build:
@@ -870,6 +1130,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
     failures = 0
     for repeat in range(args.repeats):
         for scenario_index, scenario in enumerate(suite["scenarios"]):
+            if scenario["category"] not in selected_categories:
+                continue
             scenario_path = output_dir / "scenarios" / f"{scenario['id']}.json"
             modes = list(args.modes)
             shift = (scenario_index + repeat) % len(modes)
@@ -895,6 +1157,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 run_spec = {
                     "scenario_id": scenario["id"],
                     "category": scenario["category"],
+                    "difficulty": scenario.get(
+                        "difficulty",
+                        DIFFICULTY_BY_CATEGORY.get(scenario["category"]),
+                    ),
                     "repeat": repeat,
                     "mode": mode,
                     "phase": phase,
@@ -956,8 +1222,18 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=REPO_ROOT / "scripts" / "isaaclab" / "logs" / "todrawer-random-benchmark" / timestamp,
     )
-    parser.add_argument("--scenario-count", type=int, default=12)
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--scenario-count",
+        type=int,
+        default=50,
+        help="Random scenarios; 50 gives five scenarios per category",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Independent planner seeds per frozen scenario",
+    )
     parser.add_argument("--suite-seed", type=int, default=20260829)
     parser.add_argument("--duration-sec", type=float, default=35.0)
     parser.add_argument("--plan-rate-hz", type=float, default=1.0)
@@ -971,6 +1247,13 @@ def _parser() -> argparse.ArgumentParser:
         nargs="+",
         choices=tuple(MODE_SPECS),
         default=list(MODE_SPECS),
+    )
+    parser.add_argument(
+        "--categories",
+        nargs="+",
+        choices=CATEGORIES,
+        default=None,
+        help="Run only selected frozen environment categories",
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--render", action="store_true", help="Render every episode; disabled by default")

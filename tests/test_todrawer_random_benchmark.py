@@ -7,9 +7,13 @@ import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     CATEGORIES,
+    DIFFICULTIES,
+    MODE_SPECS,
+    PREDICTION_HORIZON_S,
     _existing_rows,
     _normalize_metrics,
     _paired_summary,
+    _parser,
     _trajectory_segment_metrics,
     extract_run_metrics,
     generate_suite,
@@ -23,11 +27,80 @@ def test_random_suite_is_deterministic_and_covers_categories():
 
     assert first == second
     assert [item["category"] for item in first["scenarios"]] == list(CATEGORIES)
-    assert all(1 <= len(item["objects"]) <= 5 for item in first["scenarios"])
+    assert first["schema_version"] == 2
+    assert all(1 <= len(item["objects"]) <= 3 for item in first["scenarios"])
     assert all(
         item["schema"] == "mpd_todrawer_dynamic_scenario"
         for item in first["scenarios"]
     )
+
+
+def test_random_suite_uses_stratified_motion_and_structural_feasibility():
+    suite = generate_suite(5 * len(CATEGORIES), 1234)
+
+    assert suite["generation_policy"]["maximum_simultaneous_crossings"] == 2
+    assert suite["generation_policy"]["vertical_crossings_retained"] is True
+    motion_types = set()
+    vertical_crossings = 0
+    for scenario in suite["scenarios"]:
+        assert scenario["difficulty"] in DIFFICULTIES
+        objects = scenario["objects"]
+        corridor_ids = [item["corridor_id"] for item in objects]
+        assert len(corridor_ids) == len(set(corridor_ids))
+        for item in objects:
+            motion_types.add(item["motion_model"])
+            vertical_crossings += abs(item["direction"][2]) > 0.9
+            assert 0.08 <= item["speed_m_s"] <= 0.32
+            if item["motion_model"] == "constant_acceleration":
+                acceleration = item["motion"][
+                    "longitudinal_acceleration_m_s2"
+                ]
+                for elapsed in (0.0, 35.0):
+                    velocity = item["speed_m_s"] + acceleration * (
+                        elapsed - item["crossing_time_s"]
+                    )
+                    assert 0.04 - 1.0e-12 <= velocity <= 0.38 + 1.0e-12
+            inflation = item["inflation"]
+            horizon_inflation = (
+                inflation["base_m"]
+                + PREDICTION_HORIZON_S * inflation["horizon_rate_m_s"]
+            )
+            assert horizon_inflation <= 0.23 + 1.0e-12
+
+        crossing_times = sorted(item["crossing_time_s"] for item in objects)
+        if scenario["category"] in {"simultaneous_multi", "curved_crossing"}:
+            assert len(objects) == 2
+            assert len(scenario["reserved_corridors"]) == 1
+        if scenario["category"] in {
+            "staggered_multi",
+            "inflated_dense",
+            "accelerating_crossing",
+        }:
+            assert all(
+                second - first >= 4.5
+                for first, second in zip(crossing_times, crossing_times[1:])
+            )
+        if scenario["category"] == "safe_control":
+            assert min(crossing_times) >= 55.0
+    assert vertical_crossings > 0
+    assert motion_types == {
+        "constant_velocity",
+        "constant_acceleration",
+        "sinusoidal_curve",
+        "smooth_speed_variation",
+        "curved_speed_variation",
+    }
+
+
+def test_benchmark_defaults_to_large_five_mode_matrix():
+    args = _parser().parse_args([])
+
+    assert args.scenario_count == 50
+    assert args.repeats == 5
+    assert args.modes == list(MODE_SPECS)
+    assert args.categories is None
+    assert MODE_SPECS["phase4"] == ("phase4", None)
+    assert MODE_SPECS["phase4_aligned"] == ("phase4_aligned", None)
 
 
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
@@ -141,11 +214,13 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     write_reports(tmp_path, [metrics], suite)
     report = (tmp_path / "report" / "report.md").read_text(encoding="utf-8")
     assert "ToDrawer 随机动态重规划基准报告" in report
+    assert "场景类型与难度" in report
     assert "joint" in report
     assert "时长、路径与推理耗时" in report
     assert "仅到达目标运行的路径与执行时长" in report
     assert "完整配对结果" in report
     assert "Clearance 汇总" in report
+    assert "难度分层结果" in report
     assert "规划轨迹时长 mean s" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
 
@@ -222,7 +297,32 @@ def test_old_terminal_clip_failure_is_revalidated(tmp_path):
     assert normalized["failure_class"] is None
 
 
-def test_paired_summary_requires_manifest_from_all_four_modes():
+def test_reversed_active_interval_is_a_real_continuity_failure(tmp_path):
+    attempt = tmp_path / "attempt-001"
+    episode = attempt / "episode"
+    episode.mkdir(parents=True)
+    (episode / "replay-manifest.json").write_text(
+        json.dumps({"duration_s": 10.0, "plans": [], "events": []}),
+        encoding="utf-8",
+    )
+    (attempt / "pipeline.log").write_text(
+        "plans[4]: active interval is outside the trajectory duration\n",
+        encoding="utf-8",
+    )
+
+    normalized = _normalize_metrics(
+        {
+            "attempt_dir": attempt.as_posix(),
+            "pipeline_completed": False,
+            "pipeline_returncode": 1,
+        }
+    )
+
+    assert normalized["manifest_available"]
+    assert normalized["failure_class"] == "command_continuity"
+
+
+def test_paired_summary_requires_manifest_from_all_five_modes():
     rows = [
         {
             "scenario_id": "scenario-000",
@@ -236,7 +336,7 @@ def test_paired_summary_requires_manifest_from_all_four_modes():
             "joint_l2_path_rad": 1.0,
             "joint_l1_travel_rad": 2.0,
         }
-        for mode in ("phase4", "scalar_duration", "timing_only", "joint")
+        for mode in MODE_SPECS
     ]
 
     paired = _paired_summary(rows)
