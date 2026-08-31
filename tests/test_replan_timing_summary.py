@@ -12,10 +12,12 @@ def _plan(
     status="superseded",
     *,
     bridge_start=None,
+    command_start=None,
     terminal_hold=0.0,
     reference_jump=0.0,
 ):
     bridge_start = start if bridge_start is None else bridge_start
+    command_start = start if command_start is None else command_start
     return {
         "id": plan_id,
         "status": status,
@@ -23,7 +25,7 @@ def _plan(
         "active_until_s": end,
         "phase_timing": {
             "planning_submitted_s": submitted,
-            "command_start_s": start,
+            "command_start_s": command_start,
             "bridge_start_s": bridge_start,
             "handoff_s": handoff,
             "mpd_suffix_s": 10.0,
@@ -78,12 +80,13 @@ def test_explicit_execution_prefix_closes_nominal_old_new_gap():
                 _plan("old", 1.0, 1.2, 5.0, 0.0),
                 _plan(
                     "new",
-                    5.0,
+                    5.4,
                     5.6,
                     9.0,
                     4.0,
                     "accepted",
                     bridge_start=5.4,
+                    command_start=5.0,
                 ),
             ],
             "events": [{"type": "handoff"}],
@@ -110,12 +113,13 @@ def test_summary_reports_guarded_hold_and_controller_reference_jump():
                 ),
                 _plan(
                     "b",
-                    5.0,
+                    5.4,
                     5.6,
                     9.0,
                     4.0,
                     "accepted",
                     bridge_start=5.4,
+                    command_start=5.0,
                     terminal_hold=0.4,
                     reference_jump=0.05,
                 ),
@@ -148,6 +152,35 @@ def test_summary_skips_accepted_plan_not_active_before_recording_ends():
     assert summary["pending_plan_count"] == 1
     assert summary["terminal_clipped_plan_count"] == 0
     assert [plan["id"] for plan in summary["plans"]] == ["executed"]
+
+
+def test_summary_counts_scheduled_plan_as_pending():
+    scheduled = _plan("scheduled", 10.0, 10.2, 20.0, 8.0, "scheduled")
+    scheduled.pop("active_from_s")
+    scheduled.pop("active_until_s")
+
+    summary = summarize_manifest({"plans": [scheduled], "events": []})
+
+    assert summary["executed_plan_count"] == 0
+    assert summary["pending_plan_count"] == 1
+
+
+def test_interrupted_bridge_is_an_executed_interval_without_handoff():
+    interrupted = _plan(
+        "interrupted",
+        2.0,
+        2.5,
+        2.3,
+        1.0,
+        "interrupted_before_handoff",
+        command_start=1.8,
+    )
+
+    summary = summarize_manifest({"plans": [interrupted], "events": []})
+
+    assert summary["executed_plan_count"] == 1
+    assert summary["handoff_event_count"] == 0
+    assert summary["plans"][0]["latest_mpd_realized_s"] == 0.0
 
 
 def test_summary_skips_plan_clipped_on_final_recorder_tick():

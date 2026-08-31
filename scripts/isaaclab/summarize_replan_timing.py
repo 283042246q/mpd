@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 
-EXECUTED_STATUSES = frozenset(("accepted", "superseded"))
+EXECUTED_STATUSES = frozenset(
+    ("accepted", "superseded", "interrupted_before_handoff", "interrupted")
+)
+PENDING_STATUSES = frozenset(("scheduled",))
 TERMINAL_CLIP_TOLERANCE_S = 1.0e-3
 
 
@@ -35,7 +38,15 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         None if duration_value is None else _finite(duration_value, "manifest.duration_s")
     )
     for index, plan in enumerate(plans):
-        if not isinstance(plan, dict) or plan.get("status") not in EXECUTED_STATUSES:
+        if not isinstance(plan, dict):
+            continue
+        status = plan.get("status")
+        if status in PENDING_STATUSES:
+            if plan.get("active_from_s") is not None or plan.get("active_until_s") is not None:
+                raise ValueError(f"scheduled plan {index} must not have an active interval")
+            pending_plan_count += 1
+            continue
+        if status not in EXECUTED_STATUSES:
             continue
         active_from_value = plan.get("active_from_s")
         active_until_value = plan.get("active_until_s")
@@ -67,9 +78,9 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         handoff = _finite(timing.get("handoff_s"), f"plans[{index}].phase_timing.handoff_s")
         if not submitted <= command_start <= bridge_start <= handoff:
             raise ValueError(f"executed plan {index} has inconsistent phase timing")
-        if abs(active_from - command_start) > 1e-5:
-            raise ValueError(f"executed plan {index} does not start at command_start")
-        if handoff > active_until + 1e-6:
+        if abs(active_from - bridge_start) > 1e-5:
+            raise ValueError(f"executed plan {index} does not start at bridge_start")
+        if handoff > active_until + 1e-6 and status != "interrupted_before_handoff":
             # A replacement accepted on the final recorder tick can receive an
             # active interval only a few microseconds long before the episode
             # is clipped.  No meaningful bridge command was executed, so this
