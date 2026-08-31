@@ -12,6 +12,8 @@ def _plan(
     status="superseded",
     *,
     bridge_start=None,
+    terminal_hold=0.0,
+    reference_jump=0.0,
 ):
     bridge_start = start if bridge_start is None else bridge_start
     return {
@@ -25,6 +27,8 @@ def _plan(
             "bridge_start_s": bridge_start,
             "handoff_s": handoff,
             "mpd_suffix_s": 10.0,
+            "terminal_hold_prefix_s": terminal_hold,
+            "controller_reference_jump_rad": reference_jump,
         },
     }
 
@@ -43,6 +47,7 @@ def test_summary_reports_phase_ratio_and_continuous_switches():
 
     assert summary["executed_plan_count"] == 2
     assert summary["maximum_command_gap_s"] == pytest.approx(0.0)
+    assert summary["maximum_uncovered_command_gap_s"] == pytest.approx(0.0)
     assert summary["phase_totals"]["initial_planning_wait_s"] == pytest.approx(1.5)
     assert summary["phase_totals"]["old_continuation_s"] == pytest.approx(2.0)
     assert summary["phase_totals"]["quintic_bridge_s"] == pytest.approx(0.5)
@@ -62,6 +67,7 @@ def test_summary_exposes_command_gap_and_brake():
     )
 
     assert summary["maximum_command_gap_s"] == pytest.approx(0.4)
+    assert summary["maximum_uncovered_command_gap_s"] == pytest.approx(0.4)
     assert summary["brake_event_count"] == 1
 
 
@@ -87,6 +93,40 @@ def test_explicit_execution_prefix_closes_nominal_old_new_gap():
     assert summary["maximum_command_gap_s"] == pytest.approx(0.0)
     assert summary["plans"][1]["command_start_s"] == pytest.approx(5.0)
     assert summary["plans"][1]["bridge_start_s"] == pytest.approx(5.4)
+
+
+def test_summary_reports_guarded_hold_and_controller_reference_jump():
+    summary = summarize_manifest(
+        {
+            "plans": [
+                _plan(
+                    "a",
+                    1.0,
+                    1.2,
+                    5.0,
+                    0.0,
+                    terminal_hold=0.3,
+                    reference_jump=0.02,
+                ),
+                _plan(
+                    "b",
+                    5.0,
+                    5.6,
+                    9.0,
+                    4.0,
+                    "accepted",
+                    bridge_start=5.4,
+                    terminal_hold=0.4,
+                    reference_jump=0.05,
+                ),
+            ],
+            "events": [],
+        }
+    )
+
+    assert summary["guarded_terminal_hold_s"] == pytest.approx(0.7)
+    assert summary["phase_totals"]["guarded_terminal_hold_s"] == pytest.approx(0.7)
+    assert summary["maximum_controller_reference_jump_rad"] == pytest.approx(0.05)
 
 
 def test_summary_skips_accepted_plan_not_active_before_recording_ends():

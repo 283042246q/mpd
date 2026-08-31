@@ -46,9 +46,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             pending_plan_count += 1
             continue
         if active_from_value is None or active_until_value is None:
-            raise ValueError(
-                f"plan {index} must provide both active interval endpoints or neither"
-            )
+            raise ValueError(f"plan {index} must provide both active interval endpoints or neither")
         timing = plan.get("phase_timing")
         if not isinstance(timing, dict):
             raise ValueError(f"executed plan {index} has no phase_timing")
@@ -66,9 +64,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             timing.get("command_start_s", bridge_start),
             f"plans[{index}].phase_timing.command_start_s",
         )
-        handoff = _finite(
-            timing.get("handoff_s"), f"plans[{index}].phase_timing.handoff_s"
-        )
+        handoff = _finite(timing.get("handoff_s"), f"plans[{index}].phase_timing.handoff_s")
         if not submitted <= command_start <= bridge_start <= handoff:
             raise ValueError(f"executed plan {index} has inconsistent phase timing")
         if abs(active_from - command_start) > 1e-5:
@@ -103,6 +99,14 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
                     timing.get("mpd_suffix_s"),
                     f"plans[{index}].phase_timing.mpd_suffix_s",
                 ),
+                "guarded_terminal_hold_s": _finite(
+                    timing.get("terminal_hold_prefix_s", 0.0),
+                    f"plans[{index}].phase_timing.terminal_hold_prefix_s",
+                ),
+                "controller_reference_jump_rad": _finite(
+                    timing.get("controller_reference_jump_rad", 0.0),
+                    f"plans[{index}].phase_timing.controller_reference_jump_rad",
+                ),
             }
         )
     executed.sort(key=lambda item: item["bridge_start_s"])
@@ -112,12 +116,8 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         initial_planning_wait_s = executed[0]["old_continuation_s"]
         executed[0]["old_continuation_s"] = 0.0
     for current, replacement in zip(executed, executed[1:]):
-        mpd_execution_end = min(
-            current["active_until_s"], replacement["planning_submitted_s"]
-        )
-        current["latest_mpd_realized_s"] = max(
-            0.0, mpd_execution_end - current["handoff_s"]
-        )
+        mpd_execution_end = min(current["active_until_s"], replacement["planning_submitted_s"])
+        current["latest_mpd_realized_s"] = max(0.0, mpd_execution_end - current["handoff_s"])
 
     gaps = []
     for old, new in zip(executed, executed[1:]):
@@ -137,11 +137,10 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "quintic_bridge_s": sum(item["bridge_s"] for item in executed),
         "latest_mpd_realized_s": sum(item["latest_mpd_realized_s"] for item in executed),
         "latest_mpd_nominal_s": sum(item["latest_mpd_nominal_s"] for item in executed),
+        "guarded_terminal_hold_s": sum(item["guarded_terminal_hold_s"] for item in executed),
     }
     ratio_denominator = (
-        totals["old_continuation_s"]
-        + totals["quintic_bridge_s"]
-        + totals["latest_mpd_realized_s"]
+        totals["old_continuation_s"] + totals["quintic_bridge_s"] + totals["latest_mpd_realized_s"]
     )
     ratios = {
         key: (value / ratio_denominator if ratio_denominator > 0.0 else 0.0)
@@ -151,13 +150,26 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             ("latest_mpd_realized", totals["latest_mpd_realized_s"]),
         )
     }
+    maximum_uncovered_gap = max((item["gap_s"] for item in gaps), default=0.0)
+    reference_jumps = [
+        {"plan_id": item["id"], "jump_rad": item["controller_reference_jump_rad"]}
+        for item in executed
+    ]
     return {
         "executed_plan_count": len(executed),
         "pending_plan_count": pending_plan_count,
         "terminal_clipped_plan_count": terminal_clipped_plan_count,
         "handoff_event_count": sum(event.get("type") == "handoff" for event in events),
         "brake_event_count": sum(event.get("type") == "brake" for event in events),
-        "maximum_command_gap_s": max((item["gap_s"] for item in gaps), default=0.0),
+        "maximum_uncovered_command_gap_s": maximum_uncovered_gap,
+        "uncovered_command_gaps": gaps,
+        "guarded_terminal_hold_s": totals["guarded_terminal_hold_s"],
+        "maximum_controller_reference_jump_rad": max(
+            (item["jump_rad"] for item in reference_jumps), default=0.0
+        ),
+        "controller_reference_jumps": reference_jumps,
+        # Compatibility aliases for existing 50x5x5 result readers.
+        "maximum_command_gap_s": maximum_uncovered_gap,
         "command_gaps": gaps,
         "phase_totals": totals,
         "phase_ratios": ratios,
@@ -170,6 +182,7 @@ def main() -> int:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--maximum-gap-s", type=float)
+    parser.add_argument("--maximum-uncovered-gap-s", type=float)
     parser.add_argument("--require-no-brake", action="store_true")
     args = parser.parse_args()
 
@@ -180,10 +193,12 @@ def main() -> int:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
-    if (
-        args.maximum_gap_s is not None
-        and summary["maximum_command_gap_s"] > args.maximum_gap_s
-    ):
+    maximum_gap_s = (
+        args.maximum_uncovered_gap_s
+        if args.maximum_uncovered_gap_s is not None
+        else args.maximum_gap_s
+    )
+    if maximum_gap_s is not None and summary["maximum_uncovered_command_gap_s"] > maximum_gap_s:
         return 2
     if args.require_no_brake and summary["brake_event_count"]:
         return 3

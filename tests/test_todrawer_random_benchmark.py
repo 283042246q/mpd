@@ -29,10 +29,7 @@ def test_random_suite_is_deterministic_and_covers_categories():
     assert [item["category"] for item in first["scenarios"]] == list(CATEGORIES)
     assert first["schema_version"] == 2
     assert all(1 <= len(item["objects"]) <= 3 for item in first["scenarios"])
-    assert all(
-        item["schema"] == "mpd_todrawer_dynamic_scenario"
-        for item in first["scenarios"]
-    )
+    assert all(item["schema"] == "mpd_todrawer_dynamic_scenario" for item in first["scenarios"])
 
 
 def test_random_suite_uses_stratified_motion_and_structural_feasibility():
@@ -52,9 +49,7 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
             vertical_crossings += abs(item["direction"][2]) > 0.9
             assert 0.08 <= item["speed_m_s"] <= 0.32
             if item["motion_model"] == "constant_acceleration":
-                acceleration = item["motion"][
-                    "longitudinal_acceleration_m_s2"
-                ]
+                acceleration = item["motion"]["longitudinal_acceleration_m_s2"]
                 for elapsed in (0.0, 35.0):
                     velocity = item["speed_m_s"] + acceleration * (
                         elapsed - item["crossing_time_s"]
@@ -62,8 +57,7 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
                     assert 0.04 - 1.0e-12 <= velocity <= 0.38 + 1.0e-12
             inflation = item["inflation"]
             horizon_inflation = (
-                inflation["base_m"]
-                + PREDICTION_HORIZON_S * inflation["horizon_rate_m_s"]
+                inflation["base_m"] + PREDICTION_HORIZON_S * inflation["horizon_rate_m_s"]
             )
             assert horizon_inflation <= 0.23 + 1.0e-12
 
@@ -77,8 +71,7 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
             "accelerating_crossing",
         }:
             assert all(
-                second - first >= 4.5
-                for first, second in zip(crossing_times, crossing_times[1:])
+                second - first >= 4.5 for first, second in zip(crossing_times, crossing_times[1:])
             )
         if scenario["category"] == "safe_control":
             assert min(crossing_times) >= 55.0
@@ -168,7 +161,14 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     }
     (episode / "replay-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (attempt / "to_drawer-replan-timing.json").write_text(
-        json.dumps({"maximum_command_gap_s": 0.0}), encoding="utf-8"
+        json.dumps(
+            {
+                "maximum_uncovered_command_gap_s": 0.0,
+                "guarded_terminal_hold_s": 0.4,
+                "maximum_controller_reference_jump_rad": 0.01,
+            }
+        ),
+        encoding="utf-8",
     )
     (attempt / "ros-replan.log").write_text(
         "[1.000] dynamic MPD replanner started\n"
@@ -294,6 +294,7 @@ def test_old_terminal_clip_failure_is_revalidated(tmp_path):
     assert normalized["pipeline_revalidated"]
     assert normalized["terminal_clipped_plan_count"] == 1
     assert normalized["maximum_command_gap_s"] == pytest.approx(0.0)
+    assert normalized["maximum_uncovered_command_gap_s"] == pytest.approx(0.0)
     assert normalized["failure_class"] is None
 
 

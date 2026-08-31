@@ -109,6 +109,9 @@ REPORT_FIELDS = (
     "dense_self_clearance_m",
     "inference_total_mean_s",
     "inference_total_p95_s",
+    "maximum_uncovered_command_gap_s",
+    "guarded_terminal_hold_s",
+    "maximum_controller_reference_jump_rad",
     "maximum_command_gap_s",
     "no_valid_trajectory_count",
     "error",
@@ -237,9 +240,7 @@ def _random_object(
             speed_variation_angular_frequency_rad_s=frequency,
             speed_variation_phase_rad=rng.uniform(-math.pi, math.pi),
             speed_variation_std_m_s=amplitude / math.sqrt(2.0),
-            acceleration_variation_std_m_s2=(
-                amplitude * frequency / math.sqrt(2.0)
-            ),
+            acceleration_variation_std_m_s2=(amplitude * frequency / math.sqrt(2.0)),
         )
     return {
         "id": f"random-{scenario_index:03d}-{object_index:02d}",
@@ -287,8 +288,7 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
             start = rng.uniform(9.0, 12.0)
             spacing = rng.uniform(5.0, 7.0)
             crossing_times = [
-                start + spacing * item + rng.uniform(-0.25, 0.25)
-                for item in range(object_count)
+                start + spacing * item + rng.uniform(-0.25, 0.25) for item in range(object_count)
             ]
             motion_types = [
                 rng.choice(("constant_velocity", "constant_acceleration"))
@@ -460,7 +460,9 @@ def _describe(values: list[Any]) -> dict[str, Any]:
     }
 
 
-def _trajectory_segment_metrics(manifest_path: Path, plans: list[dict[str, Any]]) -> tuple[float, float]:
+def _trajectory_segment_metrics(
+    manifest_path: Path, plans: list[dict[str, Any]]
+) -> tuple[float, float]:
     total_l2 = 0.0
     total_l1 = 0.0
     for plan in plans:
@@ -481,7 +483,10 @@ def _trajectory_segment_metrics(manifest_path: Path, plans: list[dict[str, Any]]
         interior = (times > relative_start) & (times < relative_end)
         sample_times = np.concatenate(([relative_start], times[interior], [relative_end]))
         samples = np.column_stack(
-            [np.interp(sample_times, times, positions[:, joint]) for joint in range(positions.shape[1])]
+            [
+                np.interp(sample_times, times, positions[:, joint])
+                for joint in range(positions.shape[1])
+            ]
         )
         delta = np.diff(samples, axis=0)
         total_l2 += float(np.linalg.norm(delta, axis=1).sum())
@@ -531,9 +536,7 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     attempt_value = normalized.get("attempt_dir")
     attempt_dir = Path(str(attempt_value)) if attempt_value else None
     manifest_path = (
-        attempt_dir / "episode" / "replay-manifest.json"
-        if attempt_dir is not None
-        else None
+        attempt_dir / "episode" / "replay-manifest.json" if attempt_dir is not None else None
     )
     manifest_available = bool(manifest_path is not None and manifest_path.is_file())
     normalized["manifest_available"] = manifest_available
@@ -548,7 +551,9 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         normalized["failure_class"] = "dds_startup"
         return normalized
 
-    maximum_gap = normalized.get("maximum_command_gap_s")
+    maximum_gap = normalized.get(
+        "maximum_uncovered_command_gap_s", normalized.get("maximum_command_gap_s")
+    )
     if maximum_gap is not None and float(maximum_gap) > 0.05:
         normalized["failure_class"] = "command_continuity"
         return normalized
@@ -563,11 +568,14 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             normalized["failure_class"] = "timing_summary"
             return normalized
+        normalized["maximum_uncovered_command_gap_s"] = timing["maximum_uncovered_command_gap_s"]
         normalized["maximum_command_gap_s"] = timing["maximum_command_gap_s"]
-        normalized["terminal_clipped_plan_count"] = timing[
-            "terminal_clipped_plan_count"
+        normalized["guarded_terminal_hold_s"] = timing["guarded_terminal_hold_s"]
+        normalized["maximum_controller_reference_jump_rad"] = timing[
+            "maximum_controller_reference_jump_rad"
         ]
-        if timing["maximum_command_gap_s"] <= 0.05:
+        normalized["terminal_clipped_plan_count"] = timing["terminal_clipped_plan_count"]
+        if timing["maximum_uncovered_command_gap_s"] <= 0.05:
             normalized["pipeline_completed"] = True
             normalized["pipeline_revalidated"] = True
             normalized["failure_class"] = None
@@ -582,7 +590,9 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode: int) -> dict[str, Any]:
+def extract_run_metrics(
+    attempt_dir: Path, run_spec: dict[str, Any], returncode: int
+) -> dict[str, Any]:
     manifest_path = attempt_dir / "episode" / "replay-manifest.json"
     metrics: dict[str, Any] = {
         **run_spec,
@@ -618,17 +628,21 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     planned_durations = _finite(
         [plan.get("phase_timing", {}).get("mpd_suffix_s") for plan in executed]
     )
-    hard_clearance = _finite(
-        [item.get("hard_minimum_clearance_m") for item in selected_clearance]
-    )
+    hard_clearance = _finite([item.get("hard_minimum_clearance_m") for item in selected_clearance])
     common_clearance = _finite(
         [item.get("common_window_minimum_clearance_m") for item in selected_clearance]
     )
     dense_environment = _finite(
-        [payload.get("trajectory", {}).get("minimum_environment_clearance_m") for payload in result_payloads]
+        [
+            payload.get("trajectory", {}).get("minimum_environment_clearance_m")
+            for payload in result_payloads
+        ]
     )
     dense_self = _finite(
-        [payload.get("trajectory", {}).get("minimum_self_clearance_m") for payload in result_payloads]
+        [
+            payload.get("trajectory", {}).get("minimum_self_clearance_m")
+            for payload in result_payloads
+        ]
     )
     metrics.update(
         goal_reached=ros["goal_reached"],
@@ -651,20 +665,33 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         hard_minimum_clearance_m=min(hard_clearance, default=None),
         common_window_minimum_clearance_m=min(common_clearance, default=None),
         clearance_mean_cost=(
-            float(np.mean(_finite([item.get("clearance_mean_cost") for item in selected_clearance])))
+            float(
+                np.mean(_finite([item.get("clearance_mean_cost") for item in selected_clearance]))
+            )
             if _finite([item.get("clearance_mean_cost") for item in selected_clearance])
             else None
         ),
         clearance_cvar_cost=(
-            float(np.mean(_finite([item.get("clearance_cvar_cost") for item in selected_clearance])))
+            float(
+                np.mean(_finite([item.get("clearance_cvar_cost") for item in selected_clearance]))
+            )
             if _finite([item.get("clearance_cvar_cost") for item in selected_clearance])
             else None
         ),
         dense_environment_clearance_m=min(dense_environment, default=None),
         dense_self_clearance_m=min(dense_self, default=None),
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
-        inference_total_p95_s=(float(np.percentile(inference_times, 95)) if inference_times else None),
-        maximum_command_gap_s=timing.get("maximum_command_gap_s"),
+        inference_total_p95_s=(
+            float(np.percentile(inference_times, 95)) if inference_times else None
+        ),
+        maximum_uncovered_command_gap_s=timing.get(
+            "maximum_uncovered_command_gap_s", timing.get("maximum_command_gap_s")
+        ),
+        guarded_terminal_hold_s=timing.get("guarded_terminal_hold_s"),
+        maximum_controller_reference_jump_rad=timing.get("maximum_controller_reference_jump_rad"),
+        maximum_command_gap_s=timing.get(
+            "maximum_command_gap_s", timing.get("maximum_uncovered_command_gap_s")
+        ),
         no_valid_trajectory_count=ros["no_valid_trajectory_count"],
         jtc_error_count=ros["jtc_error_count"],
     )
@@ -690,8 +717,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "brake_runs": sum(int(row.get("brake_count") or 0) > 0 for row in rows),
         "brake_events": sum(int(row.get("brake_count") or 0) for row in rows),
         "goal_and_brake_runs": sum(
-            bool(row.get("goal_reached")) and int(row.get("brake_count") or 0) > 0
-            for row in rows
+            bool(row.get("goal_reached")) and int(row.get("brake_count") or 0) > 0 for row in rows
         ),
         "no_goal_and_brake_runs": sum(
             not bool(row.get("goal_reached"))
@@ -731,12 +757,18 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "dense_environment_clearance_m": _describe(
             [row.get("dense_environment_clearance_m") for row in rows]
         ),
-        "dense_self_clearance_m": _describe(
-            [row.get("dense_self_clearance_m") for row in rows]
-        ),
+        "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
-        "maximum_command_gap_s": _describe(
-            [row.get("maximum_command_gap_s") for row in rows]
+        "maximum_command_gap_s": _describe([row.get("maximum_command_gap_s") for row in rows]),
+        "maximum_uncovered_command_gap_s": _describe(
+            [
+                row.get("maximum_uncovered_command_gap_s", row.get("maximum_command_gap_s"))
+                for row in rows
+            ]
+        ),
+        "guarded_terminal_hold_s": _describe([row.get("guarded_terminal_hold_s") for row in rows]),
+        "maximum_controller_reference_jump_rad": _describe(
+            [row.get("maximum_controller_reference_jump_rad") for row in rows]
         ),
     }
 
@@ -749,16 +781,12 @@ def _paired_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     complete_cells = [
         modes
         for modes in grouped.values()
-        if all(
-            mode in modes and bool(modes[mode].get("manifest_available"))
-            for mode in MODE_SPECS
-        )
+        if all(mode in modes and bool(modes[mode].get("manifest_available")) for mode in MODE_SPECS)
     ]
     return {
         "cell_count": len(complete_cells),
         "by_mode": {
-            mode: _aggregate([cell[mode] for cell in complete_cells])
-            for mode in MODE_SPECS
+            mode: _aggregate([cell[mode] for cell in complete_cells]) for mode in MODE_SPECS
         },
     }
 
@@ -777,17 +805,12 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         writer.writeheader()
         writer.writerows(rows)
     by_mode = {
-        mode: _aggregate([row for row in rows if row.get("mode") == mode])
-        for mode in MODE_SPECS
+        mode: _aggregate([row for row in rows if row.get("mode") == mode]) for mode in MODE_SPECS
     }
     by_category = {
         category: {
             mode: _aggregate(
-                [
-                    row
-                    for row in rows
-                    if row.get("category") == category and row.get("mode") == mode
-                ]
+                [row for row in rows if row.get("category") == category and row.get("mode") == mode]
             )
             for mode in MODE_SPECS
         }
@@ -799,8 +822,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                 [
                     row
                     for row in rows
-                    if row.get("difficulty") == difficulty
-                    and row.get("mode") == mode
+                    if row.get("difficulty") == difficulty and row.get("mode") == mode
                 ]
             )
             for mode in MODE_SPECS
@@ -818,9 +840,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
             "clearance": "selected candidate guard clearance plus successful MPD DenseCheck clearance",
-            "scenario_feasibility": suite.get("generation_policy", {}).get(
-                "feasibility_scope"
-            ),
+            "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
         },
         "by_mode": by_mode,
         "by_category": by_category,
@@ -841,7 +861,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         "",
         "## 指标口径",
         "",
-        "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
+        "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。uncovered command gap 只统计相邻实际命令区间没有任何 JTC goal 覆盖的时间；guarded terminal hold 是显式发送且经过动态 guard 验证的末端保持；controller reference jump 是切换时新 goal 首点与旧控制参考之间的最大关节位置差。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
         "",
         "## 场景类型与难度",
         "",
@@ -855,11 +875,11 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         )
     lines.extend(
         [
-        "",
-        "## 安全与完成情况",
-        "",
-        "| 模式 | 完成/总数 | 有manifest | 基础设施失败 runs/attempts | 到达目标 | brake runs | goal+brake | no-goal+brake | 动态碰撞拒绝 | 非正 clearance | 最大命令间隙 mean s |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "",
+            "## 安全与完成情况",
+            "",
+            "| 模式 | 完成/总数 | 有manifest | 基础设施失败 runs/attempts | 到达目标 | brake runs | goal+brake | no-goal+brake | 动态碰撞拒绝 | 非正 clearance | uncovered gap mean s | guarded hold mean s | reference jump mean rad |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for mode, data in by_mode.items():
@@ -877,7 +897,9 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                     str(data["no_goal_and_brake_runs"]),
                     str(data["guard_dynamic_collision_rejections"]),
                     str(data["accepted_nonpositive_clearance_count"]),
-                    _fmt(data["maximum_command_gap_s"]["mean"]),
+                    _fmt(data["maximum_uncovered_command_gap_s"]["mean"]),
+                    _fmt(data["guarded_terminal_hold_s"]["mean"]),
+                    _fmt(data["maximum_controller_reference_jump_rad"]["mean"]),
                 )
             )
             + " |"
@@ -994,9 +1016,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                 f"{_fmt(data['joint_l2_path_rad']['mean'])} | "
                 f"{_fmt(data['hard_minimum_clearance_m']['min'])} |"
             )
-    analyzable_modes = {
-        mode: data for mode, data in by_mode.items() if data["manifest_runs"]
-    }
+    analyzable_modes = {mode: data for mode, data in by_mode.items() if data["manifest_runs"]}
     lines.extend(["", "## 描述性结论", ""])
     if analyzable_modes:
         goal_best = max(
@@ -1063,7 +1083,11 @@ def _existing_rows(output_dir: Path) -> list[dict[str, Any]]:
         latest[key] = row
     return sorted(
         latest.values(),
-        key=lambda row: (str(row.get("scenario_id")), int(row.get("repeat", 0)), str(row.get("mode"))),
+        key=lambda row: (
+            str(row.get("scenario_id")),
+            int(row.get("repeat", 0)),
+            str(row.get("mode")),
+        ),
     )
 
 
@@ -1144,8 +1168,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     continue
                 prior = existing_by_key.get(key)
                 if args.retry_failure_class != "all" and (
-                    prior is None
-                    or prior.get("failure_class") != args.retry_failure_class
+                    prior is None or prior.get("failure_class") != args.retry_failure_class
                 ):
                     print(
                         f"[skip] failure_class={None if prior is None else prior.get('failure_class')} "
@@ -1220,7 +1243,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=REPO_ROOT / "scripts" / "isaaclab" / "logs" / "todrawer-random-benchmark" / timestamp,
+        default=REPO_ROOT
+        / "scripts"
+        / "isaaclab"
+        / "logs"
+        / "todrawer-random-benchmark"
+        / timestamp,
     )
     parser.add_argument(
         "--scenario-count",
@@ -1256,7 +1284,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Run only selected frozen environment categories",
     )
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--render", action="store_true", help="Render every episode; disabled by default")
+    parser.add_argument(
+        "--render", action="store_true", help="Render every episode; disabled by default"
+    )
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument(
