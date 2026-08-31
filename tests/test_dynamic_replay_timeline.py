@@ -107,6 +107,29 @@ def test_manifest_drives_active_pending_and_obsolete_colors(tmp_path):
     assert segment_color(old, 1.2, COLOR_GRAY) == COLOR_RED
 
 
+def test_manifest_schema_v2_accepts_scheduled_and_interrupted_records(tmp_path):
+    path = _manifest(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 2
+    payload["plans"][1]["status"] = "interrupted_before_handoff"
+    payload["plans"][2]["status"] = "scheduled"
+    payload["events"].append(
+        {
+            "type": "plan_interruption",
+            "time_s": 3.5,
+            "plan_id": "new",
+            "reason": "dynamic_collision",
+        }
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = load_dynamic_replay_manifest(path)
+
+    assert manifest.plans[1].status == "interrupted_before_handoff"
+    assert manifest.plans[2].status == "scheduled"
+    assert manifest.events[-2].event_type == "plan_interruption"
+
+
 def test_manifest_reads_deduplicated_trajectory_schema_v2(tmp_path):
     path = _manifest(tmp_path)
     np.savez(

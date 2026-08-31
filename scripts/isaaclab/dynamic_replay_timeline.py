@@ -18,9 +18,20 @@ import numpy as np
 
 
 SCHEMA = "mpd_dynamic_replay"
-SCHEMA_VERSION = 1
-PLAN_STATUSES = frozenset(("accepted", "superseded", "rejected", "braking"))
-EVENT_TYPES = frozenset(("handoff", "brake"))
+SCHEMA_VERSIONS = frozenset((1, 2))
+PLAN_STATUSES = frozenset(
+    (
+        "scheduled",
+        "accepted",
+        "superseded",
+        "rejected",
+        "canceled_before_activation",
+        "interrupted_before_handoff",
+        "interrupted",
+        "braking",
+    )
+)
+EVENT_TYPES = frozenset(("handoff", "brake", "plan_interruption"))
 
 COLOR_GRAY = (0.45, 0.45, 0.45, 0.75)
 COLOR_BLUE = (0.10, 0.35, 1.00, 1.00)
@@ -258,8 +269,14 @@ def load_dynamic_replay_manifest(path: str | Path) -> DynamicReplayManifest:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise DynamicReplayError(f"cannot read manifest {manifest_path}: {error}") from error
-    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA or raw.get("schema_version") != SCHEMA_VERSION:
-        raise DynamicReplayError(f"manifest must use {SCHEMA!r} schema version {SCHEMA_VERSION}")
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema") != SCHEMA
+        or raw.get("schema_version") not in SCHEMA_VERSIONS
+    ):
+        raise DynamicReplayError(
+            f"manifest must use {SCHEMA!r} schema version in {sorted(SCHEMA_VERSIONS)}"
+        )
     frame_id = raw.get("frame_id", "fr3_link0")
     if not isinstance(frame_id, str) or not frame_id:
         raise DynamicReplayError("frame_id must be a non-empty string")
@@ -301,8 +318,10 @@ def load_dynamic_replay_manifest(path: str | Path) -> DynamicReplayManifest:
             active_until_s = _finite(active_until_s, f"{name}.active_until_s", minimum=0.0)
         if (active_from_s is None) != (active_until_s is None):
             raise DynamicReplayError(f"{name} must provide both active interval endpoints or neither")
-        if status == "rejected" and active_from_s is not None:
-            raise DynamicReplayError(f"{name}: rejected plans cannot have an active interval")
+        if status in ("scheduled", "rejected", "canceled_before_activation") and active_from_s is not None:
+            raise DynamicReplayError(
+                f"{name}: {status} plans cannot have an active interval"
+            )
         if active_from_s is not None:
             if (
                 active_until_s <= active_from_s
@@ -374,7 +393,9 @@ def load_dynamic_replay_manifest(path: str | Path) -> DynamicReplayManifest:
     for index, item in enumerate(raw.get("events", [])):
         name = f"events[{index}]"
         if not isinstance(item, dict) or item.get("type") not in EVENT_TYPES:
-            raise DynamicReplayError(f"{name}.type must be handoff or brake")
+            raise DynamicReplayError(
+                f"{name}.type must be one of {sorted(EVENT_TYPES)}"
+            )
         plan_id = item.get("plan_id")
         if plan_id is not None and plan_id not in plan_ids:
             raise DynamicReplayError(f"{name}.plan_id references an unknown plan")
