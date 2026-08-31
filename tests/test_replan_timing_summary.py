@@ -3,7 +3,17 @@ import pytest
 from scripts.isaaclab.summarize_replan_timing import summarize_manifest
 
 
-def _plan(plan_id, start, handoff, end, submitted, status="superseded"):
+def _plan(
+    plan_id,
+    start,
+    handoff,
+    end,
+    submitted,
+    status="superseded",
+    *,
+    bridge_start=None,
+):
+    bridge_start = start if bridge_start is None else bridge_start
     return {
         "id": plan_id,
         "status": status,
@@ -11,7 +21,8 @@ def _plan(plan_id, start, handoff, end, submitted, status="superseded"):
         "active_until_s": end,
         "phase_timing": {
             "planning_submitted_s": submitted,
-            "bridge_start_s": start,
+            "command_start_s": start,
+            "bridge_start_s": bridge_start,
             "handoff_s": handoff,
             "mpd_suffix_s": 10.0,
         },
@@ -52,6 +63,30 @@ def test_summary_exposes_command_gap_and_brake():
 
     assert summary["maximum_command_gap_s"] == pytest.approx(0.4)
     assert summary["brake_event_count"] == 1
+
+
+def test_explicit_execution_prefix_closes_nominal_old_new_gap():
+    summary = summarize_manifest(
+        {
+            "plans": [
+                _plan("old", 1.0, 1.2, 5.0, 0.0),
+                _plan(
+                    "new",
+                    5.0,
+                    5.6,
+                    9.0,
+                    4.0,
+                    "accepted",
+                    bridge_start=5.4,
+                ),
+            ],
+            "events": [{"type": "handoff"}],
+        }
+    )
+
+    assert summary["maximum_command_gap_s"] == pytest.approx(0.0)
+    assert summary["plans"][1]["command_start_s"] == pytest.approx(5.0)
+    assert summary["plans"][1]["bridge_start_s"] == pytest.approx(5.4)
 
 
 def test_summary_skips_accepted_plan_not_active_before_recording_ends():

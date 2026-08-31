@@ -62,13 +62,17 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
             timing.get("bridge_start_s"),
             f"plans[{index}].phase_timing.bridge_start_s",
         )
+        command_start = _finite(
+            timing.get("command_start_s", bridge_start),
+            f"plans[{index}].phase_timing.command_start_s",
+        )
         handoff = _finite(
             timing.get("handoff_s"), f"plans[{index}].phase_timing.handoff_s"
         )
-        if not submitted <= bridge_start <= handoff:
+        if not submitted <= command_start <= bridge_start <= handoff:
             raise ValueError(f"executed plan {index} has inconsistent phase timing")
-        if abs(active_from - bridge_start) > 1e-5:
-            raise ValueError(f"executed plan {index} does not start at bridge_start")
+        if abs(active_from - command_start) > 1e-5:
+            raise ValueError(f"executed plan {index} does not start at command_start")
         if handoff > active_until + 1e-6:
             # A replacement accepted on the final recorder tick can receive an
             # active interval only a few microseconds long before the episode
@@ -88,6 +92,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
                 "id": str(plan.get("id", f"plan-{index}")),
                 "status": plan["status"],
                 "planning_submitted_s": submitted,
+                "command_start_s": command_start,
                 "bridge_start_s": bridge_start,
                 "handoff_s": handoff,
                 "active_until_s": active_until,
@@ -116,7 +121,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
     gaps = []
     for old, new in zip(executed, executed[1:]):
-        gap = new["bridge_start_s"] - old["active_until_s"]
+        gap = new["command_start_s"] - old["active_until_s"]
         gaps.append(
             {
                 "from": old["id"],
