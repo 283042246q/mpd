@@ -156,6 +156,23 @@ Full benchmark:
   --suite-seed 20260829
 ```
 
+Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
+planner-seed repeats x 8 modes = 640 paired runs):
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_phase4_aligned_ablation.py \
+  --output-dir scripts/isaaclab/logs/phase4-aligned-ablation-40x2x8 \
+  --duration-sec 35 \
+  --suite-seed 20260829
+```
+
+The eight modes are plain Phase 4, all Phase-4-aligned changes, and six
+one-factor-off variants for ROS deviation, relative hysteresis, motion/terminal-hold
+clearance split, 1:4 tail kinematic weighting, MPD mean+CVaR dynamic guidance, and
+MPD dynamic-risk selection. Use `--dry-run` to freeze the suite and inspect every
+pipeline command without starting CUDA or ROS.
+
 The generator retains horizontal and vertical crossings and uses five deterministic
 continuous motion laws: constant velocity, constant longitudinal acceleration,
 sinusoidal curves, smooth speed variation, and curved motion with speed variation.

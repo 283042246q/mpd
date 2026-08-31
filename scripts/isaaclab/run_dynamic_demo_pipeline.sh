@@ -28,6 +28,13 @@ SKIP_BUILD=false
 SKIP_RENDER=false
 REQUIRE_NO_BRAKE=true
 PIPELINE_ROS_DOMAIN_ID=""
+ALIGNED_DEVIATION="on"
+ALIGNED_RELATIVE_HYSTERESIS="on"
+ALIGNED_CLEARANCE_SPLIT="on"
+ALIGNED_TAIL_KINEMATIC="on"
+ALIGNED_MPD_GUIDANCE="on"
+ALIGNED_MPD_SELECTION="on"
+ALIGNED_ABLATION_EXPLICIT=false
 
 usage() {
   printf '%s\n' \
@@ -42,6 +49,12 @@ usage() {
     "  --world-scenario NAME   Override the profile's dynamic-world scenario" \
     "  --world-scenario-file P Read deterministic moving objects from JSON" \
     "  --ros-domain-id ID      Isolated ROS 2 DDS domain (default: auto)" \
+    "  --aligned-deviation on|off          Phase-4 aligned ROS deviation cost" \
+    "  --aligned-relative-hysteresis on|off Phase-4 aligned relative hysteresis" \
+    "  --aligned-clearance-split on|off     Phase-4 aligned motion/hold clearance split" \
+    "  --aligned-tail-kinematic on|off      Phase-4 aligned 1:4 kinematic weighting" \
+    "  --aligned-mpd-guidance on|off        Phase-4 aligned mean+CVaR guidance" \
+    "  --aligned-mpd-selection on|off       Phase-4 aligned dynamic-risk ranking" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
@@ -63,6 +76,12 @@ while (($#)); do
     --world-scenario) WORLD_SCENARIO_OVERRIDE="$2"; shift 2 ;;
     --world-scenario-file) WORLD_SCENARIO_FILE="$2"; shift 2 ;;
     --ros-domain-id) PIPELINE_ROS_DOMAIN_ID="$2"; shift 2 ;;
+    --aligned-deviation) ALIGNED_DEVIATION="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --aligned-relative-hysteresis) ALIGNED_RELATIVE_HYSTERESIS="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --aligned-clearance-split) ALIGNED_CLEARANCE_SPLIT="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --aligned-tail-kinematic) ALIGNED_TAIL_KINEMATIC="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --aligned-mpd-guidance) ALIGNED_MPD_GUIDANCE="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --aligned-mpd-selection) ALIGNED_MPD_SELECTION="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
@@ -119,6 +138,22 @@ if [[ "$PHASE" != "phase5" && "$TIMING_MODE_EXPLICIT" == true ]]; then
   printf '%s\n' '--timing-mode is only valid with --phase phase5' >&2
   exit 2
 fi
+if [[ "$PHASE" != "phase4_aligned" && "$ALIGNED_ABLATION_EXPLICIT" == true ]]; then
+  printf '%s\n' '--aligned-* switches are only valid with --phase phase4_aligned' >&2
+  exit 2
+fi
+for value in \
+  "$ALIGNED_DEVIATION" \
+  "$ALIGNED_RELATIVE_HYSTERESIS" \
+  "$ALIGNED_CLEARANCE_SPLIT" \
+  "$ALIGNED_TAIL_KINEMATIC" \
+  "$ALIGNED_MPD_GUIDANCE" \
+  "$ALIGNED_MPD_SELECTION"; do
+  if [[ "$value" != "on" && "$value" != "off" ]]; then
+    printf 'Invalid aligned switch value: %s (expected on or off)\n' "$value" >&2
+    exit 2
+  fi
+done
 
 case "$PROFILE" in
   to_drawer)
@@ -157,9 +192,12 @@ case "$PHASE" in
     TIMING_LABEL="fixed_aligned"
     HEALTH_TIMEOUT_S=4
     SERVER_EXTRA_ARGS+=(--aligned)
-    ROS_EXTRA_ARGS+=(
-      "config:=${AIRUNTIME_ROOT}/src/motion_planning/motion_planners/mpd_dynamic_planner_adapter/config/replan_dynamic_aligned.yaml"
-    )
+    if [[ "$ALIGNED_MPD_GUIDANCE" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-aligned-guidance)
+    fi
+    if [[ "$ALIGNED_MPD_SELECTION" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-aligned-selection)
+    fi
     ;;
   phase5)
     SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_space_time_server.py"
@@ -228,6 +266,19 @@ SOCKET_PATH="${SOCKET_RUNTIME_DIR}/${SOCKET_BASENAME}"
 mkdir -p "$OUTPUT_DIR" "$PLANNER_RESULTS" "$RECORD_DIR"
 export ROS_HOME="${OUTPUT_DIR}/ros-home"
 mkdir -p "$ROS_HOME"
+
+if [[ "$PHASE" == "phase4_aligned" ]]; then
+  ALIGNED_CONFIG="${OUTPUT_DIR}/phase4-aligned-config.yaml"
+  env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+    "${MPD_ROOT}/scripts/isaaclab/materialize_phase4_aligned_config.py" \
+    --base "${AIRUNTIME_ROOT}/src/motion_planning/motion_planners/mpd_dynamic_planner_adapter/config/replan_dynamic_aligned.yaml" \
+    --output "$ALIGNED_CONFIG" \
+    --deviation "$ALIGNED_DEVIATION" \
+    --relative-hysteresis "$ALIGNED_RELATIVE_HYSTERESIS" \
+    --clearance-split "$ALIGNED_CLEARANCE_SPLIT" \
+    --tail-kinematic "$ALIGNED_TAIL_KINEMATIC"
+  ROS_EXTRA_ARGS+=("config:=${ALIGNED_CONFIG}")
+fi
 
 printf '[1/6] Exporting static scene for %s\n' "$ENV_NAME"
 cd "$MPD_ROOT"

@@ -22,6 +22,14 @@ def _add_boolean_switch(parser: argparse.ArgumentParser, name: str, *, default: 
     parser.set_defaults(**{destination: default})
 
 
+def _add_optional_boolean_switch(parser: argparse.ArgumentParser, name: str) -> None:
+    destination = name.replace("-", "_")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(f"--{name}", dest=destination, action="store_true")
+    group.add_argument(f"--no-{name}", dest=destination, action="store_false")
+    parser.set_defaults(**{destination: None})
+
+
 class DynamicResidentPlannerService(ResidentPlannerService):
     def _update_world(self, message: dict[str, Any]) -> dict[str, Any]:
         if self.state != "READY":
@@ -99,6 +107,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_boolean_switch(parser, "collision-spheres-float32", default=True)
     _add_boolean_switch(parser, "deduplicate-best-trajectory", default=True)
     _add_boolean_switch(parser, "aligned", default=False)
+    _add_optional_boolean_switch(parser, "aligned-guidance")
+    _add_optional_boolean_switch(parser, "aligned-selection")
     return parser
 
 
@@ -123,6 +133,8 @@ def main(argv=None) -> int:
             collision_spheres_float32=args.collision_spheres_float32,
             deduplicate_best_trajectory=args.deduplicate_best_trajectory,
             aligned=args.aligned,
+            aligned_guidance_enabled=args.aligned_guidance,
+            aligned_selection_enabled=args.aligned_selection,
         )
 
     service = DynamicResidentPlannerService(

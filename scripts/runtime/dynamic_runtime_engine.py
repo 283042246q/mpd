@@ -66,6 +66,8 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         collision_spheres_float32: bool = True,
         deduplicate_best_trajectory: bool = True,
         aligned: bool = False,
+        aligned_guidance_enabled: bool | None = None,
+        aligned_selection_enabled: bool | None = None,
     ) -> None:
         import torch
 
@@ -77,6 +79,21 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         self.collision_spheres_float32 = bool(collision_spheres_float32)
         self.deduplicate_best_trajectory = bool(deduplicate_best_trajectory)
         self.aligned = bool(aligned)
+        self.aligned_guidance_enabled = (
+            self.aligned
+            if aligned_guidance_enabled is None
+            else bool(aligned_guidance_enabled)
+        )
+        self.aligned_selection_enabled = (
+            self.aligned
+            if aligned_selection_enabled is None
+            else bool(aligned_selection_enabled)
+        )
+        self.aligned = bool(
+            self.aligned
+            or self.aligned_guidance_enabled
+            or self.aligned_selection_enabled
+        )
 
         super().__init__(
             config_path=config_path,
@@ -149,7 +166,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             torch.cuda.synchronize(self.device)
 
         self.aligned_risk_evaluator = None
-        if self.aligned:
+        if self.aligned_guidance_enabled or self.aligned_selection_enabled:
             if self.planner.cost_guide is None:
                 raise DynamicWorldError("Phase-4 aligned mode requires an MPD cost guide")
             collision_entry = self.planner.cost_guide.costs.get(
@@ -167,16 +184,17 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
                 self.dynamic_field,
                 aligned_settings,
             )
-            self.planner.cost_guide = FixedTimeAlignedGuide(
-                self.planner.cost_guide,
-                self.aligned_risk_evaluator,
-                self.dynamic_field,
-                dynamic_collision_weight=float(collision_entry.weight),
-                settings=aligned_settings,
-            )
-            self.planner.cost_guide(template, warmup=True)
-            if self.device.type == "cuda":
-                torch.cuda.synchronize(self.device)
+            if self.aligned_guidance_enabled:
+                self.planner.cost_guide = FixedTimeAlignedGuide(
+                    self.planner.cost_guide,
+                    self.aligned_risk_evaluator,
+                    self.dynamic_field,
+                    dynamic_collision_weight=float(collision_entry.weight),
+                    settings=aligned_settings,
+                )
+                self.planner.cost_guide(template, warmup=True)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize(self.device)
 
     def update_world(self, snapshot: dict[str, Any]) -> int:
         return self.dynamic_world.update(snapshot)
@@ -211,18 +229,24 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         )
         response["phase4_aligned"] = {
             "enabled": self.aligned,
+            "guidance_enabled": self.aligned_guidance_enabled,
+            "selection_enabled": self.aligned_selection_enabled,
             "selection": (
                 "spatial_weighted_metrics_plus_normalized_dynamic_risk"
-                if self.aligned
+                if self.aligned_selection_enabled
                 else "legacy"
             ),
-            "dynamic_collision_alpha": 0.5 if self.aligned else None,
-            "dynamic_collision_cvar_fraction": 0.10 if self.aligned else None,
+            "dynamic_collision_alpha": (
+                0.5 if self.aligned_guidance_enabled else None
+            ),
+            "dynamic_collision_cvar_fraction": (
+                0.10 if self.aligned_guidance_enabled else None
+            ),
         }
         return response
 
     def _postprocess_plan_results(self, results):
-        if not self.aligned:
+        if not self.aligned_selection_enabled:
             return results
         import torch
 

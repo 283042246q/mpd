@@ -32,6 +32,7 @@ MODE_SPECS = {
     "timing_only": ("phase5", "phase5_timing_only"),
     "joint": ("phase5", "phase5_joint"),
 }
+MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {}
 CATEGORIES = (
     "single_crossing",
     "staggered_multi",
@@ -856,7 +857,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         f"- suite seed：`{suite['suite_seed']}`",
         f"- 场景数：{suite['scenario_count']}",
         f"- 已发现运行：{len(rows)}",
-        "- 模式：Phase 4、Phase 4 aligned、scalar duration、timing only、joint",
+        "- 模式：" + "、".join(MODE_SPECS),
         "- 场景构造：包含水平/竖直穿越、匀速、匀加速、曲线和光滑速度/加速度波动；按 easy/moderate/hard 分层。硬场景仍保留一条空间通道或后续时间间隙，但不预先保证规划成功。",
         "",
         "## 指标口径",
@@ -1214,6 +1215,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     command.extend(("--ros-domain-id", str(args.ros_domain_id)))
                 if timing_mode is not None:
                     command.extend(("--timing-mode", timing_mode))
+                command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
                 if not args.render:
                     command.append("--skip-render")
                 _write_json(attempt_dir / "run-spec.json", {**run_spec, "command": command})
@@ -1222,6 +1224,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     f"repeat={repeat} mode={mode} seed={planner_seed}",
                     flush=True,
                 )
+                if args.dry_run:
+                    continue
                 started = time.time()
                 returncode = _run_command(command, REPO_ROOT, attempt_dir / "pipeline.log")
                 metrics = extract_run_metrics(attempt_dir, run_spec, returncode)
@@ -1290,6 +1294,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Materialize the suite and commands without launching workers or ROS",
+    )
+    parser.add_argument(
         "--retry-failure-class",
         choices=("all", "dds_startup"),
         default="all",
@@ -1300,6 +1309,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.dry_run:
+        args.skip_build = True
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
     if args.ros_domain_id is not None and not 0 <= args.ros_domain_id <= 232:

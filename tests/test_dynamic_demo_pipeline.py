@@ -45,6 +45,22 @@ def test_pipeline_rejects_phase5_timing_mode_for_phase4():
     assert "--timing-mode is only valid with --phase phase5" in result.stderr
 
 
+def test_pipeline_rejects_aligned_switches_for_plain_phase4():
+    result = _run("--phase", "phase4", "--aligned-deviation", "off")
+
+    assert result.returncode == 2
+    assert "--aligned-* switches are only valid" in result.stderr
+
+
+def test_pipeline_rejects_invalid_aligned_switch_value():
+    result = _run(
+        "--phase", "phase4_aligned", "--aligned-mpd-guidance", "maybe"
+    )
+
+    assert result.returncode == 2
+    assert "expected on or off" in result.stderr
+
+
 def test_pipeline_accepts_phase4_aligned_alias():
     result = _run(
         "--phase",

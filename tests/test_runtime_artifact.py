@@ -52,6 +52,26 @@ def test_dynamic_artifact_optimizations_are_independently_switchable():
     assert not args.collision_spheres_float32
     assert not args.deduplicate_best_trajectory
     assert args.aligned
+    assert args.aligned_guidance is None
+    assert args.aligned_selection is None
+
+
+def test_phase4_aligned_guidance_and_selection_are_independent():
+    args = _build_parser().parse_args(
+        [
+            "--socket",
+            "/tmp/test.sock",
+            "--output-root",
+            "/tmp/test-output",
+            "--aligned",
+            "--no-aligned-guidance",
+            "--aligned-selection",
+        ]
+    )
+
+    assert args.aligned
+    assert args.aligned_guidance is False
+    assert args.aligned_selection is True
 
 
 def test_phase5_server_has_separate_mode_and_timing_bounds():
