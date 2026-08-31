@@ -6,12 +6,31 @@ from mpd.inference.space_time_guidance import (
     InferenceOnlySpaceTimeGuide,
     SpaceTimeCostEvaluator,
     SpaceTimeGuidanceSettings,
+    _gradient_cosine_per_candidate,
 )
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
 from mpd.parametric_trajectory.timing_spline import TimingSpline
 
 
 TENSOR_ARGS = {"device": torch.device("cpu"), "dtype": torch.float64}
+
+
+def test_phase5_spatial_dynamic_gradient_clip_defaults_to_two():
+    assert SpaceTimeGuidanceSettings().spatial_dynamic_max_grad_norm == 2.0
+
+
+def test_static_dynamic_gradient_cosine_excludes_zero_directions():
+    static = torch.tensor(
+        [[[1.0, 0.0]], [[1.0, 0.0]], [[0.0, 0.0]]], **TENSOR_ARGS
+    )
+    dynamic = torch.tensor(
+        [[[1.0, 0.0]], [[-1.0, 0.0]], [[1.0, 0.0]]], **TENSOR_ARGS
+    )
+
+    cosine, valid = _gradient_cosine_per_candidate(static, dynamic)
+
+    torch.testing.assert_close(cosine[:2], torch.tensor([1.0, -1.0], **TENSOR_ARGS))
+    assert valid.tolist() == [True, True, False]
 
 
 def _moving_gate_world():
@@ -491,6 +510,11 @@ def test_wrapper_modes_keep_population_fixed_and_update_only_owned_variables(
             guide.timing_control_points[:, -2:], before[:, -2:]
         )
     assert guide.statistics[-1]["mode"] == mode
+    if mode == "phase5_joint":
+        assert "static_dynamic_gradient_cosine_mean" in guide.statistics[-1]
+        assert guide.statistics[-1][
+            "static_dynamic_gradient_cosine_valid_ratio"
+        ] >= 0.0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")

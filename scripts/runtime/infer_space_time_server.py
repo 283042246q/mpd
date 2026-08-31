@@ -36,6 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-max", type=float, default=14.0)
     parser.add_argument("--nominal-duration", type=float, default=10.0)
     parser.add_argument("--timing-learning-rate", type=float, default=0.08)
+    parser.add_argument("--spatial-dynamic-max-grad-norm", type=float, default=2.0)
     parser.add_argument(
         "--static-spatial-pruning",
         dest="static_spatial_pruning",
@@ -66,6 +67,7 @@ def main(argv=None) -> int:
         "duration_max": args.duration_max,
         "nominal_duration": args.nominal_duration,
         "timing_learning_rate": args.timing_learning_rate,
+        "spatial_dynamic_max_grad_norm": args.spatial_dynamic_max_grad_norm,
     }
 
     def engine_factory(state_callback):

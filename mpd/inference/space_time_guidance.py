@@ -51,7 +51,7 @@ class SpaceTimeGuidanceSettings:
     timing_beta2: float = 0.999
     timing_epsilon: float = 1e-8
     timing_max_grad_norm: float = 1.0
-    spatial_dynamic_max_grad_norm: float = 1.0
+    spatial_dynamic_max_grad_norm: float = 2.0
     spatial_dynamic_scale: float = 1.0
     dynamic_collision_weight: float = 10.0
     dynamic_collision_alpha: float = 0.5
@@ -78,6 +78,8 @@ class SpaceTimeGuidanceSettings:
             raise ValueError("nominal duration must lie strictly inside duration bounds")
         if settings.timing_learning_rate <= 0.0:
             raise ValueError("timing_learning_rate must be positive")
+        if settings.spatial_dynamic_max_grad_norm <= 0.0:
+            raise ValueError("spatial_dynamic_max_grad_norm must be positive")
         if not 0.0 <= settings.dynamic_collision_alpha <= 1.0:
             raise ValueError("dynamic collision alpha must lie in [0, 1]")
         if not 0.0 < settings.dynamic_collision_cvar_fraction <= 1.0:
@@ -104,6 +106,22 @@ def _clip_per_candidate(gradient: torch.Tensor, max_norm: float):
     scale = (float(max_norm) / norm.clamp_min(torch.finfo(norm.dtype).eps)).clamp(max=1.0)
     clipped = gradient * scale.reshape(-1, *([1] * (gradient.ndim - 1)))
     return clipped, norm, scale < 1.0
+
+
+def _gradient_cosine_per_candidate(
+    static_gradient: torch.Tensor,
+    dynamic_gradient: torch.Tensor,
+):
+    """Return gradient cosine and a mask excluding undefined zero directions."""
+    static_flat = static_gradient.flatten(start_dim=1)
+    dynamic_flat = dynamic_gradient.flatten(start_dim=1)
+    static_norm = torch.linalg.norm(static_flat, dim=-1)
+    dynamic_norm = torch.linalg.norm(dynamic_flat, dim=-1)
+    epsilon = torch.finfo(static_flat.dtype).eps
+    valid = (static_norm > epsilon) & (dynamic_norm > epsilon)
+    denominator = (static_norm * dynamic_norm).clamp_min(epsilon)
+    cosine = (static_flat * dynamic_flat).sum(dim=-1) / denominator
+    return cosine.clamp(min=-1.0, max=1.0), valid
 
 
 class SpaceTimeCostEvaluator:
@@ -556,6 +574,9 @@ class InferenceOnlySpaceTimeGuide:
             gradients = torch.autograd.grad(total.sum(), variables)
             if self.settings.mode == "phase5_joint":
                 spatial_gradient, timing_gradient = gradients
+                static_dynamic_cosine, cosine_valid = _gradient_cosine_per_candidate(
+                    -spatial_descent.detach(), spatial_gradient.detach()
+                )
                 spatial_dynamic, spatial_norm, spatial_clipped = _clip_per_candidate(
                     spatial_gradient, self.settings.spatial_dynamic_max_grad_norm
                 )
@@ -566,6 +587,8 @@ class InferenceOnlySpaceTimeGuide:
                 timing_gradient = gradients[0]
                 spatial_norm = torch.zeros(batch, dtype=timing.dtype, device=timing.device)
                 spatial_clipped = torch.zeros(batch, dtype=torch.bool, device=timing.device)
+                static_dynamic_cosine = torch.zeros_like(spatial_norm)
+                cosine_valid = torch.zeros_like(spatial_clipped)
 
         if not return_cost:
             updated, timing_norm, timing_clipped = self._update_timing(
@@ -577,6 +600,7 @@ class InferenceOnlySpaceTimeGuide:
             timing_clipped = torch.zeros(batch, dtype=torch.bool, device=timing.device)
 
         if not warmup:
+            valid_cosine = static_dynamic_cosine[cosine_valid]
             self.statistics.append(
                 {
                     "mode": self.settings.mode,
@@ -584,6 +608,29 @@ class InferenceOnlySpaceTimeGuide:
                     "timing_gradient_norm_mean": float(timing_norm.mean().detach().cpu()),
                     "spatial_clip_ratio": float(spatial_clipped.float().mean().detach().cpu()),
                     "timing_clip_ratio": float(timing_clipped.float().mean().detach().cpu()),
+                    "static_dynamic_gradient_cosine_mean": (
+                        float(valid_cosine.mean().detach().cpu())
+                        if valid_cosine.numel()
+                        else None
+                    ),
+                    "static_dynamic_gradient_cosine_min": (
+                        float(valid_cosine.min().detach().cpu())
+                        if valid_cosine.numel()
+                        else None
+                    ),
+                    "static_dynamic_gradient_cosine_max": (
+                        float(valid_cosine.max().detach().cpu())
+                        if valid_cosine.numel()
+                        else None
+                    ),
+                    "static_dynamic_gradient_conflict_ratio": (
+                        float((valid_cosine < 0.0).float().mean().detach().cpu())
+                        if valid_cosine.numel()
+                        else None
+                    ),
+                    "static_dynamic_gradient_cosine_valid_ratio": float(
+                        cosine_valid.float().mean().detach().cpu()
+                    ),
                     "duration_min_s": float(evaluation.duration.min().detach().cpu()),
                     "duration_max_s": float(evaluation.duration.max().detach().cpu()),
                     "cost": {
