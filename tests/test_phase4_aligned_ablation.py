@@ -47,6 +47,20 @@ def test_materialized_ros_config_switches_each_aligned_feature(tmp_path):
     assert yaml.safe_load(output.read_text(encoding="utf-8")) == payload
 
 
+def test_materialized_ros_config_uses_full_adaptive_deviation_weight(tmp_path):
+    payload = materialize_config(
+        ALIGNED_CONFIG,
+        tmp_path / "aligned.yaml",
+        deviation=True,
+        relative_hysteresis=True,
+        clearance_split=True,
+        tail_kinematic=True,
+    )
+
+    parameters = payload["mpd_dynamic_replanner"]["ros__parameters"]
+    assert parameters["cost_deviation_weight"] == 0.15
+
+
 def test_every_one_factor_mode_changes_exactly_one_pipeline_switch():
     assert ABLATION_MODE_SPECS["phase4"] == ("phase4", None)
     assert ABLATION_MODE_SPECS["aligned_all"] == ("phase4_aligned", None)

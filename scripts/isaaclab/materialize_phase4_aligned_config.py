@@ -23,7 +23,7 @@ def materialize_config(
         parameters = payload["mpd_dynamic_replanner"]["ros__parameters"]
     except (KeyError, TypeError) as error:
         raise ValueError("base config has no replanner ROS parameters") from error
-    parameters["cost_deviation_weight"] = 1.0 if deviation else 0.0
+    parameters["cost_deviation_weight"] = 0.15 if deviation else 0.0
     parameters["relative_switching_hysteresis"] = (
         0.10 if relative_hysteresis else 0.0
     )
