@@ -429,6 +429,30 @@ spatial/timing spline contract
 | `/quality/dynamic_clearance_min` | `[N]` | float32 | dynamic sample；static 为 NaN |
 | `/quality/accepted` | `[N]` | bool | 正式训练只读取 true |
 
+### 5.2.1 Duration/shape 解耦派生字段
+
+规范 `(P,c)` 不需要重新运行 RRT 或 TOPP-RA即可派生 `(P,T,r)`。仓库脚本
+`scripts/spacetime_data/augment_normalized_timing.py` 默认取任务上限
+`T_max=14s`，从实际 `TimingSpline c` 拟合五维相对时间形状 `r`，并根据
+当前 `(P,r)` 与 Panda 速度/加速度限制计算采样动力学下界 `T_min(P,r)`：
+
+| HDF5 path | shape | dtype | 说明 |
+|---|---:|---|---|
+| `/timing/shape_control_points` | `[N,5]` | float32 | 去掉常数 gauge 后的归一化 timing shape `r` |
+| `/timing/t_min` | `[N]` | float32 | 速度、加速度和可选 floor 的最大下界 |
+| `/timing/t_min_velocity` | `[N]` | float32 | 速度约束给出的下界 |
+| `/timing/t_min_acceleration` | `[N]` | float32 | 加速度约束给出的下界 |
+| `/timing/t_max` | `[N]` | float32 | 当前任务时限，默认 14s |
+| `/timing/duration_fraction` | `[N]` | float32 | 未裁剪的 `(T-T_min)/(T_max-T_min)`，可用于审计越界样本 |
+| `/timing/tau` | `[N]` | float32 | 端点数值裁剪后的 duration logit |
+| `/quality/normalized_timing_fit_rmse` | `[N]` | float32 | 归一化累计时间曲线拟合 RMSE |
+| `/quality/normalized_timing_density_clip_fraction` | `[N]` | float32 | 拟合目标低于 density floor 的采样比例 |
+| `/quality/duration_logit_clipped` | `[N]` | bool | fraction 是否因 logit 有限化而裁剪 |
+| `/quality/duration_bounds_valid` | `[N]` | bool | `(tau,r)` timing 训练必须额外过滤为 true |
+
+派生脚本保留越界行而不静默改变时长；修改 `T_max` 后可重复运行并原子替换
+每个 shard。基础 schema 仍为 v1，manifest 的 `normalized_timing` 节记录派生参数。
+
 scene table 至少包含：
 
 ```text
