@@ -174,17 +174,22 @@ dynamic_world.trajectory_duration_s = 10.0
 - timing schema 当前为 v1；
 - runtime 会做 candidate-specific dense (q,\dot q,\ddot q) validation。
 
-### 2.6 当前 TOPP-RA 状态
+### 2.6 当前 TOPP-RA 与 `(P,c)` 数据状态
 
-**原型：** `scripts/spacetime_data/test_toppra.py` 只是 smoke test：
+**已实现：** `scripts/spacetime_data/generate_spacetime_dataset.py` 已形成独立于旧训练 loader 的生产数据闭环：
 
-- 使用人工构造的 7-DoF waypoints；
-- velocity/acceleration limits 是临时常数；
-- 没有读取 RRT/HDF5/B-spline；
-- 没有拟合当前 TimingSpline；
-- 没有写统一数据集。
+- 流式读取 warehouse 根级 `sol_path/task_id`；
+- 拟合与当前 MPD 零速度、零加速度边界一致的 full spatial B-spline `P`；
+- 由 canonical `P` 本身构造 TOPP-RA geometric path，不二次拟合 waypoint；
+- 按 URDF joint order 对齐当前 `joint_limits.yaml` 中的 `dq_max/ddq_max`；
+- 生成 TOPP-RA anchor、duration-scaled、limit-scaled、local-slowdown 和 near-wait 七类 reference；
+- 拟合当前 runtime 的 `TimingSpline c[8]`，并在拟合后重新计算 `q,dq,ddq`；
+- 对超限 timing 自动做全局安全放慢，仍不满足 duration/limits 的 variant 记录 reject reason；
+- 流式写 canonical HDF5 shard、robot bundle、manifest 和按 `base_path_id` 固定划分的 split。
 
-因此文档后续提到的 TOPP-RA retiming pipeline 均为 **待实现**，不能将 smoke test 当作生产数据生成器。
+**已实现：** `scripts/spacetime_data/validate_spacetime_dataset.py` 可独立复算 robot hash、schema/dtype/shape、TimingSpline duration、joint limits 和 split leakage。
+
+原 `scripts/spacetime_data/test_toppra.py` 仍只是 API smoke test，不作为生产生成入口。
 
 ---
 
@@ -985,10 +990,10 @@ sampler 决定应用哪个梯度，CostGuide 不再拥有隐式 optimizer state�
 
 | PR | 内容 | 状态/依赖 | 关键测试 |
 |---|---|---|---|
-| PR0 | robot bundle + manifest + fingerprint | 待实现 | joint order/hash/units mismatch |
-| PR1 | canonical HDF5 schema + legacy migration + streaming merge | 待实现 | roundtrip、transpose、split leakage |
-| PR2 | production TOPP-RA retimer | 基于 smoke test | real limits、known path、failure reasons |
-| PR3 | `fit_timing_reference()` + timing variants + dense validator | 待实现 | monotonic、fit RMSE、v/a finite difference |
+| PR0 | robot bundle + manifest + fingerprint | 已实现 | joint order/hash/units mismatch |
+| PR1 | canonical HDF5 schema + legacy migration + streaming writer | 已实现 | roundtrip、transpose、split leakage |
+| PR2 | production TOPP-RA retimer | 已实现 | real limits、known path、failure reasons |
+| PR3 | `fit_timing_reference()` + timing variants + dense validator | 已实现 | monotonic、fit RMSE、v/a reconstruction |
 | PR4 | `Spatial/Timing/JointDatasetView` + TimingNormalizer | 待实现 | batch shapes、normalizer roundtrip |
 | PR5 | TimingDiffusion + F1 sampler | 待实现 | tiny-set overfit、candidate-specific timing |
 | PR6 | stateless SpaceTimeCostGuide + F1 short joint refinement | 从现有 guide 提取 | grad P/c、mode parity |
@@ -1069,6 +1074,8 @@ emergency interruption count
 - TOPP-RA reference 到 TimingSpline 的 median relative timing RMSE 先以 `<1%` 为目标；
 - split 中没有 `base_path_id` 或 parent lineage 泄漏；
 - rejected samples 有明确 reason histogram。
+
+当前 warehouse 扩大 smoke（1000 条 base paths、默认七类 timing）的实测结果为：6812 个 accepted `(P,c)`，所有 1000 条路径至少保留一个 timing；独立 validator 对全部 6812 条复算无违规。该结果用于验证数据工程闭环，不替代全量数据集的最终统计。
 
 ### F1/F2
 

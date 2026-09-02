@@ -73,9 +73,16 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
     knots = open_uniform_knots(
         int(spatial_config["num_control_points"]), int(spatial_config["degree"])
     )
+    dimensions = {
+        "H_P": int(spatial_config["num_control_points"]),
+        "D": int(robot["dof"]),
+        "K": int(timing_config["num_control_points"]),
+        "H_T": int(timing_config["num_phase_points"]),
+    }
 
     checked = 0
     unique_base_paths = set()
+    all_base_paths = set()
     violations = []
     maxima = {"v_ratio_max": 0.0, "a_ratio_max": 0.0, "relative_timing_rmse": 0.0}
     for shard_path in sorted((dataset_root / "shards").glob("part-*.hdf5")):
@@ -83,6 +90,14 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
             if shard.attrs.get("schema_version") != SCHEMA_VERSION:
                 violations.append(f"{shard_path.name}: schema_version")
                 continue
+            for hash_key in (
+                "urdf_sha256",
+                "joint_limits_sha256",
+                "collision_spheres_sha256",
+                "collision_parent_bounds_sha256",
+            ):
+                if shard.attrs.get(hash_key) != robot[hash_key]:
+                    violations.append(f"{shard_path.name}: {hash_key}")
             missing = sorted(set(CANONICAL_SAMPLE_FIELDS) - set(_all_dataset_paths(shard)))
             if missing:
                 violations.append(f"{shard_path.name}: missing={missing}")
@@ -93,6 +108,20 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
             if len(row_counts) != 1:
                 violations.append(f"{shard_path.name}: inconsistent field lengths={row_counts}")
                 continue
+            for name, (dtype, symbolic_shape) in CANONICAL_SAMPLE_FIELDS.items():
+                expected_shape = tuple(dimensions[value] for value in symbolic_shape)
+                if shard[name].dtype != dtype:
+                    violations.append(
+                        f"{shard_path.name}: {name} dtype={shard[name].dtype}, expected={dtype}"
+                    )
+                if shard[name].shape[1:] != expected_shape:
+                    violations.append(
+                        f"{shard_path.name}: {name} shape={shard[name].shape[1:]}, "
+                        f"expected={expected_shape}"
+                    )
+            all_base_paths.update(
+                np.unique(shard["index/base_path_id"][:]).astype(np.int64).tolist()
+            )
             for row in range(shard["timing/control_points"].shape[0]):
                 if max_samples is not None and checked >= max_samples:
                     break
@@ -125,10 +154,28 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
                 )
                 if not np.all(np.diff(reference) > 0.0):
                     violations.append(f"{prefix}: non_monotone_reference")
+                if not bool(shard["quality/accepted"][row]):
+                    violations.append(f"{prefix}: stored sample is not accepted")
+                if not np.allclose(spatial_control_points[:3], spatial_control_points[0], atol=1e-6):
+                    violations.append(f"{prefix}: spatial_start_boundary")
+                if not np.allclose(spatial_control_points[-3:], spatial_control_points[-1], atol=1e-6):
+                    violations.append(f"{prefix}: spatial_goal_boundary")
+                if not np.allclose(
+                    shard["condition/q_start"][row], spatial_control_points[0], atol=1e-6
+                ):
+                    violations.append(f"{prefix}: q_start_mismatch")
+                if not np.allclose(
+                    shard["condition/q_goal"][row], spatial_control_points[-1], atol=1e-6
+                ):
+                    violations.append(f"{prefix}: q_goal_mismatch")
                 if np.any(q < q_min[None, :] - 1e-6) or np.any(q > q_max[None, :] + 1e-6):
                     violations.append(f"{prefix}: joint_position_limit")
                 if not np.isclose(timing.duration, shard["timing/duration"][row], rtol=1e-5):
                     violations.append(f"{prefix}: duration_mismatch")
+                if timing.duration < float(timing_config["duration_min"]):
+                    violations.append(f"{prefix}: duration_below_min")
+                if timing.duration > float(timing_config["duration_max"]):
+                    violations.append(f"{prefix}: duration_above_max")
                 if v_ratio > 1.0 + ratio_tolerance:
                     violations.append(f"{prefix}: velocity_limit={v_ratio}")
                 if a_ratio > 1.0 + ratio_tolerance:
@@ -147,6 +194,11 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
         violations.append("train/test base_path_id leakage")
     if split_sets["val"] & split_sets["test"]:
         violations.append("val/test base_path_id leakage")
+    split_union = split_sets["train"] | split_sets["val"] | split_sets["test"]
+    if split_union != all_base_paths:
+        violations.append(
+            f"split coverage mismatch: split={len(split_union)}, shards={len(all_base_paths)}"
+        )
     return {
         "schema_version": "spacetime_mpd_validation_report_v1",
         "dataset_root": str(dataset_root),
