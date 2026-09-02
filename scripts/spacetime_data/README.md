@@ -27,6 +27,11 @@ python scripts/spacetime_data/validate_spacetime_dataset.py \
   data_trajectories_spacetime/EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v1
 ```
 
+Each shard is first written with an `.inprogress` suffix and atomically renamed
+after the source range is complete. An interrupted run therefore cannot make a
+partial shard look final. Completed shards are never silently overwritten; to
+resume, set `--start-index` to the first not-yet-generated shard boundary.
+
 The default variants are:
 
 - TOPP-RA anchor with the repository Panda limits;

@@ -281,8 +281,11 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
     stop_index: Optional[int] = None
     report_tag = f"{args.start_index:07d}"
     rejects_path = output_root / f"rejects-{report_tag}.jsonl"
+    rejects_in_progress = rejects_path.with_suffix(rejects_path.suffix + ".inprogress")
+    if rejects_path.exists():
+        raise FileExistsError(rejects_path)
 
-    with LegacyWarehouseReader(source_path, dof=robot.dof) as reader, rejects_path.open(
+    with LegacyWarehouseReader(source_path, dof=robot.dof) as reader, rejects_in_progress.open(
         "x", encoding="utf-8"
     ) as rejects:
         end_index = len(reader)
@@ -296,9 +299,12 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
         for shard_start in range(args.start_index, end_index, args.paths_per_shard):
             shard_stop = min(end_index, shard_start + args.paths_per_shard)
             shard_path = output_root / "shards" / f"part-{shard_start:07d}.hdf5"
+            shard_in_progress = shard_path.with_suffix(shard_path.suffix + ".inprogress")
+            if shard_path.exists():
+                raise FileExistsError(shard_path)
             compression = None if args.compression == "none" else args.compression
             with SpaceTimeShardWriter(
-                shard_path,
+                shard_in_progress,
                 dimensions=dimensions,
                 robot_hashes=robot.hashes,
                 compression=compression,
@@ -439,6 +445,9 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
                             flush=True,
                         )
 
+            shard_in_progress.replace(shard_path)
+
+    rejects_in_progress.replace(rejects_path)
     all_base_path_ids = _collect_output_base_path_ids(output_root / "shards")
     splits = write_grouped_splits(
         output_root / "splits", all_base_path_ids, seed=args.seed
