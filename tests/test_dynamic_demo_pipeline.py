@@ -29,6 +29,9 @@ def test_pipeline_help_advertises_phase5_default_and_modes():
     assert "--world-scenario-file P" in result.stdout
     assert "--skip-render" in result.stdout
     assert "default: auto" in result.stdout
+    assert "--phase5-hold-weight W" in result.stdout
+    assert "--phase5-tail-weight W" in result.stdout
+    assert "--phase5-dynamic-grad-cap N" in result.stdout
 
 
 def test_pipeline_rejects_unknown_phase_before_starting_any_process():
@@ -59,6 +62,23 @@ def test_pipeline_rejects_invalid_aligned_switch_value():
 
     assert result.returncode == 2
     assert "expected on or off" in result.stderr
+
+
+def test_pipeline_rejects_phase5_switches_for_phase4():
+    result = _run("--phase", "phase4", "--phase5-hold-weight", "0.2")
+
+    assert result.returncode == 2
+    assert "--phase5-* switches are only valid" in result.stderr
+
+
+def test_pipeline_rejects_invalid_phase5_switch_and_numeric_values():
+    switch = _run("--phase", "phase5", "--phase5-mpd-guidance", "maybe")
+    numeric = _run("--phase", "phase5", "--phase5-dynamic-grad-cap", "-1")
+
+    assert switch.returncode == 2
+    assert "expected on or off" in switch.stderr
+    assert numeric.returncode == 2
+    assert "non-negative numeric value" in numeric.stderr
 
 
 def test_pipeline_accepts_phase4_aligned_alias():
@@ -107,6 +127,9 @@ def test_pipeline_contains_separate_phase4_and_phase5_entrypoints():
     assert 'SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")' in source
     assert 'SERVER_EXTRA_ARGS+=(--aligned)' in source
     assert 'ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")' in source
+    assert "materialize_phase5_ablation_config.py" in source
+    assert "--no-dynamic-guidance" in source
+    assert "--no-dynamic-selection" in source
     assert '"planner_seed:=${PLANNER_SEED}"' in source
     assert 'if [[ -n "$WORLD_SCENARIO_FILE" ]]; then' in source
     assert 'ROS_EXTRA_ARGS+=("world_scenario_file:=${WORLD_SCENARIO_FILE}")' in source

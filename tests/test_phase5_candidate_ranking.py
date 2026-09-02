@@ -52,3 +52,23 @@ def test_phase5_selection_score_preserves_spatial_ranking_when_risks_tie():
     assert score[0] < score[1]
     assert torch.count_nonzero(components["normalized_dynamic_risk"]) == 0
     assert torch.count_nonzero(components["normalized_timing_smoothness"]) == 0
+
+
+def test_phase5_selection_can_ablate_only_the_dynamic_risk_term():
+    spatial = torch.zeros(2, dtype=torch.float64)
+    dynamic = torch.tensor([0.0, 10.0], dtype=torch.float64)
+    duration = torch.tensor([14.0, 6.0], dtype=torch.float64)
+    smoothness = torch.tensor([1.0, 0.0], dtype=torch.float64)
+
+    score, components = _phase5_selection_score(
+        spatial,
+        dynamic,
+        duration,
+        smoothness,
+        duration_min=6.0,
+        duration_max=14.0,
+        dynamic_selection_enabled=False,
+    )
+
+    torch.testing.assert_close(score, torch.tensor([0.2, 0.0], dtype=torch.float64))
+    assert components["dynamic_selection_enabled"] is False

@@ -88,11 +88,18 @@ def test_phase5_server_has_separate_mode_and_timing_bounds():
             "7.0",
             "--duration-max",
             "13.0",
+            "--no-dynamic-guidance",
+            "--no-dynamic-selection",
+            "--spatial-dynamic-max-grad-norm",
+            "1.0",
         ]
     )
     assert args.timing_mode == "phase5_timing_only"
     assert args.duration_min == 7.0
     assert args.duration_max == 13.0
+    assert not args.dynamic_guidance
+    assert not args.dynamic_selection
+    assert args.spatial_dynamic_max_grad_norm == 1.0
     assert args.static_spatial_pruning
     assert not args.dynamic_space_time_pruning
 

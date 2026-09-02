@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -139,6 +141,27 @@ def test_duration_cost_is_single_normalized_makespan_term():
     )
     assert shorter_breakdown["duration"].item() < breakdown["duration"].item()
     assert "duration_bounds" not in breakdown
+
+
+def test_dynamic_guidance_ablation_keeps_risk_diagnostics_but_removes_its_cost():
+    _, evaluator, controls, q, q_s, q_ss, sphere_positions = _problem()
+    evaluator.settings = replace(
+        evaluator.settings,
+        dynamic_guidance_enabled=False,
+        duration_weight=0.0,
+        timing_smoothness_weight=0.0,
+    )
+
+    total, breakdown, _ = evaluator(
+        controls,
+        q=q,
+        q_s=q_s,
+        q_ss=q_ss,
+        collision_sphere_positions=sphere_positions,
+    )
+
+    torch.testing.assert_close(total, torch.zeros_like(total))
+    assert torch.any(breakdown["dynamic_collision"] > 0.0)
 
 
 def test_time_integrated_costs_are_normalized_by_candidate_duration():

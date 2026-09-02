@@ -35,6 +35,16 @@ ALIGNED_TAIL_KINEMATIC="on"
 ALIGNED_MPD_GUIDANCE="on"
 ALIGNED_MPD_SELECTION="on"
 ALIGNED_ABLATION_EXPLICIT=false
+PHASE5_DEVIATION="on"
+PHASE5_ADAPTIVE_DEVIATION="on"
+PHASE5_RELATIVE_HYSTERESIS="on"
+PHASE5_CLEARANCE_SPLIT="on"
+PHASE5_TAIL_KINEMATIC_WEIGHT="3.0"
+PHASE5_TERMINAL_HOLD_CLEARANCE_WEIGHT="0.5"
+PHASE5_MPD_GUIDANCE="on"
+PHASE5_MPD_SELECTION="on"
+PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM="2.0"
+PHASE5_ABLATION_EXPLICIT=false
 
 usage() {
   printf '%s\n' \
@@ -52,9 +62,18 @@ usage() {
     "  --aligned-deviation on|off          Phase-4 aligned ROS deviation cost" \
     "  --aligned-relative-hysteresis on|off Phase-4 aligned relative hysteresis" \
     "  --aligned-clearance-split on|off     Phase-4 aligned motion/hold clearance split" \
-    "  --aligned-tail-kinematic on|off      Phase-4 aligned 1:4 kinematic weighting" \
+    "  --aligned-tail-kinematic on|off      Phase-4 aligned 1:3 kinematic weighting" \
     "  --aligned-mpd-guidance on|off        Phase-4 aligned mean+CVaR guidance" \
     "  --aligned-mpd-selection on|off       Phase-4 aligned dynamic-risk ranking" \
+    "  --phase5-deviation on|off            Phase-5 ROS deviation cost" \
+    "  --phase5-adaptive-deviation on|off   Phase-5 clearance/TTC deviation decay" \
+    "  --phase5-relative-hysteresis on|off  Phase-5 relative hysteresis" \
+    "  --phase5-clearance-split on|off      Phase-5 motion/hold clearance split" \
+    "  --phase5-tail-weight W               Phase-5 tail kinematic weight (default: 3.0)" \
+    "  --phase5-hold-weight W               Phase-5 terminal-hold weight (default: 0.5)" \
+    "  --phase5-mpd-guidance on|off          Phase-5 dynamic gradient guidance" \
+    "  --phase5-mpd-selection on|off         Phase-5 dynamic-risk ranking term" \
+    "  --phase5-dynamic-grad-cap N          Phase-5 dynamic spatial gradient cap (default: 2.0)" \
     "  --video-fps FPS         Replay frame rate (default: 24)" \
     "  --width PX              Replay width (default: 1280)" \
     "  --height PX             Replay height (default: 720)" \
@@ -82,6 +101,15 @@ while (($#)); do
     --aligned-tail-kinematic) ALIGNED_TAIL_KINEMATIC="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
     --aligned-mpd-guidance) ALIGNED_MPD_GUIDANCE="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
     --aligned-mpd-selection) ALIGNED_MPD_SELECTION="$2"; ALIGNED_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-deviation) PHASE5_DEVIATION="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-adaptive-deviation) PHASE5_ADAPTIVE_DEVIATION="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-relative-hysteresis) PHASE5_RELATIVE_HYSTERESIS="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-clearance-split) PHASE5_CLEARANCE_SPLIT="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-tail-weight) PHASE5_TAIL_KINEMATIC_WEIGHT="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-hold-weight) PHASE5_TERMINAL_HOLD_CLEARANCE_WEIGHT="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-mpd-guidance) PHASE5_MPD_GUIDANCE="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-mpd-selection) PHASE5_MPD_SELECTION="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
+    --phase5-dynamic-grad-cap) PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM="$2"; PHASE5_ABLATION_EXPLICIT=true; shift 2 ;;
     --video-fps) VIDEO_FPS="$2"; shift 2 ;;
     --width) WIDTH="$2"; shift 2 ;;
     --height) HEIGHT="$2"; shift 2 ;;
@@ -142,6 +170,10 @@ if [[ "$PHASE" != "phase4_aligned" && "$ALIGNED_ABLATION_EXPLICIT" == true ]]; t
   printf '%s\n' '--aligned-* switches are only valid with --phase phase4_aligned' >&2
   exit 2
 fi
+if [[ "$PHASE" != "phase5" && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
+  printf '%s\n' '--phase5-* switches are only valid with --phase phase5' >&2
+  exit 2
+fi
 for value in \
   "$ALIGNED_DEVIATION" \
   "$ALIGNED_RELATIVE_HYSTERESIS" \
@@ -151,6 +183,27 @@ for value in \
   "$ALIGNED_MPD_SELECTION"; do
   if [[ "$value" != "on" && "$value" != "off" ]]; then
     printf 'Invalid aligned switch value: %s (expected on or off)\n' "$value" >&2
+    exit 2
+  fi
+done
+for value in \
+  "$PHASE5_DEVIATION" \
+  "$PHASE5_ADAPTIVE_DEVIATION" \
+  "$PHASE5_RELATIVE_HYSTERESIS" \
+  "$PHASE5_CLEARANCE_SPLIT" \
+  "$PHASE5_MPD_GUIDANCE" \
+  "$PHASE5_MPD_SELECTION"; do
+  if [[ "$value" != "on" && "$value" != "off" ]]; then
+    printf 'Invalid Phase-5 switch value: %s (expected on or off)\n' "$value" >&2
+    exit 2
+  fi
+done
+for value in \
+  "$PHASE5_TAIL_KINEMATIC_WEIGHT" \
+  "$PHASE5_TERMINAL_HOLD_CLEARANCE_WEIGHT" \
+  "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM"; do
+  if [[ ! "$value" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'Invalid Phase-5 non-negative numeric value: %s\n' "$value" >&2
     exit 2
   fi
 done
@@ -206,6 +259,13 @@ case "$PHASE" in
     TIMING_LABEL="$TIMING_MODE"
     HEALTH_TIMEOUT_S=10
     SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")
+    SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")
+    if [[ "$PHASE5_MPD_GUIDANCE" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-dynamic-guidance)
+    fi
+    if [[ "$PHASE5_MPD_SELECTION" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-dynamic-selection)
+    fi
     ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")
     ;;
 esac
@@ -219,6 +279,21 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}-phase5"
   fi
   OUTPUT_DIR="${MPD_ROOT}/scripts/inference/logs/${LOG_GROUP}/$(date +%Y%m%d-%H%M%S)"
+fi
+
+if [[ "$PHASE" == "phase5" && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
+  PHASE5_CONFIG="${OUTPUT_DIR}/phase5-ablation-config.yaml"
+  env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+    "${MPD_ROOT}/scripts/isaaclab/materialize_phase5_ablation_config.py" \
+    --base "${AIRUNTIME_ROOT}/src/motion_planning/motion_planners/mpd_dynamic_planner_adapter/config/replan_space_time.yaml" \
+    --output "$PHASE5_CONFIG" \
+    --deviation "$PHASE5_DEVIATION" \
+    --adaptive-deviation "$PHASE5_ADAPTIVE_DEVIATION" \
+    --relative-hysteresis "$PHASE5_RELATIVE_HYSTERESIS" \
+    --clearance-split "$PHASE5_CLEARANCE_SPLIT" \
+    --tail-kinematic-weight "$PHASE5_TAIL_KINEMATIC_WEIGHT" \
+    --terminal-hold-clearance-weight "$PHASE5_TERMINAL_HOLD_CLEARANCE_WEIGHT"
+  ROS_EXTRA_ARGS+=("config:=${PHASE5_CONFIG}")
 fi
 OUTPUT_DIR="$(realpath -m "$OUTPUT_DIR")"
 STATIC_SCENE="${OUTPUT_DIR}/static-scene.json"

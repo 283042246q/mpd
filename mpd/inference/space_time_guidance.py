@@ -53,6 +53,7 @@ class SpaceTimeGuidanceSettings:
     timing_max_grad_norm: float = 1.0
     spatial_dynamic_max_grad_norm: float = 2.0
     spatial_dynamic_scale: float = 1.0
+    dynamic_guidance_enabled: bool = True
     dynamic_collision_weight: float = 10.0
     dynamic_collision_alpha: float = 0.5
     dynamic_collision_cvar_fraction: float = 0.10
@@ -231,7 +232,12 @@ class SpaceTimeCostEvaluator:
             "timing_smoothness": timing_smoothness,
         }
         total = (
-            self.settings.dynamic_collision_weight * dynamic_collision
+            (
+                self.settings.dynamic_collision_weight
+                if self.settings.dynamic_guidance_enabled
+                else 0.0
+            )
+            * dynamic_collision
             + self.settings.velocity_weight * velocity
             + self.settings.acceleration_weight * acceleration
             + self.settings.duration_weight * duration_cost

@@ -187,6 +187,19 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
                     "minimum_environment_clearance_m": 0.02,
                     "minimum_self_clearance_m": 0.08,
                 },
+                "space_time_guidance": {
+                    "settings": {"spatial_dynamic_max_grad_norm": 2.0},
+                    "steps": [
+                        {
+                            "spatial_clip_ratio": 0.25,
+                            "timing_clip_ratio": 0.5,
+                            "spatial_gradient_norm_mean": 1.2,
+                            "static_dynamic_gradient_cosine_mean": -0.2,
+                            "static_dynamic_gradient_conflict_ratio": 0.75,
+                            "static_dynamic_gradient_cosine_valid_ratio": 0.8,
+                        }
+                    ],
+                },
             }
         ),
         encoding="utf-8",
@@ -209,6 +222,9 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert metrics["joint_l2_path_rad"] == pytest.approx(1.0)
     assert metrics["hard_minimum_clearance_m"] == pytest.approx(0.04)
     assert metrics["guard_dynamic_collision_rejections"] == 1
+    assert metrics["spatial_dynamic_grad_cap"] == pytest.approx(2.0)
+    assert metrics["spatial_clip_ratio"] == pytest.approx(0.25)
+    assert metrics["static_dynamic_gradient_cosine_mean"] == pytest.approx(-0.2)
 
     suite = generate_suite(1, 42)
     write_reports(tmp_path, [metrics], suite)
@@ -222,6 +238,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "Clearance 汇总" in report
     assert "难度分层结果" in report
     assert "规划轨迹时长 mean s" in report
+    assert "Phase 5 梯度裁剪诊断" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
 
 

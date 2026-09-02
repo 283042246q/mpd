@@ -38,6 +38,28 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timing-learning-rate", type=float, default=0.08)
     parser.add_argument("--spatial-dynamic-max-grad-norm", type=float, default=2.0)
     parser.add_argument(
+        "--dynamic-guidance",
+        dest="dynamic_guidance",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-dynamic-guidance",
+        dest="dynamic_guidance",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--dynamic-selection",
+        dest="dynamic_selection",
+        action="store_true",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-dynamic-selection",
+        dest="dynamic_selection",
+        action="store_false",
+    )
+    parser.add_argument(
         "--static-spatial-pruning",
         dest="static_spatial_pruning",
         action="store_true",
@@ -68,6 +90,7 @@ def main(argv=None) -> int:
         "nominal_duration": args.nominal_duration,
         "timing_learning_rate": args.timing_learning_rate,
         "spatial_dynamic_max_grad_norm": args.spatial_dynamic_max_grad_norm,
+        "dynamic_guidance_enabled": args.dynamic_guidance,
     }
 
     def engine_factory(state_callback):
@@ -83,6 +106,7 @@ def main(argv=None) -> int:
             process_acceleration_std_m_s2=args.process_acceleration_std,
             static_spatial_pruning_enabled=args.static_spatial_pruning,
             dynamic_space_time_pruning_enabled=args.dynamic_space_time_pruning,
+            dynamic_selection_enabled=args.dynamic_selection,
         )
 
     service = DynamicResidentPlannerService(

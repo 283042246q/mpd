@@ -43,7 +43,7 @@ def test_materialized_ros_config_switches_each_aligned_feature(tmp_path):
     assert parameters["cost_deviation_weight"] == 0.0
     assert parameters["relative_switching_hysteresis"] == 0.10
     assert parameters["split_terminal_hold_clearance"] is False
-    assert parameters["cost_tail_kinematic_weight"] == 4.0
+    assert parameters["cost_tail_kinematic_weight"] == 3.0
     assert yaml.safe_load(output.read_text(encoding="utf-8")) == payload
 
 

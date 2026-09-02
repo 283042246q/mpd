@@ -28,7 +28,7 @@ def materialize_config(
         0.10 if relative_hysteresis else 0.0
     )
     parameters["split_terminal_hold_clearance"] = bool(clearance_split)
-    parameters["cost_tail_kinematic_weight"] = 4.0 if tail_kinematic else 1.0
+    parameters["cost_tail_kinematic_weight"] = 3.0 if tail_kinematic else 1.0
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return payload

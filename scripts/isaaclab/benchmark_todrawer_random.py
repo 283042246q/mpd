@@ -110,6 +110,13 @@ REPORT_FIELDS = (
     "dense_self_clearance_m",
     "inference_total_mean_s",
     "inference_total_p95_s",
+    "spatial_dynamic_grad_cap",
+    "spatial_clip_ratio",
+    "timing_clip_ratio",
+    "spatial_gradient_norm_mean",
+    "static_dynamic_gradient_cosine_mean",
+    "static_dynamic_gradient_conflict_ratio",
+    "static_dynamic_gradient_cosine_valid_ratio",
     "maximum_uncovered_command_gap_s",
     "guarded_terminal_hold_s",
     "maximum_controller_reference_jump_rad",
@@ -626,6 +633,26 @@ def extract_run_metrics(
     inference_times = _finite(
         [payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads]
     )
+    guidance_payloads = [
+        payload.get("space_time_guidance", {}) for payload in result_payloads
+    ]
+    guidance_steps = [
+        step
+        for guidance in guidance_payloads
+        for step in guidance.get("steps", [])
+        if isinstance(step, dict)
+    ]
+    gradient_caps = _finite(
+        [
+            guidance.get("settings", {}).get("spatial_dynamic_max_grad_norm")
+            for guidance in guidance_payloads
+        ]
+    )
+
+    def guidance_mean(name: str) -> float | None:
+        values = _finite([step.get(name) for step in guidance_steps])
+        return float(np.mean(values)) if values else None
+
     planned_durations = _finite(
         [plan.get("phase_timing", {}).get("mpd_suffix_s") for plan in executed]
     )
@@ -684,6 +711,21 @@ def extract_run_metrics(
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
         inference_total_p95_s=(
             float(np.percentile(inference_times, 95)) if inference_times else None
+        ),
+        spatial_dynamic_grad_cap=(
+            float(np.mean(gradient_caps)) if gradient_caps else None
+        ),
+        spatial_clip_ratio=guidance_mean("spatial_clip_ratio"),
+        timing_clip_ratio=guidance_mean("timing_clip_ratio"),
+        spatial_gradient_norm_mean=guidance_mean("spatial_gradient_norm_mean"),
+        static_dynamic_gradient_cosine_mean=guidance_mean(
+            "static_dynamic_gradient_cosine_mean"
+        ),
+        static_dynamic_gradient_conflict_ratio=guidance_mean(
+            "static_dynamic_gradient_conflict_ratio"
+        ),
+        static_dynamic_gradient_cosine_valid_ratio=guidance_mean(
+            "static_dynamic_gradient_cosine_valid_ratio"
         ),
         maximum_uncovered_command_gap_s=timing.get(
             "maximum_uncovered_command_gap_s", timing.get("maximum_command_gap_s")
@@ -760,6 +802,23 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
+        "spatial_dynamic_grad_cap": _describe(
+            [row.get("spatial_dynamic_grad_cap") for row in rows]
+        ),
+        "spatial_clip_ratio": _describe([row.get("spatial_clip_ratio") for row in rows]),
+        "timing_clip_ratio": _describe([row.get("timing_clip_ratio") for row in rows]),
+        "spatial_gradient_norm_mean": _describe(
+            [row.get("spatial_gradient_norm_mean") for row in rows]
+        ),
+        "static_dynamic_gradient_cosine_mean": _describe(
+            [row.get("static_dynamic_gradient_cosine_mean") for row in rows]
+        ),
+        "static_dynamic_gradient_conflict_ratio": _describe(
+            [row.get("static_dynamic_gradient_conflict_ratio") for row in rows]
+        ),
+        "static_dynamic_gradient_cosine_valid_ratio": _describe(
+            [row.get("static_dynamic_gradient_cosine_valid_ratio") for row in rows]
+        ),
         "maximum_command_gap_s": _describe([row.get("maximum_command_gap_s") for row in rows]),
         "maximum_uncovered_command_gap_s": _describe(
             [
@@ -927,6 +986,27 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
     lines.extend(
         [
             "",
+            "## Phase 5 梯度裁剪诊断",
+            "",
+            "Phase 4 不计算候选特定时空梯度，因此对应项为 `n/a`。cosine 只统计静态与动态梯度均非零的候选；conflict ratio 表示 cosine < 0 的比例。",
+            "",
+            "| 模式 | dynamic grad cap | spatial clip ratio | timing clip ratio | spatial grad norm | static/dynamic cosine | conflict ratio | cosine valid ratio |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for mode, data in by_mode.items():
+        lines.append(
+            f"| {mode} | {_fmt(data['spatial_dynamic_grad_cap']['mean'])} | "
+            f"{_fmt(data['spatial_clip_ratio']['mean'])} | "
+            f"{_fmt(data['timing_clip_ratio']['mean'])} | "
+            f"{_fmt(data['spatial_gradient_norm_mean']['mean'])} | "
+            f"{_fmt(data['static_dynamic_gradient_cosine_mean']['mean'])} | "
+            f"{_fmt(data['static_dynamic_gradient_conflict_ratio']['mean'])} | "
+            f"{_fmt(data['static_dynamic_gradient_cosine_valid_ratio']['mean'])} |"
+        )
+    lines.extend(
+        [
+            "",
             "## 仅到达目标运行的路径与执行时长",
             "",
             "失败、brake-only和基础设施失败不参与本表平均，避免零路径让模式看起来虚假变短。",
@@ -947,7 +1027,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             "",
             "## 完整配对结果",
             "",
-            f"仅统计同一场景、repeat下五种模式都有manifest的 `{paired['cell_count']}` 组运行。",
+            f"仅统计同一场景、repeat下全部所选模式都有manifest的 `{paired['cell_count']}` 组运行。",
             "",
             "| 模式 | 配对运行 | 到达目标 | brake runs | goal+brake | no-goal+brake | 成功执行时长 mean s | 成功 path L2 mean rad |",
             "|---|---:|---:|---:|---:|---:|---:|---:|",

@@ -38,13 +38,16 @@ def _phase5_selection_score(
     *,
     duration_min: float,
     duration_max: float,
+    dynamic_selection_enabled: bool = True,
 ):
     normalized_dynamic_risk = _minmax_normalize(dynamic_risk)
     normalized_duration = (duration - duration_min) / (duration_max - duration_min)
     normalized_timing_smoothness = _minmax_normalize(timing_smoothness)
     total = (
         PHASE5_SPATIAL_SCORE_WEIGHT * spatial_score
-        + PHASE5_DYNAMIC_RISK_WEIGHT * normalized_dynamic_risk
+        + (
+            PHASE5_DYNAMIC_RISK_WEIGHT if dynamic_selection_enabled else 0.0
+        ) * normalized_dynamic_risk
         + PHASE5_DURATION_SCORE_WEIGHT * normalized_duration
         + PHASE5_TIMING_SMOOTHNESS_WEIGHT * normalized_timing_smoothness
     )
@@ -53,6 +56,7 @@ def _phase5_selection_score(
         "normalized_dynamic_risk": normalized_dynamic_risk,
         "normalized_duration": normalized_duration,
         "normalized_timing_smoothness": normalized_timing_smoothness,
+        "dynamic_selection_enabled": dynamic_selection_enabled,
     }
 
 
@@ -73,6 +77,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         process_acceleration_std_m_s2: float = 0.01,
         static_spatial_pruning_enabled: bool = True,
         dynamic_space_time_pruning_enabled: bool = False,
+        dynamic_selection_enabled: bool = True,
     ) -> None:
         if dynamic_space_time_pruning_enabled:
             raise ValueError(
@@ -116,6 +121,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             static_spatial_pruning_enabled
         )
         self.dynamic_space_time_pruning_enabled = False
+        self.dynamic_selection_enabled = bool(dynamic_selection_enabled)
         self.space_time_settings = settings
         self.space_time_guide = InferenceOnlySpaceTimeGuide(
             spatial_guide,
@@ -270,6 +276,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             valid_timing_smoothness,
             duration_min=self.space_time_settings.duration_min,
             duration_max=self.space_time_settings.duration_max,
+            dynamic_selection_enabled=self.dynamic_selection_enabled,
         )
         selected_valid = int(torch.argmin(valid_cost).item())
         selected_candidate = int(valid_indices[selected_valid].item())
@@ -310,7 +317,11 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                                 selected_valid
                             ].item()
                         ),
-                        "weight": PHASE5_DYNAMIC_RISK_WEIGHT,
+                        "weight": (
+                            PHASE5_DYNAMIC_RISK_WEIGHT
+                            if self.dynamic_selection_enabled
+                            else 0.0
+                        ),
                     },
                     "normalized_duration": {
                         "value": float(
