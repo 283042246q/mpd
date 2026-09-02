@@ -63,6 +63,7 @@ CANONICAL_SAMPLE_FIELDS: Mapping[str, Tuple[np.dtype, Tuple[str, ...]]] = {
     "quality/timing_fit_rmse": (np.dtype("float32"), ()),
     "quality/v_ratio_max": (np.dtype("float32"), ()),
     "quality/a_ratio_max": (np.dtype("float32"), ()),
+    "quality/reference_scale": (np.dtype("float32"), ()),
     "quality/static_clearance_min": (np.dtype("float32"), ()),
     "quality/dynamic_clearance_min": (np.dtype("float32"), ()),
     "quality/accepted": (np.dtype("bool"), ()),

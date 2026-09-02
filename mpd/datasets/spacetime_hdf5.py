@@ -65,6 +65,10 @@ class SpaceTimeShardWriter:
     def size(self) -> int:
         return int(next(iter(self._datasets.values())).shape[0])
 
+    def set_attributes(self, attributes: Mapping[str, object]) -> None:
+        for name, value in attributes.items():
+            self._file.attrs[name] = value
+
     def append(self, records: Mapping[str, np.ndarray]) -> None:
         missing = sorted(set(self._datasets) - set(records))
         extra = sorted(set(records) - set(self._datasets))
@@ -77,14 +81,16 @@ class SpaceTimeShardWriter:
         row_count = row_counts.pop()
         if row_count == 0:
             return
+        for name, dataset in self._datasets.items():
+            if arrays[name].shape[1:] != dataset.shape[1:]:
+                raise ValueError(
+                    f"field {name} has sample shape {arrays[name].shape[1:]}, "
+                    f"expected {dataset.shape[1:]}"
+                )
         old_size = self.size
         new_size = old_size + row_count
         for name, dataset in self._datasets.items():
             array = arrays[name]
-            if array.shape[1:] != dataset.shape[1:]:
-                raise ValueError(
-                    f"field {name} has sample shape {array.shape[1:]}, expected {dataset.shape[1:]}"
-                )
             dataset.resize(new_size, axis=0)
             dataset[old_size:new_size] = array.astype(dataset.dtype, copy=False)
 
@@ -111,14 +117,21 @@ def write_grouped_splits(
     if not 0.0 <= validation_fraction < 1.0 - train_fraction:
         raise ValueError("validation_fraction leaves no test split")
     unique_ids = np.unique(np.asarray(base_path_ids, dtype=np.int64))
-    rng = np.random.default_rng(seed)
-    rng.shuffle(unique_ids)
-    train_end = int(round(unique_ids.size * train_fraction))
-    validation_end = train_end + int(round(unique_ids.size * validation_fraction))
+    # SplitMix64 gives each base path a stable assignment. Adding later shards
+    # cannot move an existing path between train/val/test.
+    unsigned = unique_ids.astype(np.uint64, copy=False) + np.uint64(seed)
+    unsigned = (unsigned ^ (unsigned >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+    unsigned = (unsigned ^ (unsigned >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+    unsigned = unsigned ^ (unsigned >> np.uint64(31))
+    uniform = unsigned.astype(np.float64) / float(np.iinfo(np.uint64).max)
+    train_mask = uniform < train_fraction
+    validation_mask = (uniform >= train_fraction) & (
+        uniform < train_fraction + validation_fraction
+    )
     splits = {
-        "train": np.sort(unique_ids[:train_end]),
-        "val": np.sort(unique_ids[train_end:validation_end]),
-        "test": np.sort(unique_ids[validation_end:]),
+        "train": np.sort(unique_ids[train_mask]),
+        "val": np.sort(unique_ids[validation_mask]),
+        "test": np.sort(unique_ids[~(train_mask | validation_mask)]),
     }
     split_root.mkdir(parents=True, exist_ok=True)
     for name, values in splits.items():
