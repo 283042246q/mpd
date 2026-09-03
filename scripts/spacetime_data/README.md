@@ -94,3 +94,6 @@ instantiate the warehouse collision world. `quality/accepted` means the
 spatial spline stays inside URDF joint limits and the reconstructed TimingSpline
 passes duration, velocity and acceleration validation. This limitation is
 recorded in `manifest.yaml`.
+
+The independent `P -> timing` training commands and network contract are in
+[`scripts/train/TIMING_DIFFUSION.md`](../train/TIMING_DIFFUSION.md).

@@ -8,7 +8,7 @@
 
 ## 1. 结论与推荐路线
 
-当前仓库已经实现了 candidate-specific 的时空代价、单调 TimingSpline、动态障碍评价和 runtime timing contract，但尚未实现 TimingDiffusion，也没有任何 joint-trained space-time diffusion。当前 `phase5_joint` 的含义是：
+当前仓库已经实现了 candidate-specific 的时空代价、单调 TimingSpline、动态障碍评价、runtime timing contract，以及独立的 Factorized TimingDiffusion 训练链路；尚未把 learned timing sampler 接入 F1 runtime，也没有任何 joint-trained space-time diffusion。当前 `phase5_joint` 的含义仍是：
 
 ```text
 Spatial MPD 只扩散空间控制点 P
@@ -38,7 +38,7 @@ F3：加入 rollout/repaired 数据，做最后低噪声区细粒度交替
 JointDual：联合训练双分支，默认同步反向扩散
 ```
 
-第一阶段不要引入独立 duration latent $T$。当前 `TimingSpline` 已由 $c$ 推导 duration，先训练当前表示可以最大限度复用已有时空代价和 runtime。将 timing shape 与总时长解耦可以作为 schema/model v2，而不是阻塞 F1–F3。
+TimingDiffusion 当前同时支持两种六维目标：现有非冗余 `c[6]`，以及解耦的 `[tau,r1..r5]`。前者作为最直接的兼容基线，后者以 $T_{min}(P,r)$ 和任务 $T_{max}$ 约束总时长，作为主要研究表示。两者共用同一条件网络与训练数据来源，不因切换表示而改变空间路径分布。
 
 ---
 
@@ -59,10 +59,11 @@ JointDual：联合训练双分支，默认同步反向扩散
 
 - `scripts/train/train.py` 当前默认 `n_diffusion_steps=100`、cosine schedule、batch size 128、AdamW、学习率 `3e-4`；实际实验配置可以覆盖这些默认值。
 - `GaussianDiffusionModel.conditional_sample()` 当前只采样一个 `[B,H,state_dim]` 张量，没有结构化的 `(P,c)` sampler。
+- `scripts/train/train_timing_diffusion.py` 已提供独立于上述空间训练代码的 TimingDiffusion 入口，直接读取 canonical shard，支持 `c` 与 `tau_r`，不实例化 planning environment、旧 dataset 或旧 trainer。
 
 **当前限制：**
 
-- `TrajectoryDatasetBspline` 只认识空间字段，没有 timing fields/normalizer。
+- `TrajectoryDatasetBspline` 仍只认识空间字段；TimingDiffusion 使用新的 `SpaceTimeTimingDataset`，不修改旧 loader 行为。
 - `post_process_generated_dataset.py` 会把所有 shard 读入内存后合并，扩大为每条空间路径多个 timing variant 后会成为内存瓶颈。
 - 现有 HDF5 没有 robot fingerprint、joint-name order、limits 版本和 timing representation contract。
 
@@ -726,7 +727,7 @@ JointDual 对数据覆盖要求高于 F1/F2。每个 task 最好有多个空间�
 
 ### 8.1 公共预处理
 
-新增 `SpaceTimeTrajectoryDataset`，但不要立即破坏现有 `TrajectoryDatasetBspline`。建议组合式设计：
+**Timing view 已实现：** `mpd/datasets/spacetime_timing_dataset.py` 直接流式读取 canonical HDF5。它不导入 `TrajectoryDatasetBspline`，也不通过旧 planning/training loader。Spatial/Joint view 留待 JointDual 实现：
 
 ```text
 SpatialDatasetView
@@ -736,31 +737,40 @@ JointDatasetView
 
 三者读取同一个 canonical HDF5。
 
-Normalization 分组：
+当前 normalization 分组：
 
 ```text
-P: 复用当前 spatial DatasetNormalizer
-c/z_c: 独立 TimingNormalizer
-duration: 当前只作 metric，不作为独立 latent
+P: 按 joint 对 full spatial control points 统计 mean/std
+c[6]: 独立逐维 mean/std
+[tau,r5]: 独立逐维 mean/std
 ```
 
-normalizer 必须写入 checkpoint，并保存 robot/spline fingerprint。
+统计只使用 train split。normalizer、manifest hash、robot/spline contract、环境标签和 representation 均已写入 checkpoint。正式训练必须读取 canonical split 文件；只有显式 `allow_hash_split_fallback` 才允许未完成数据使用稳定的 `base_path_id` hash split。
 
 ### 8.2 F1/F2 TimingDiffusion
 
-Space checkpoint 保持不变。新增 timing denoiser：
+**训练与独立 sampler 已实现；F1 runtime 接入待实现。** Space checkpoint 保持不变。timing denoiser 为：
 
 \[
 \hat\epsilon_c=f_\phi(c_t,t,\operatorname{Enc}_P(P),x).
 \]
 
-由于 timing latent 很小，第一版不需要复制完整 spatial TemporalUnet。推荐：
+当前实现没有复制完整 spatial TemporalUnet：
 
 ```text
-Spatial B-spline encoder: small 1D CNN / Transformer / pooled MLP
-Timing denoiser: residual MLP 或小型 1D network
-Output: 6 维 z_c 或完整 8 维投影后的 c
+full P[H_P,D]
+  → 固定 B-spline basis 在 64 phase points 求 q, q_s, q_ss
+  → 拼接 phase 坐标
+  → width=128 的保序 dilated residual 1D CNN
+  → 三次 stride-2 downsample + flatten
+  → path embedding[256]
+
+noisy timing latent[6] + sinusoidal diffusion time[128] + path embedding
+  → hidden=256、6 层 FiLM residual MLP
+  → predicted epsilon[6]
 ```
+
+默认约 356 万参数。`c` 表示由 full `c[8]` 编码为 `[c0,c2,c3,c4,c5,c7]`；`tau_r` 表示为 `[tau,r1..r5]`，并过滤 `quality/duration_bounds_valid=false`。两种表示分别训练 checkpoint，不在同一模型中混合 representation token。
 
 训练损失：
 
@@ -769,6 +779,15 @@ L_c=\mathbb E\|\epsilon_c-\hat\epsilon_c\|^2.
 \]
 
 F2 不增加训练 loss，只增加 partial sampler 和推理消融。
+
+独立训练入口和默认配置：
+
+```text
+scripts/train/train_timing_diffusion.py
+scripts/train/cfgs/timing_diffusion_warehouse.yaml
+```
+
+训练使用 cosine beta schedule、100 diffusion steps、epsilon MSE、AdamW、gradient clipping 和 EMA。checkpoint 保存 model/EMA/optimizer/scaler/RNG，以支持严格 resume；模型本身已有 conditional ancestral sampling API。
 
 ### 8.3 F3 微调
 
@@ -1018,8 +1037,9 @@ sampler 决定应用哪个梯度，CostGuide 不再拥有隐式 optimizer state�
 | PR1 | canonical HDF5 schema + legacy migration + streaming writer | 已实现 | roundtrip、transpose、split leakage |
 | PR2 | production TOPP-RA retimer | 已实现 | real limits、known path、failure reasons |
 | PR3 | `fit_timing_reference()` + timing variants + dense validator | 已实现 | monotonic、fit RMSE、v/a reconstruction |
-| PR4 | `Spatial/Timing/JointDatasetView` + TimingNormalizer | 待实现 | batch shapes、normalizer roundtrip |
-| PR5 | TimingDiffusion + F1 sampler | 待实现 | tiny-set overfit、candidate-specific timing |
+| PR4 | canonical `TimingDatasetView` + TimingNormalizer | 已实现；Spatial/Joint view 随 JointDual 增加 | batch shapes、normalizer roundtrip、split fallback |
+| PR5a | P-conditioned TimingDiffusion + 独立训练/采样/checkpoint | 已实现 | c/tau_r loss、sampling shape、真实 shard smoke、resume |
+| PR5b | TimingDiffusion 接入 F1 runtime sampler | 待实现 | candidate-specific timing、dense validation |
 | PR6 | stateless SpaceTimeCostGuide + F1 short joint refinement | 从现有 guide 提取 | grad P/c、mode parity |
 | PR7 | arbitrary partial-noise sampler + F2 | 待实现 | forward/reverse level、deterministic DDIM |
 | PR8 | rollout collector + retime repair + F3 fine-tune | 依赖 F1/F2 | parent split、repaired feasibility |

@@ -106,3 +106,35 @@ def test_standalone_training_writes_self_describing_checkpoint(
     assert (output_dir / "resolved_config.yaml").is_file()
     assert (output_dir / "normalization.json").is_file()
     assert (output_dir / "metrics.jsonl").is_file()
+
+    if representation == "c":
+        resumed_training = {
+            "seed": 3,
+            "device": "cpu",
+            "max_steps": 3,
+            "learning_rate": 1e-3,
+            "use_amp": False,
+            "log_every": 1,
+            "validate_every": 1,
+            "validation_batches": 1,
+            "checkpoint_every": 1,
+        }
+        resumed = train_timing_diffusion(
+            environment="TestEnv",
+            representation=representation,
+            dataset_roots=[dataset_root],
+            output_dir=output_dir,
+            data_config={"batch_size": 2, "num_workers": 0},
+            model_config={
+                "num_phase_points": 16,
+                "path_width": 8,
+                "path_embedding_dim": 12,
+                "hidden_dim": 16,
+                "time_embedding_dim": 8,
+                "num_residual_blocks": 1,
+            },
+            diffusion_config={"num_diffusion_steps": 4, "clip_clean": 5.0},
+            training_config=resumed_training,
+            resume_checkpoint=checkpoint_path,
+        )
+        assert resumed.final_step == 3
