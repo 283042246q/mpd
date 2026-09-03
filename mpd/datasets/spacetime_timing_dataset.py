@@ -50,6 +50,7 @@ def split_mask_from_base_path_ids(
     seed: int,
     train_fraction: float = 0.9,
     validation_fraction: float = 0.05,
+    source_group_size: int = 1,
 ) -> np.ndarray:
     if split not in ("train", "val", "test"):
         raise ValueError(f"unknown split: {split}")
@@ -57,7 +58,11 @@ def split_mask_from_base_path_ids(
         raise ValueError("train_fraction must be in (0, 1)")
     if not 0.0 <= validation_fraction < 1.0 - train_fraction:
         raise ValueError("validation_fraction leaves no test split")
-    values = _stable_split_values(base_path_ids, seed)
+    if source_group_size <= 0:
+        raise ValueError("source_group_size must be positive")
+    values = _stable_split_values(
+        np.asarray(base_path_ids, dtype=np.int64) // int(source_group_size), seed
+    )
     if split == "train":
         return values < train_fraction
     if split == "val":
@@ -196,6 +201,9 @@ class SpaceTimeTimingDataset(Dataset):
                 )
             self._manifests.append(manifest)
             self._manifest_paths.append(manifest_path)
+            source_group_size = int(
+                manifest.get("splits", {}).get("source_group_size", 1)
+            )
             split_ids = self._load_split_ids(root, split)
             for shard_path in sorted((root / "shards").glob("part-*.hdf5")):
                 with h5py.File(str(shard_path), "r") as shard:
@@ -204,6 +212,7 @@ class SpaceTimeTimingDataset(Dataset):
                         split=split,
                         split_ids=split_ids,
                         split_seed=self.split_seed,
+                        source_group_size=source_group_size,
                     )
                 if remaining is not None:
                     selected = selected[:remaining]
@@ -257,6 +266,7 @@ class SpaceTimeTimingDataset(Dataset):
         split: str,
         split_ids: Optional[np.ndarray],
         split_seed: int,
+        source_group_size: int,
     ) -> Tuple[np.ndarray, np.ndarray]:
         required = {
             "spatial/control_points",
@@ -288,6 +298,7 @@ class SpaceTimeTimingDataset(Dataset):
                 seed=split_seed,
                 train_fraction=self.train_fraction,
                 validation_fraction=self.validation_fraction,
+                source_group_size=source_group_size,
             )
         else:
             split_mask = np.isin(base_path_ids, split_ids)

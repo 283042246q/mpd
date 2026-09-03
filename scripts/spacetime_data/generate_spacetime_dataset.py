@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build canonical ``(P, c)`` training shards from legacy warehouse paths.
+"""Build canonical ``(P,c)`` and ``(P,tau,r)`` shards in one pass.
 
 This is a standalone data-engineering path. It does not instantiate the old
 ``TrajectoryDatasetBspline`` and does not modify the original spatial HDF5.
@@ -28,25 +28,25 @@ from mpd.datasets.spacetime_schema import (
     load_panda_robot_bundle,
     materialize_dataset_contract,
 )
+from mpd.datasets.spacetime_timing_augmentation import (
+    DEFAULT_DURATION_FRACTION_MODES,
+    augment_shard_atomic,
+    augmentation_config,
+)
+from mpd.parametric_trajectory.normalized_timing import NormalizedTimingSplineNumpy
 from mpd.parametric_trajectory.timing_fitting import (
     TimingSplineNumpy,
     fit_and_validate_timing_reference,
 )
 from mpd.parametric_trajectory.toppra_retiming import (
+    DEFAULT_RETIMING_VARIANTS,
     RetimingReference,
-    build_multimodal_retiming_references,
+    build_retiming_references_from_feasible_anchor,
+    build_toppra_anchor_reference,
 )
 
 
-DEFAULT_VARIANTS = (
-    "toppra",
-    "duration_1.2",
-    "duration_1.5",
-    "limits_0.85_0.80",
-    "limits_0.65_0.70",
-    "local_slowdown",
-    "near_wait",
-)
+DEFAULT_VARIANTS = DEFAULT_RETIMING_VARIANTS
 
 
 class OnlineMetric:
@@ -84,7 +84,7 @@ def _parse_args(repository_root: Path) -> argparse.Namespace:
     output_default = (
         repository_root
         / "data_trajectories_spacetime"
-        / "EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v1"
+        / "EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v2"
     )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=source_default)
@@ -100,14 +100,32 @@ def _parse_args(repository_root: Path) -> argparse.Namespace:
     parser.add_argument("--timing-num-control-points", type=int, default=8)
     parser.add_argument("--timing-degree", type=int, default=3)
     parser.add_argument("--timing-u-min", type=float, default=0.05)
-    parser.add_argument("--duration-min", type=float, default=2.0)
-    parser.add_argument("--duration-max", type=float, default=15.0)
+    parser.add_argument(
+        "--duration-floor",
+        "--duration-min",
+        dest="duration_floor",
+        type=float,
+        default=2.0,
+        help="global lower bound used by c and tau-r (default: 2 seconds)",
+    )
+    parser.add_argument("--duration-max", type=float, default=14.0)
     parser.add_argument("--num-toppra-gridpoints", type=int, default=256)
     parser.add_argument("--spatial-fit-rmse-max", type=float, default=0.05)
     parser.add_argument("--timing-fit-relative-rmse-max", type=float, default=0.05)
     parser.add_argument("--ratio-tolerance", type=float, default=1e-3)
     parser.add_argument("--safety-margin", type=float, default=1.02)
     parser.add_argument("--max-safety-iterations", type=int, default=5)
+    parser.add_argument("--density-floor", type=float, default=1e-3)
+    parser.add_argument("--logit-clip", type=float, default=1e-3)
+    parser.add_argument("--t-min-safety-factor", type=float, default=1.0)
+    parser.add_argument("--bounds-tolerance", type=float, default=1e-3)
+    parser.add_argument("--max-normalized-fit-rmse", type=float, default=0.05)
+    parser.add_argument(
+        "--source-group-size",
+        type=int,
+        default=2,
+        help="adjacent source rows per split group; doubled warehouse data uses 2",
+    )
     parser.add_argument("--compression", choices=("lzf", "gzip", "none"), default="lzf")
     parser.add_argument("--report-every", type=int, default=100)
     parser.add_argument("--fail-fast", action="store_true")
@@ -121,6 +139,10 @@ def _parse_args(repository_root: Path) -> argparse.Namespace:
         parser.error("--paths-per-shard must be positive")
     if args.report_every <= 0:
         parser.error("--report-every must be positive")
+    if args.duration_floor < 0.0 or args.duration_max <= args.duration_floor:
+        parser.error("duration bounds must satisfy 0 <= floor < max")
+    if args.source_group_size <= 0:
+        parser.error("--source-group-size must be positive")
     return args
 
 
@@ -128,22 +150,36 @@ def _variant_manifest(variants: Iterable[str]) -> List[Mapping[str, object]]:
     result = []
     for name in variants:
         variant_id = DEFAULT_VARIANTS.index(name)
-        entry: Dict[str, object] = {"name": name, "variant_id": variant_id, "mode_id": variant_id}
+        entry: Dict[str, object] = {
+            "name": name,
+            "variant_id": variant_id,
+            "mode_id": variant_id,
+            "training_representations": ["c"],
+        }
         if name.startswith("duration_"):
-            entry.update(method="duration_scaled", duration_scale=float(name.split("_")[1]))
-        elif name.startswith("limits_"):
-            _, velocity, acceleration = name.split("_")
             entry.update(
-                method="limit_scaled_toppra",
-                velocity_scale=float(velocity),
-                acceleration_scale=float(acceleration),
+                method="feasible_anchor_duration_scaled",
+                duration_scale=float(name.split("_")[1]),
             )
-        elif name == "toppra":
-            entry.update(method="toppra", velocity_scale=1.0, acceleration_scale=1.0)
+        elif name == "fast_anchor":
+            entry.update(
+                method="fitted_validated_toppra",
+                velocity_scale=1.0,
+                acceleration_scale=1.0,
+                training_representations=["c", "tau_r"],
+            )
         elif name == "local_slowdown":
-            entry.update(method="local_density_bump", randomized=True)
+            entry.update(
+                method="feasible_anchor_local_density_bump",
+                randomized=True,
+                training_representations=["c", "tau_r"],
+            )
         elif name == "near_wait":
-            entry.update(method="near_wait_density_bump", randomized=True)
+            entry.update(
+                method="feasible_anchor_near_wait_density_bump",
+                randomized=True,
+                training_representations=["c", "tau_r"],
+            )
         result.append(entry)
     return result
 
@@ -237,6 +273,32 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
         num_phase_points=args.num_phase_points,
         u_min=args.timing_u_min,
     )
+    normalized_spline = NormalizedTimingSplineNumpy(
+        num_control_points=args.timing_num_control_points,
+        degree=args.timing_degree,
+        num_phase_points=args.num_phase_points,
+        density_floor=args.density_floor,
+    )
+    variant_manifest = _variant_manifest(args.variants)
+    tau_r_variant_ids = [
+        int(variant["variant_id"])
+        for variant in variant_manifest
+        if "tau_r" in variant["training_representations"]
+    ]
+    normalized_config = augmentation_config(
+        duration_max=args.duration_max,
+        duration_floor=args.duration_floor,
+        density_floor=args.density_floor,
+        logit_clip=args.logit_clip,
+        t_min_safety_factor=args.t_min_safety_factor,
+        bounds_tolerance=args.bounds_tolerance,
+        max_fit_rmse=args.max_normalized_fit_rmse,
+        shape_source="control_points",
+        timing_degree=args.timing_degree,
+        num_phase_points=args.num_phase_points,
+        duration_fraction_modes=DEFAULT_DURATION_FRACTION_MODES,
+        tau_r_variant_ids=tau_r_variant_ids,
+    )
     manifest = build_manifest(
         robot,
         spatial_num_control_points=args.spatial_num_control_points,
@@ -246,11 +308,26 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
         timing_degree=args.timing_degree,
         timing_num_phase_points=args.num_phase_points,
         timing_u_min=args.timing_u_min,
-        timing_duration_min=args.duration_min,
+        timing_duration_min=args.duration_floor,
         timing_duration_max=args.duration_max,
         source_dataset=str(source_path),
-        variants=_variant_manifest(args.variants),
+        variants=variant_manifest,
     )
+    manifest["normalized_timing"] = dict(normalized_config)
+    manifest["normalized_timing"]["fields"] = {
+        "shape": "timing/shape_control_points",
+        "actual_duration_logit": "timing/tau",
+        "duration_fraction_modes": "timing/duration_fraction_modes",
+        "duration_modes": "timing/duration_modes",
+        "duration_logit_modes": "timing/tau_modes",
+        "mode_training_valid": "quality/tau_r_mode_valid",
+    }
+    manifest["splits"] = {
+        "group_key": "index/base_path_id",
+        "source_group_size": args.source_group_size,
+        "source_group_id": "base_path_id // source_group_size",
+        "note": "group size 2 keeps adjacent forward/reverse warehouse paths together",
+    }
     manifest["generation"] = {
         "seed": args.seed,
         "num_toppra_gridpoints": args.num_toppra_gridpoints,
@@ -278,6 +355,7 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
     processed_paths = 0
     accepted_paths = 0
     accepted_samples = 0
+    normalized_totals = Counter()
     stop_index: Optional[int] = None
     report_tag = f"{args.start_index:07d}"
     rejects_path = output_root / f"rejects-{report_tag}.jsonl"
@@ -330,33 +408,61 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
                         rng = np.random.default_rng(
                             np.random.SeedSequence([args.seed, base_path_id])
                         )
-                        references = build_multimodal_retiming_references(
+                        raw_anchor = build_toppra_anchor_reference(
                             spatial.scipy_spline(),
                             dq_max=robot.dq_max,
                             ddq_max=robot.ddq_max,
                             phase=timing_spline.phase,
-                            rng=rng,
                             num_toppra_gridpoints=args.num_toppra_gridpoints,
+                        )
+                        anchor_validated = fit_and_validate_timing_reference(
+                            raw_anchor.time_from_start,
+                            spatial_spline=spatial.scipy_spline(),
+                            q_min=robot.q_min,
+                            q_max=robot.q_max,
+                            dq_max=robot.dq_max,
+                            ddq_max=robot.ddq_max,
+                            timing_spline=timing_spline,
+                            duration_min=args.duration_floor,
+                            duration_max=args.duration_max,
+                            ratio_tolerance=args.ratio_tolerance,
+                            safety_margin=args.safety_margin,
+                            max_safety_iterations=args.max_safety_iterations,
+                            max_relative_rmse=args.timing_fit_relative_rmse_max,
+                        )
+                        if not anchor_validated.accepted:
+                            raise ValueError(
+                                f"fast_anchor:{anchor_validated.reject_reason}"
+                            )
+                        references = build_retiming_references_from_feasible_anchor(
+                            anchor_validated.fit.time_from_start,
+                            phase=timing_spline.phase,
+                            rng=rng,
                             variant_names=args.variants,
+                            duration_max=args.duration_max,
                         )
                         accepted = []
                         for reference in references:
                             variant_id = DEFAULT_VARIANTS.index(reference.name)
                             try:
-                                validated = fit_and_validate_timing_reference(
-                                    reference.time_from_start,
-                                    spatial_spline=spatial.scipy_spline(),
-                                    q_min=robot.q_min,
-                                    q_max=robot.q_max,
-                                    dq_max=robot.dq_max,
-                                    ddq_max=robot.ddq_max,
-                                    timing_spline=timing_spline,
-                                    duration_min=args.duration_min,
-                                    duration_max=args.duration_max,
-                                    ratio_tolerance=args.ratio_tolerance,
-                                    safety_margin=args.safety_margin,
-                                    max_safety_iterations=args.max_safety_iterations,
-                                    max_relative_rmse=args.timing_fit_relative_rmse_max,
+                                validated = (
+                                    anchor_validated
+                                    if reference.name == "fast_anchor"
+                                    else fit_and_validate_timing_reference(
+                                        reference.time_from_start,
+                                        spatial_spline=spatial.scipy_spline(),
+                                        q_min=robot.q_min,
+                                        q_max=robot.q_max,
+                                        dq_max=robot.dq_max,
+                                        ddq_max=robot.ddq_max,
+                                        timing_spline=timing_spline,
+                                        duration_min=args.duration_floor,
+                                        duration_max=args.duration_max,
+                                        ratio_tolerance=args.ratio_tolerance,
+                                        safety_margin=args.safety_margin,
+                                        max_safety_iterations=args.max_safety_iterations,
+                                        max_relative_rmse=args.timing_fit_relative_rmse_max,
+                                    )
                                 )
                             except Exception as error:
                                 reason = f"variant:{reference.name}:{type(error).__name__}:{error}"
@@ -445,12 +551,38 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
                             flush=True,
                         )
 
+            normalized_report = augment_shard_atomic(
+                shard_in_progress,
+                spatial_degree=args.spatial_degree,
+                timing_spline=timing_spline,
+                normalized_spline=normalized_spline,
+                dq_max=robot.dq_max,
+                ddq_max=robot.ddq_max,
+                config=normalized_config,
+            )
+            normalized_totals.update(
+                {
+                    name: int(value)
+                    for name, value in normalized_report.items()
+                    if name
+                    in {
+                        "rows",
+                        "valid_rows",
+                        "invalid_rows",
+                        "logit_clipped_rows",
+                        "tau_r_mode_samples",
+                    }
+                }
+            )
             shard_in_progress.replace(shard_path)
 
     rejects_in_progress.replace(rejects_path)
     all_base_path_ids = _collect_output_base_path_ids(output_root / "shards")
     splits = write_grouped_splits(
-        output_root / "splits", all_base_path_ids, seed=args.seed
+        output_root / "splits",
+        all_base_path_ids,
+        seed=args.seed,
+        source_group_size=args.source_group_size,
     )
     elapsed = time.monotonic() - start_time
     report = {
@@ -464,6 +596,7 @@ def generate(args: argparse.Namespace, repository_root: Path) -> Dict[str, objec
         "rejection_counts": dict(sorted(rejection_counts.items())),
         "metrics": {name: metric.to_dict() for name, metric in sorted(metrics.items())},
         "split_base_path_counts": {name: len(values) for name, values in splits.items()},
+        "normalized_timing": dict(normalized_totals),
         "elapsed_seconds": elapsed,
         "paths_per_second": processed_paths / elapsed,
     }

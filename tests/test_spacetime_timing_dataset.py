@@ -105,6 +105,20 @@ def test_hash_fallback_keeps_variants_of_each_base_path_in_one_split():
         assert sum(bool(np.any(mask[rows])) for mask in memberships.values()) == 1
 
 
+def test_hash_fallback_keeps_forward_reverse_source_rows_together():
+    ids = np.arange(200, dtype=np.int64)
+    memberships = {
+        split: split_mask_from_base_path_ids(
+            ids, split, seed=42, source_group_size=2
+        )
+        for split in ("train", "val", "test")
+    }
+    labels = np.argmax(
+        np.stack([memberships[name] for name in ("train", "val", "test")]), axis=0
+    )
+    assert np.all(labels[0::2] == labels[1::2])
+
+
 def test_missing_split_requires_explicit_smoke_fallback(tmp_path):
     root = _write_dataset(tmp_path / "dataset")
     for path in (root / "splits").glob("*.npy"):

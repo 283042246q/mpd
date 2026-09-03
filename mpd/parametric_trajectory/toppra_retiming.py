@@ -175,6 +175,8 @@ def build_retiming_references_from_feasible_anchor(
     phase: np.ndarray,
     rng: np.random.Generator,
     variant_names: Optional[Sequence[str]] = None,
+    duration_max: Optional[float] = None,
+    duration_margin: float = 0.1,
 ) -> List[RetimingReference]:
     """Create timing modes from an already fitted and validated anchor.
 
@@ -193,6 +195,20 @@ def build_retiming_references_from_feasible_anchor(
     anchor_time = anchor_time - anchor_time[0]
     if anchor_time[-1] <= 0.0 or not np.all(np.diff(anchor_time) > 0.0):
         raise ValueError("feasible_anchor_time must be strictly increasing")
+    if duration_max is not None:
+        if duration_margin < 0.0 or duration_max <= duration_margin:
+            raise ValueError("duration margin must be non-negative and below duration_max")
+        if anchor_time[-1] > duration_max:
+            raise ValueError("feasible anchor exceeds duration_max")
+
+    def bounded_amplitude(requested: float, bump: np.ndarray) -> float:
+        if duration_max is None:
+            return requested
+        added_duration_per_unit = float(np.trapz(anchor_density * bump, phase))
+        available_duration = max(0.0, duration_max - duration_margin - anchor_time[-1])
+        if added_duration_per_unit <= 0.0:
+            return 0.0
+        return min(requested, available_duration / added_duration_per_unit)
 
     references: List[RetimingReference] = []
     if "fast_anchor" in selected:
@@ -222,8 +238,9 @@ def build_retiming_references_from_feasible_anchor(
     if "local_slowdown" in selected:
         center = float(rng.uniform(0.25, 0.75))
         sigma = float(rng.uniform(0.08, 0.14))
-        amplitude = float(rng.uniform(0.6, 1.2))
+        requested_amplitude = float(rng.uniform(0.6, 1.2))
         bump = np.exp(-0.5 * np.square((phase - center) / sigma))
+        amplitude = bounded_amplitude(requested_amplitude, bump)
         density = anchor_density * (1.0 + amplitude * bump)
         references.append(
             RetimingReference(
@@ -231,14 +248,23 @@ def build_retiming_references_from_feasible_anchor(
                 TimingSource.LOCAL_SLOWDOWN,
                 _integrate_density(phase, density),
                 4,
-                {"center": center, "sigma": sigma, "amplitude": amplitude},
+                {
+                    "center": center,
+                    "sigma": sigma,
+                    "amplitude": amplitude,
+                    "requested_amplitude": requested_amplitude,
+                },
             )
         )
     if "near_wait" in selected:
         center = float(rng.uniform(0.3, 0.7))
-        sigma = float(rng.uniform(0.035, 0.055))
-        amplitude = float(rng.uniform(3.0, 5.0))
+        # Eight c coefficients and five gauge-free r coefficients cannot
+        # faithfully represent an impulse-like stop. Keep the bump narrow
+        # enough to resemble waiting, but wide enough to survive both fits.
+        sigma = float(rng.uniform(0.06, 0.09))
+        requested_amplitude = float(rng.uniform(2.5, 4.0))
         bump = np.exp(-0.5 * np.square((phase - center) / sigma))
+        amplitude = bounded_amplitude(requested_amplitude, bump)
         density = anchor_density * (1.0 + amplitude * bump)
         references.append(
             RetimingReference(
@@ -246,7 +272,12 @@ def build_retiming_references_from_feasible_anchor(
                 TimingSource.NEAR_WAIT,
                 _integrate_density(phase, density),
                 5,
-                {"center": center, "sigma": sigma, "amplitude": amplitude},
+                {
+                    "center": center,
+                    "sigma": sigma,
+                    "amplitude": amplitude,
+                    "requested_amplitude": requested_amplitude,
+                },
             )
         )
     return references

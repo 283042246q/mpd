@@ -183,10 +183,11 @@ dynamic_world.trajectory_duration_s = 10.0
 - 拟合与当前 MPD 零速度、零加速度边界一致的 full spatial B-spline `P`；
 - 由 canonical `P` 本身构造 TOPP-RA geometric path，不二次拟合 waypoint；
 - 按 URDF joint order 对齐当前 `joint_limits.yaml` 中的 `dq_max/ddq_max`；
-- 生成 TOPP-RA anchor、duration-scaled、limit-scaled、local-slowdown 和 near-wait 七类 reference；
+- 先拟合并验证 TOPP-RA anchor，再从可行 anchor 生成 `×1.5/×2.0/×2.5`、local-slowdown 和 near-wait 六类 `c` reference；
 - 拟合当前 runtime 的 `TimingSpline c[8]`，并在拟合后重新计算 `q,dq,ddq`；
 - 对超限 timing 自动做全局安全放慢，仍不满足 duration/limits 的 variant 记录 reject reason；
-- 流式写 canonical HDF5 shard、robot bundle、manifest 和按 `base_path_id` 固定划分的 split。
+- 在 shard 发布前一并写入 `r/T_min` 与五档 `y/tau` 训练模式；
+- 流式写 canonical HDF5 shard、robot bundle、manifest，并以 `base_path_id//2` 对 doubled 数据做无正反泄漏 split。
 
 **已实现：** `scripts/spacetime_data/validate_spacetime_dataset.py` 可独立复算 robot hash、schema/dtype/shape、TimingSpline duration、joint limits 和 split leakage。
 
@@ -432,9 +433,9 @@ spatial/timing spline contract
 
 ### 5.2.1 Duration/shape 解耦派生字段
 
-规范 `(P,c)` 不需要重新运行 RRT 或 TOPP-RA即可派生 `(P,T,r)`。仓库脚本
-`scripts/spacetime_data/augment_normalized_timing.py` 默认取任务上限
-`T_max=14s`，从实际 `TimingSpline c` 拟合五维相对时间形状 `r`，并根据
+统一脚本 `scripts/spacetime_data/generate_spacetime_dataset.py` 在每个 shard
+发布前直接从实际 `TimingSpline c` 拟合五维相对时间形状 `r`，不再要求生成后
+运行第二个扩充步骤。默认 `T_max=14s`、`duration_floor=2s`，并根据
 当前 `(P,r)` 与 Panda 速度/加速度限制计算采样动力学下界 `T_min(P,r)`：
 
 | HDF5 path | shape | dtype | 说明 |
@@ -446,13 +447,20 @@ spatial/timing spline contract
 | `/timing/t_max` | `[N]` | float32 | 当前任务时限，默认 14s |
 | `/timing/duration_fraction` | `[N]` | float32 | 未裁剪的 `(T-T_min)/(T_max-T_min)`，可用于审计越界样本 |
 | `/timing/tau` | `[N]` | float32 | 端点数值裁剪后的 duration logit |
+| `/timing/duration_fraction_modes` | `[N,5]` | float32 | 默认 `{0.01,0.05,0.15,0.35,0.60}` |
+| `/timing/duration_modes` | `[N,5]` | float32 | `T_min+y(T_max-T_min)` |
+| `/timing/tau_modes` | `[N,5]` | float32 | 五档 `logit(y)` 训练标签 |
 | `/quality/normalized_timing_fit_rmse` | `[N]` | float32 | 归一化累计时间曲线拟合 RMSE |
 | `/quality/normalized_timing_density_clip_fraction` | `[N]` | float32 | 拟合目标低于 density floor 的采样比例 |
 | `/quality/duration_logit_clipped` | `[N]` | bool | fraction 是否因 logit 有限化而裁剪 |
 | `/quality/duration_bounds_valid` | `[N]` | bool | `(tau,r)` timing 训练必须额外过滤为 true |
+| `/quality/tau_r_mode_valid` | `[N,5]` | bool | 该 shape 是否可以展开对应的 `tau` 模式 |
 
-派生脚本保留越界行而不静默改变时长；修改 `T_max` 后可重复运行并原子替换
-每个 shard。基础 schema 仍为 v1，manifest 的 `normalized_timing` 节记录派生参数。
+`tau_r` loader 只将 `fast_anchor/local_slowdown/near_wait` 三类独立 shape
+展开为五档 duration，共最多 15 个 `(tau,r)` 样本；三个全局 duration-scale
+行只参与 `c` 训练，避免重复 shape 被过度计权。旧数据仍可用
+`augment_normalized_timing.py` 原子升级。基础 schema 仍为 v1，manifest 的
+`normalized_timing` 节记录全部派生参数。
 
 scene table 至少包含：
 
@@ -493,6 +501,11 @@ train/val/test 的主分组键必须是：
 base_path_id
 ```
 
+对当前 `dataset_merged_doubled.hdf5`，相邻源 ID `2i` 和 `2i+1` 分别是正向
+和反向轨迹，实际 split hash 键必须使用 `base_path_id // 2`，split 文件仍保存
+原始 `base_path_id`。统一生成器默认 `--source-group-size 2`；非 doubled 数据源
+必须显式设为 1。验证器同时检查 base-path 与 source-group 两级泄漏。
+
 `task_id` 和 `scene_id` 作为审计字段保存，但不能让同一 `base_path_id` 因 scene 不同而跨 split。同一空间路径的不同 retime、dynamic scenes，以及 F3 的全部 rollout/repaired descendants 都必须继承同一个 base-path split，否则 TimingDiffusion 测试会发生路径泄漏。
 
 ---
@@ -512,9 +525,13 @@ fit/materialize 唯一 spatial B-spline P
     ↓
 在完全相同的 P 上运行 TOPP-RA
     ↓
-生成多种 timing reference t_ref(s)
+拟合 c 并按 v/a 约束放慢，得到可行 t_anchor(s)
     ↓
-拟合当前 TimingSpline c
+从 t_anchor 生成 ×1.5/×2.0/×2.5、local slowdown、near wait
+    ↓
+逐一重新拟合并验证当前 TimingSpline c
+    ↓
+拟合 r、计算 T_min，并写入五档 y/tau mode
     ↓
 用当前 TimingSpline 公式重建 q,dq,ddq,t
     ↓
@@ -533,12 +550,16 @@ TOPP-RA 是固定几何路径的主要 feasibility teacher，但不应被描述�
 
 | variant | 生成方法 | 是否主要使用 TOPP-RA | 作用 |
 |---|---|---:|---|
-| time-optimal anchor | 使用真实 `dq_max/ddq_max` 的 TOPP-RA | 是 | 给出固定路径的最快可行锚点 |
-| limit-scaled | 随机缩放 velocity/acceleration limits 后重新 TOPP-RA | 是 | 产生不同全局速度和部分 shape |
-| duration-scaled | 对 time-optimal trajectory 做 $t'=\rho t,\rho>1$ | 以 TOPP-RA 为锚点 | 严格保持或放松 v/a 可行性 |
+| fast anchor | TOPP-RA 后先拟合并完成 v/a 可行性修正 | 是 | 给出可被当前 `c` 表示的最快可行锚点 |
+| duration-scaled | 对可行 anchor 做 $t'=\rho t$，默认 $\rho=1.5,2.0,2.5$ | 以可行 anchor 为锚点 | 避免小乘数在可行性修正中塌缩 |
 | local slowdown | 对 (u(s)=dt/ds) 加局部 bump | 否 | 学局部减速 timing shape |
 | near-wait | 对窄 phase 区间加大 (u(s)) | 否 | 学近似等待 |
 | dynamic before/after | timing-only cost optimization，多初始化 | 否 | 学动态障碍两侧的 temporal modes |
+
+不能在原始 TOPP-RA 输出上直接乘 1.2/1.5 后再做统一可行性修正；warehouse
+数据中大量原始时长低于 2 秒，这会使多个 mode 最终落到同一动力学下界。
+局部模式按剩余 horizon 限制 bump，所有模式仍在拟合后执行完整验证；超过
+14 秒的全局慢速模式保留明确 rejection，不硬裁剪到上界。
 
 全局时间缩放满足：
 
@@ -550,13 +571,13 @@ t'=\rho t,\qquad
 
 所以当 $\rho\ge1$ 时，不会破坏原 TOPP-RA 的 velocity/acceleration 上界。
 
-建议第一版每条空间路径生成 6–8 个 timing variants：
+当前静态数据的默认 `c` 集合为：
 
 ```text
-1 × TOPP-RA time-optimal
-2 × duration scaling，例如 rho ∈ {1.2, 1.5}
-1–2 × limit-scaled TOPP-RA
-1–2 × local slowdown / near-wait
+1 × fitted/validated TOPP-RA fast anchor
+3 × feasible-anchor duration scaling，rho ∈ {1.5, 2.0, 2.5}
+1 × local slowdown
+1 × near-wait
 可选 1–2 × dynamic timing mode
 ```
 
@@ -1116,10 +1137,12 @@ emergency interruption count
 - accepted timing `diff(t)>0` 100%；
 - dense `v_ratio_max<=1+tol`、`a_ratio_max<=1+tol`；
 - TOPP-RA reference 到 TimingSpline 的 median relative timing RMSE 先以 `<1%` 为目标；
-- split 中没有 `base_path_id` 或 parent lineage 泄漏；
+- split 中没有 `base_path_id`、正反 source group 或 parent lineage 泄漏；
 - rejected samples 有明确 reason histogram。
 
-当前 warehouse 扩大 smoke（1000 条 base paths、默认七类 timing）的实测结果为：6812 个 accepted `(P,c)`，所有 1000 条路径至少保留一个 timing；独立 validator 对全部 6812 条复算无违规。该结果用于验证数据工程闭环，不替代全量数据集的最终统计。
+旧 v1 warehouse 扩大 smoke 的统计不再作为新生成器验收依据。v2 必须分别报告
+六类 `c` acceptance、五档 `tau` 覆盖率、`T_min/T_max` 越界率，以及正反轨迹
+source-group leakage；全量数据重新生成后再固化基准数值。
 
 ### F1/F2
 

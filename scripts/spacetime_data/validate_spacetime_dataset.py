@@ -194,6 +194,17 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
         violations.append("train/test base_path_id leakage")
     if split_sets["val"] & split_sets["test"]:
         violations.append("val/test base_path_id leakage")
+    source_group_size = int(manifest.get("splits", {}).get("source_group_size", 1))
+    group_memberships = {}
+    for split_name, base_path_ids in split_sets.items():
+        for base_path_id in base_path_ids:
+            group_id = int(base_path_id) // source_group_size
+            previous = group_memberships.setdefault(group_id, split_name)
+            if previous != split_name:
+                violations.append(
+                    f"source group {group_id} leaks across {previous}/{split_name}"
+                )
+                break
     split_union = split_sets["train"] | split_sets["val"] | split_sets["test"]
     if split_union != all_base_paths:
         violations.append(

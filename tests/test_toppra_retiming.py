@@ -74,3 +74,17 @@ def test_duration_modes_scale_the_feasible_anchor_not_raw_toppra():
     assert durations["duration_1.5"] == 3.25 * 1.5
     assert durations["duration_2.0"] == 3.25 * 2.0
     assert durations["duration_2.5"] == 3.25 * 2.5
+
+
+def test_local_modes_respect_requested_duration_budget():
+    phase = np.linspace(0.0, 1.0, 128)
+    references = build_retiming_references_from_feasible_anchor(
+        phase * 12.0,
+        phase=phase,
+        rng=np.random.default_rng(9),
+        variant_names=("local_slowdown", "near_wait"),
+        duration_max=14.0,
+        duration_margin=0.2,
+    )
+
+    assert all(reference.time_from_start[-1] <= 13.8 + 1e-10 for reference in references)

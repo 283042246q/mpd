@@ -13,10 +13,13 @@ Both choices are standardized to a six-dimensional training target:
 - `tau_r`: `[tau,r0,r1,r2,r3,r4]`, where `r` is normalized timing shape and
   `T=T_min(P,r)+(T_max-T_min(P,r))*sigmoid(tau)`.
 
-`tau_r` requires the fields produced by
-`scripts/spacetime_data/augment_normalized_timing.py`. Rows with
-`quality/duration_bounds_valid=false` are excluded. Each representation gets a
-separate normalizer and checkpoint.
+The unified v2 generator writes the `tau_r` fields directly. Each eligible
+timing shape is expanded over the stored
+`y={0.01,0.05,0.15,0.35,0.60}` modes; global duration-scaled `c` rows are not
+expanded, avoiding repeated copies of the anchor `r`. Rows with invalid bounds
+are excluded. Legacy datasets can still be upgraded with
+`scripts/spacetime_data/augment_normalized_timing.py`. Each representation gets
+a separate normalizer and checkpoint.
 
 ## Environment
 
@@ -34,21 +37,17 @@ python scripts/train/train_timing_diffusion.py \
   --config scripts/train/cfgs/timing_diffusion_warehouse.yaml \
   --env EnvWarehouse \
   --representation c \
-  --run-name c-v1
+  --run-name c-v2
 ```
 
-Formal decoupled timing training after dataset augmentation:
+Formal decoupled timing training from unified v2 data:
 
 ```bash
-python scripts/spacetime_data/augment_normalized_timing.py \
-  data_trajectories_spacetime/EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v1 \
-  --duration-max 14
-
 python scripts/train/train_timing_diffusion.py \
   --config scripts/train/cfgs/timing_diffusion_warehouse.yaml \
   --env EnvWarehouse \
   --representation tau_r \
-  --run-name tau-r-v1
+  --run-name tau-r-v2
 ```
 
 To select another environment, add its dataset roots under `training_data` in
@@ -70,8 +69,8 @@ the first timing prior is conditioned on `P`, not on an obstacle-map encoding.
 Train separate environment checkpoints unless multiple compatible datasets are
 intentionally combined.
 
-The current incomplete warehouse snapshot has no finalized split files. It may
-only be used for a smoke test with an explicit fallback:
+An intentionally incomplete smoke dataset without finalized split files may
+only be used with an explicit fallback:
 
 ```bash
 python scripts/train/train_timing_diffusion.py \

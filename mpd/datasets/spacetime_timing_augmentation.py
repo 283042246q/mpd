@@ -24,7 +24,7 @@ from mpd.parametric_trajectory.normalized_timing import (
 from mpd.parametric_trajectory.timing_fitting import TimingSplineNumpy
 
 
-NORMALIZED_TIMING_EXTENSION_VERSION = "spacetime_normalized_timing_v1"
+NORMALIZED_TIMING_EXTENSION_VERSION = "spacetime_normalized_timing_v2"
 DEFAULT_DURATION_FRACTION_MODES = (0.01, 0.05, 0.15, 0.35, 0.60)
 
 NORMALIZED_TIMING_FIELDS = {
