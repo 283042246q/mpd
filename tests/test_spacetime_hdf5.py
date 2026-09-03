@@ -52,3 +52,17 @@ def test_grouped_splits_do_not_leak_retiming_variants(tmp_path):
     assert train.isdisjoint(test)
     assert val.isdisjoint(test)
     assert train | val | test == set(range(100))
+
+
+def test_grouped_splits_keep_forward_reverse_pairs_together(tmp_path):
+    ids = np.arange(200, dtype=np.int64)
+    splits = write_grouped_splits(
+        tmp_path, ids, seed=7, source_group_size=2
+    )
+
+    memberships = {
+        base_path_id: split
+        for split, values in splits.items()
+        for base_path_id in values.tolist()
+    }
+    assert all(memberships[2 * pair] == memberships[2 * pair + 1] for pair in range(100))

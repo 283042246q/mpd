@@ -109,17 +109,26 @@ def write_grouped_splits(
     seed: int,
     train_fraction: float = 0.9,
     validation_fraction: float = 0.05,
+    source_group_size: int = 1,
 ) -> Dict[str, np.ndarray]:
-    """Split unique base paths once so retiming variants cannot leak."""
+    """Split paths once, optionally grouping adjacent source augmentations.
+
+    The legacy ``dataset_merged_doubled.hdf5`` stores each forward path and
+    its reverse at adjacent IDs.  ``source_group_size=2`` hashes ``id // 2``
+    while still writing the original IDs to each split file.
+    """
 
     if not 0.0 < train_fraction < 1.0:
         raise ValueError("train_fraction must be in (0, 1)")
     if not 0.0 <= validation_fraction < 1.0 - train_fraction:
         raise ValueError("validation_fraction leaves no test split")
+    if source_group_size <= 0:
+        raise ValueError("source_group_size must be positive")
     unique_ids = np.unique(np.asarray(base_path_ids, dtype=np.int64))
     # SplitMix64 gives each base path a stable assignment. Adding later shards
     # cannot move an existing path between train/val/test.
-    unsigned = unique_ids.astype(np.uint64, copy=False) + np.uint64(seed)
+    group_ids = unique_ids // int(source_group_size)
+    unsigned = group_ids.astype(np.uint64, copy=False) + np.uint64(seed)
     unsigned = (unsigned ^ (unsigned >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
     unsigned = (unsigned ^ (unsigned >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
     unsigned = unsigned ^ (unsigned >> np.uint64(31))

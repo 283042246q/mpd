@@ -5,6 +5,7 @@ from scipy import interpolate
 from mpd.datasets.spacetime_legacy import open_uniform_knots
 from mpd.parametric_trajectory.toppra_retiming import (
     build_multimodal_retiming_references,
+    build_retiming_references_from_feasible_anchor,
     run_toppra,
 )
 
@@ -48,13 +49,28 @@ def test_multimodal_retiming_contains_global_and_local_modes():
     )
 
     assert [reference.name for reference in references] == [
-        "toppra",
-        "duration_1.2",
+        "fast_anchor",
         "duration_1.5",
-        "limits_0.85_0.80",
-        "limits_0.65_0.70",
+        "duration_2.0",
+        "duration_2.5",
         "local_slowdown",
         "near_wait",
     ]
     assert all(np.all(np.diff(reference.time_from_start) > 0.0) for reference in references)
     assert references[1].time_from_start[-1] > references[0].time_from_start[-1]
+
+
+def test_duration_modes_scale_the_feasible_anchor_not_raw_toppra():
+    phase = np.linspace(0.0, 1.0, 128)
+    feasible_anchor = phase * 3.25
+    references = build_retiming_references_from_feasible_anchor(
+        feasible_anchor,
+        phase=phase,
+        rng=np.random.default_rng(9),
+    )
+
+    durations = {reference.name: reference.time_from_start[-1] for reference in references}
+    assert durations["fast_anchor"] == 3.25
+    assert durations["duration_1.5"] == 3.25 * 1.5
+    assert durations["duration_2.0"] == 3.25 * 2.0
+    assert durations["duration_2.5"] == 3.25 * 2.5

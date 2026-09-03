@@ -11,6 +11,16 @@ from scipy import interpolate
 from mpd.datasets.spacetime_schema import TimingSource
 
 
+DEFAULT_RETIMING_VARIANTS = (
+    "fast_anchor",
+    "duration_1.5",
+    "duration_2.0",
+    "duration_2.5",
+    "local_slowdown",
+    "near_wait",
+)
+
+
 @dataclass(frozen=True)
 class RetimingReference:
     name: str
@@ -134,42 +144,15 @@ def _integrate_density(phase: np.ndarray, density: np.ndarray) -> np.ndarray:
     return np.concatenate(([0.0], np.cumsum(increments)))
 
 
-def build_multimodal_retiming_references(
+def build_toppra_anchor_reference(
     spatial_spline: interpolate.BSpline,
     *,
     dq_max: np.ndarray,
     ddq_max: np.ndarray,
     phase: np.ndarray,
-    rng: np.random.Generator,
     num_toppra_gridpoints: int = 256,
-    variant_names: Optional[Sequence[str]] = None,
-) -> List[RetimingReference]:
-    """Create TOPP-RA, scaled, local-slowdown and near-wait teachers."""
-
-    selected = set(
-        variant_names
-        or (
-            "toppra",
-            "duration_1.2",
-            "duration_1.5",
-            "limits_0.85_0.80",
-            "limits_0.65_0.70",
-            "local_slowdown",
-            "near_wait",
-        )
-    )
-    known = {
-        "toppra",
-        "duration_1.2",
-        "duration_1.5",
-        "limits_0.85_0.80",
-        "limits_0.65_0.70",
-        "local_slowdown",
-        "near_wait",
-    }
-    unknown = sorted(selected - known)
-    if unknown:
-        raise ValueError(f"unknown retiming variants: {unknown}")
+) -> RetimingReference:
+    """Build the raw TOPP-RA reference that must be made feasible after fitting."""
 
     anchor = run_toppra(
         spatial_spline,
@@ -177,15 +160,52 @@ def build_multimodal_retiming_references(
         ddq_max=ddq_max,
         num_gridpoints=num_toppra_gridpoints,
     )
-    anchor_time = resample_reference(anchor, phase)
+    return RetimingReference(
+        "fast_anchor",
+        TimingSource.TOPPRA,
+        resample_reference(anchor, phase),
+        0,
+        {"duration_scale": 1.0, "stage": "raw_toppra"},
+    )
+
+
+def build_retiming_references_from_feasible_anchor(
+    feasible_anchor_time: np.ndarray,
+    *,
+    phase: np.ndarray,
+    rng: np.random.Generator,
+    variant_names: Optional[Sequence[str]] = None,
+) -> List[RetimingReference]:
+    """Create timing modes from an already fitted and validated anchor.
+
+    Applying duration scales here, rather than to raw TOPP-RA output, prevents
+    the scaled modes from collapsing back onto the same feasibility boundary.
+    """
+
+    selected = set(variant_names or DEFAULT_RETIMING_VARIANTS)
+    unknown = sorted(selected - set(DEFAULT_RETIMING_VARIANTS))
+    if unknown:
+        raise ValueError(f"unknown retiming variants: {unknown}")
+    phase = np.asarray(phase, dtype=np.float64)
+    anchor_time = np.asarray(feasible_anchor_time, dtype=np.float64)
+    if anchor_time.shape != phase.shape:
+        raise ValueError("feasible_anchor_time and phase must have the same shape")
+    anchor_time = anchor_time - anchor_time[0]
+    if anchor_time[-1] <= 0.0 or not np.all(np.diff(anchor_time) > 0.0):
+        raise ValueError("feasible_anchor_time must be strictly increasing")
+
     references: List[RetimingReference] = []
-    if "toppra" in selected:
+    if "fast_anchor" in selected:
         references.append(
             RetimingReference(
-                "toppra", TimingSource.TOPPRA, anchor_time, 0, {"duration_scale": 1.0}
+                "fast_anchor",
+                TimingSource.TOPPRA,
+                anchor_time.copy(),
+                0,
+                {"duration_scale": 1.0, "stage": "feasible_anchor"},
             )
         )
-    for mode_id, scale in ((1, 1.2), (2, 1.5)):
+    for mode_id, scale in ((1, 1.5), (2, 2.0), (3, 2.5)):
         name = f"duration_{scale:.1f}"
         if name in selected:
             references.append(
@@ -194,37 +214,9 @@ def build_multimodal_retiming_references(
                     TimingSource.DURATION_SCALED,
                     anchor_time * scale,
                     mode_id,
-                    {"duration_scale": scale},
+                    {"duration_scale": scale, "anchor": "feasible_anchor"},
                 )
             )
-
-    for mode_id, velocity_scale, acceleration_scale in (
-        (3, 0.85, 0.80),
-        (4, 0.65, 0.70),
-    ):
-        name = f"limits_{velocity_scale:.2f}_{acceleration_scale:.2f}"
-        if name not in selected:
-            continue
-        scaled = run_toppra(
-            spatial_spline,
-            dq_max=dq_max,
-            ddq_max=ddq_max,
-            num_gridpoints=num_toppra_gridpoints,
-            velocity_scale=velocity_scale,
-            acceleration_scale=acceleration_scale,
-        )
-        references.append(
-            RetimingReference(
-                name,
-                TimingSource.LIMIT_SCALED_TOPPRA,
-                resample_reference(scaled, phase),
-                mode_id,
-                {
-                    "velocity_scale": velocity_scale,
-                    "acceleration_scale": acceleration_scale,
-                },
-            )
-        )
 
     anchor_density = np.gradient(anchor_time, phase, edge_order=2)
     if "local_slowdown" in selected:
@@ -238,7 +230,7 @@ def build_multimodal_retiming_references(
                 "local_slowdown",
                 TimingSource.LOCAL_SLOWDOWN,
                 _integrate_density(phase, density),
-                5,
+                4,
                 {"center": center, "sigma": sigma, "amplitude": amplitude},
             )
         )
@@ -253,8 +245,40 @@ def build_multimodal_retiming_references(
                 "near_wait",
                 TimingSource.NEAR_WAIT,
                 _integrate_density(phase, density),
-                6,
+                5,
                 {"center": center, "sigma": sigma, "amplitude": amplitude},
             )
         )
     return references
+
+
+def build_multimodal_retiming_references(
+    spatial_spline: interpolate.BSpline,
+    *,
+    dq_max: np.ndarray,
+    ddq_max: np.ndarray,
+    phase: np.ndarray,
+    rng: np.random.Generator,
+    num_toppra_gridpoints: int = 256,
+    variant_names: Optional[Sequence[str]] = None,
+) -> List[RetimingReference]:
+    """Compatibility helper using raw TOPP-RA as the anchor.
+
+    Dataset generation should validate the result of
+    :func:`build_toppra_anchor_reference` first and then call
+    :func:`build_retiming_references_from_feasible_anchor`.
+    """
+
+    anchor = build_toppra_anchor_reference(
+        spatial_spline,
+        dq_max=dq_max,
+        ddq_max=ddq_max,
+        phase=phase,
+        num_toppra_gridpoints=num_toppra_gridpoints,
+    )
+    return build_retiming_references_from_feasible_anchor(
+        anchor.time_from_start,
+        phase=phase,
+        rng=rng,
+        variant_names=variant_names,
+    )
