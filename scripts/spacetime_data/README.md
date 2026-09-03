@@ -74,7 +74,9 @@ tau = logit(y)
 
 The `tau_r` dataset view expands each eligible shape row over those five
 targets. Global `c` scale variants are deliberately not expanded, because they
-share almost the same `r` and would overweight the anchor shape.
+share almost the same `r` and would overweight the anchor shape. Expanded
+targets use `quality/tau_r_mode_valid`; scalar `duration_bounds_valid` only
+governs legacy rows whose `tau` describes the duration of that row's `c`.
 
 The old augmentation entry remains only for upgrading an existing v1 dataset
 without rerunning RRT or TOPP-RA. Its duration floor now also defaults to 2

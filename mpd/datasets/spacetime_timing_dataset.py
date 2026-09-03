@@ -304,10 +304,6 @@ class SpaceTimeTimingDataset(Dataset):
             split_mask = np.isin(base_path_ids, split_ids)
         mask = split_mask & np.asarray(shard["quality/accepted"][:], dtype=np.bool_)
         if self.representation == "tau_r":
-            mask &= np.asarray(
-                shard["quality/duration_bounds_valid"][:], dtype=np.bool_
-            )
-            mask &= np.isfinite(np.asarray(shard["timing/tau"][:]))
             shape = np.asarray(shard["timing/shape_control_points"][:])
             mask &= np.all(np.isfinite(shape), axis=1)
         if self.representation == "tau_r" and "timing/tau_modes" in shard:
@@ -320,6 +316,14 @@ class SpaceTimeTimingDataset(Dataset):
                 raise ValueError("quality/tau_r_mode_valid has an invalid shape")
             rows, modes = np.nonzero(mask[:, None] & mode_valid)
             return rows.astype(np.int64), modes.astype(np.int16)
+        if self.representation == "tau_r":
+            # Legacy scalar tau describes the duration of this row's c and
+            # therefore needs the c-to-(tau,r) bounds check. New mode arrays
+            # synthesize T from T_min and do not depend on that scalar duration.
+            mask &= np.asarray(
+                shard["quality/duration_bounds_valid"][:], dtype=np.bool_
+            )
+            mask &= np.isfinite(np.asarray(shard["timing/tau"][:]))
         rows = np.flatnonzero(mask).astype(np.int64, copy=False)
         return rows, np.full(rows.shape, -1, dtype=np.int16)
 

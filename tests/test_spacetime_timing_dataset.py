@@ -82,7 +82,9 @@ def test_tau_r_view_filters_invalid_duration_bounds(tmp_path):
     root = _write_dataset(tmp_path / "dataset")
     dataset = SpaceTimeTimingDataset([root], split="train", representation="tau_r")
 
-    assert len(dataset) == 8
+    # Expanded modes use their own T_min-based validity and do not inherit the
+    # scalar c-duration validity flag on row 2.
+    assert len(dataset) == 11
     first = dataset[0]
     assert first["timing"].shape == (6,)
     assert np.isclose(first["timing"][0].item(), -4.0)
@@ -91,6 +93,17 @@ def test_tau_r_view_filters_invalid_duration_bounds(tmp_path):
     restored = TimingNormalization.from_dict(normalization.to_dict())
     np.testing.assert_array_equal(restored.target_mean, normalization.target_mean)
     assert restored.representation == "tau_r"
+
+
+def test_legacy_scalar_tau_still_filters_invalid_duration_bounds(tmp_path):
+    root = _write_dataset(tmp_path / "dataset")
+    with h5py.File(root / "shards" / "part-0000000.hdf5", "r+") as shard:
+        del shard["timing/tau_modes"]
+        del shard["quality/tau_r_mode_valid"]
+
+    dataset = SpaceTimeTimingDataset([root], split="train", representation="tau_r")
+
+    assert len(dataset) == 3
 
 
 def test_hash_fallback_keeps_variants_of_each_base_path_in_one_split():

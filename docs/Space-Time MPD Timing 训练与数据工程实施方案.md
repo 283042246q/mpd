@@ -462,6 +462,10 @@ spatial/timing spline contract
 `augment_normalized_timing.py` 原子升级。基础 schema 仍为 v1，manifest 的
 `normalized_timing` 节记录全部派生参数。
 
+五档 mode 的有效性只由 `quality/tau_r_mode_valid` 控制：其 duration 是从新
+计算的 `T_min(P,r)` 出发构造的，不应再继承原 `c` 对应的 scalar
+`quality/duration_bounds_valid`。后者只用于没有 mode 数组的旧 scalar `tau` 行。
+
 scene table 至少包含：
 
 ```text
