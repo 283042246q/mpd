@@ -1,6 +1,6 @@
 import torch
 
-from mpd.models.timing_diffusion import (
+from mpd.timing_training.model import (
     SpatialPathEncoder,
     TimingDenoiser,
     TimingDiffusion,

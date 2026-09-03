@@ -1,0 +1,50 @@
+environment: EnvWarehouse
+representation: c
+run_name: baseline-v1
+output_root: ${REPO_ROOT}/data_trained_models/timing_diffusion
+
+# --env selects one entry; repeated --dataset-root arguments override this map.
+training_data:
+  EnvWarehouse:
+    - ${REPO_ROOT}/data_trajectories_spacetime/EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v1
+
+data:
+  batch_size: 128
+  num_workers: 4
+  split_seed: 1726484688
+  train_fraction: 0.9
+  validation_fraction: 0.05
+  statistics_chunk_rows: 1024
+  # Keep false for formal training. The CLI smoke example overrides it while
+  # the current data-generation snapshot has no finalized split files.
+  allow_hash_split_fallback: false
+  max_train_samples: null
+  max_val_samples: null
+
+model:
+  latent_dim: 6
+  num_phase_points: 64
+  path_width: 128
+  path_embedding_dim: 256
+  hidden_dim: 256
+  time_embedding_dim: 128
+  num_residual_blocks: 6
+
+diffusion:
+  num_diffusion_steps: 100
+  schedule_offset: 0.008
+  clip_clean: 5.0
+
+training:
+  seed: 1726484688
+  device: auto
+  max_steps: 500000
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  gradient_clip_norm: 1.0
+  use_amp: true
+  ema_decay: 0.995
+  log_every: 100
+  validate_every: 1000
+  validation_batches: 20
+  checkpoint_every: 10000
