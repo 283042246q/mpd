@@ -17,6 +17,7 @@ import yaml
 
 from mpd.datasets.spacetime_legacy import open_uniform_knots
 from mpd.datasets.spacetime_schema import CANONICAL_SAMPLE_FIELDS, SCHEMA_VERSION, sha256_file
+from mpd.datasets.spacetime_timing_augmentation import NORMALIZED_TIMING_FIELDS
 from mpd.parametric_trajectory.timing_fitting import TimingSplineNumpy, attach_spatial_derivatives
 
 
@@ -48,6 +49,7 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
 
     spatial_config = manifest["spatial_spline"]
     timing_config = manifest["timing_spline"]
+    normalized_config = manifest.get("normalized_timing")
     timing_spline = TimingSplineNumpy(
         num_control_points=int(timing_config["num_control_points"]),
         degree=int(timing_config["degree"]),
@@ -84,7 +86,13 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
     unique_base_paths = set()
     all_base_paths = set()
     violations = []
-    maxima = {"v_ratio_max": 0.0, "a_ratio_max": 0.0, "relative_timing_rmse": 0.0}
+    maxima = {
+        "v_ratio_max": 0.0,
+        "a_ratio_max": 0.0,
+        "relative_timing_rmse": 0.0,
+        "tau_mode_error": 0.0,
+        "duration_mode_error_s": 0.0,
+    }
     for shard_path in sorted((dataset_root / "shards").glob("part-*.hdf5")):
         with h5py.File(str(shard_path), "r") as shard:
             if shard.attrs.get("schema_version") != SCHEMA_VERSION:
@@ -119,6 +127,73 @@ def validate(dataset_root: Path, *, max_samples: int = None, ratio_tolerance: fl
                         f"{shard_path.name}: {name} shape={shard[name].shape[1:]}, "
                         f"expected={expected_shape}"
                     )
+            if normalized_config is not None:
+                normalized_missing = sorted(
+                    set(NORMALIZED_TIMING_FIELDS) - set(_all_dataset_paths(shard))
+                )
+                if normalized_missing:
+                    violations.append(
+                        f"{shard_path.name}: missing normalized fields={normalized_missing}"
+                    )
+                    continue
+                rows = int(shard["timing/duration"].shape[0])
+                for name, (dtype, sample_shape) in NORMALIZED_TIMING_FIELDS.items():
+                    if shard[name].dtype != dtype:
+                        violations.append(
+                            f"{shard_path.name}: {name} dtype={shard[name].dtype}, "
+                            f"expected={dtype}"
+                        )
+                    if shard[name].shape != (rows,) + sample_shape:
+                        violations.append(
+                            f"{shard_path.name}: {name} shape={shard[name].shape}, "
+                            f"expected={(rows,) + sample_shape}"
+                        )
+                expected_fractions = np.asarray(
+                    normalized_config["duration_fraction_modes"], dtype=np.float64
+                )
+                fractions = np.asarray(
+                    shard["timing/duration_fraction_modes"][:], dtype=np.float64
+                )
+                tau_modes = np.asarray(shard["timing/tau_modes"][:], dtype=np.float64)
+                expected_tau = np.log(expected_fractions) - np.log1p(-expected_fractions)
+                mode_valid = np.asarray(
+                    shard["quality/tau_r_mode_valid"][:], dtype=np.bool_
+                )
+                duration_modes = np.asarray(
+                    shard["timing/duration_modes"][:], dtype=np.float64
+                )
+                t_min = np.asarray(shard["timing/t_min"][:], dtype=np.float64)
+                t_max = np.asarray(shard["timing/t_max"][:], dtype=np.float64)
+                expected_duration = t_min[:, None] + (
+                    t_max - t_min
+                )[:, None] * expected_fractions[None, :]
+                fraction_error = float(
+                    np.max(np.abs(fractions - expected_fractions[None, :]))
+                ) if rows else 0.0
+                tau_error = float(
+                    np.max(np.abs(tau_modes - expected_tau[None, :]))
+                ) if rows else 0.0
+                duration_error = float(
+                    np.max(np.abs(duration_modes[mode_valid] - expected_duration[mode_valid]))
+                ) if np.any(mode_valid) else 0.0
+                maxima["tau_mode_error"] = max(maxima["tau_mode_error"], tau_error)
+                maxima["duration_mode_error_s"] = max(
+                    maxima["duration_mode_error_s"], duration_error
+                )
+                if fraction_error > 1e-6:
+                    violations.append(f"{shard_path.name}: duration_fraction_modes")
+                if tau_error > 1e-5:
+                    violations.append(f"{shard_path.name}: tau_modes")
+                if duration_error > 1e-4:
+                    violations.append(f"{shard_path.name}: duration_modes")
+                tau_r_variant_ids = normalized_config.get("tau_r_variant_ids")
+                if tau_r_variant_ids is not None:
+                    eligible = np.isin(
+                        np.asarray(shard["index/variant_id"][:], dtype=np.int64),
+                        np.asarray(tau_r_variant_ids, dtype=np.int64),
+                    )
+                    if np.any(mode_valid & ~eligible[:, None]):
+                        violations.append(f"{shard_path.name}: ineligible tau_r mode")
             all_base_paths.update(
                 np.unique(shard["index/base_path_id"][:]).astype(np.int64).tolist()
             )
