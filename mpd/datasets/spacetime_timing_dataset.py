@@ -113,6 +113,7 @@ class _ShardSelection:
     dataset_root: Path
     shard_path: Path
     rows: np.ndarray
+    timing_mode_indices: np.ndarray
 
 
 def _manifest_contract(manifest: Mapping[str, object]) -> Dict[str, object]:
@@ -198,7 +199,7 @@ class SpaceTimeTimingDataset(Dataset):
             split_ids = self._load_split_ids(root, split)
             for shard_path in sorted((root / "shards").glob("part-*.hdf5")):
                 with h5py.File(str(shard_path), "r") as shard:
-                    selected = self._select_rows(
+                    selected, timing_mode_indices = self._select_rows(
                         shard,
                         split=split,
                         split_ids=split_ids,
@@ -206,10 +207,16 @@ class SpaceTimeTimingDataset(Dataset):
                     )
                 if remaining is not None:
                     selected = selected[:remaining]
+                    timing_mode_indices = timing_mode_indices[:remaining]
                     remaining -= selected.size
                 if selected.size:
                     self._selections.append(
-                        _ShardSelection(root, shard_path.resolve(), selected)
+                        _ShardSelection(
+                            root,
+                            shard_path.resolve(),
+                            selected,
+                            timing_mode_indices,
+                        )
                     )
                 if remaining == 0:
                     break
@@ -250,7 +257,7 @@ class SpaceTimeTimingDataset(Dataset):
         split: str,
         split_ids: Optional[np.ndarray],
         split_seed: int,
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         required = {
             "spatial/control_points",
             "timing/control_points",
@@ -292,7 +299,18 @@ class SpaceTimeTimingDataset(Dataset):
             mask &= np.isfinite(np.asarray(shard["timing/tau"][:]))
             shape = np.asarray(shard["timing/shape_control_points"][:])
             mask &= np.all(np.isfinite(shape), axis=1)
-        return np.flatnonzero(mask).astype(np.int64, copy=False)
+        if self.representation == "tau_r" and "timing/tau_modes" in shard:
+            if "quality/tau_r_mode_valid" not in shard:
+                raise ValueError("shard has timing/tau_modes without quality/tau_r_mode_valid")
+            mode_valid = np.asarray(
+                shard["quality/tau_r_mode_valid"][:], dtype=np.bool_
+            )
+            if mode_valid.ndim != 2 or mode_valid.shape[0] != mask.size:
+                raise ValueError("quality/tau_r_mode_valid has an invalid shape")
+            rows, modes = np.nonzero(mask[:, None] & mode_valid)
+            return rows.astype(np.int64), modes.astype(np.int16)
+        rows = np.flatnonzero(mask).astype(np.int64, copy=False)
+        return rows, np.full(rows.shape, -1, dtype=np.int16)
 
     @property
     def manifests(self) -> Tuple[Mapping[str, object], ...]:
@@ -314,7 +332,7 @@ class SpaceTimeTimingDataset(Dataset):
     def __len__(self) -> int:
         return int(self._cumulative[-1]) if self._cumulative.size else 0
 
-    def _locate(self, index: int) -> Tuple[_ShardSelection, int]:
+    def _locate(self, index: int) -> Tuple[_ShardSelection, int, int]:
         if index < 0:
             index += len(self)
         if index < 0 or index >= len(self):
@@ -322,7 +340,12 @@ class SpaceTimeTimingDataset(Dataset):
         shard_index = int(np.searchsorted(self._cumulative, index, side="right"))
         previous = int(self._cumulative[shard_index - 1]) if shard_index else 0
         selection = self._selections[shard_index]
-        return selection, int(selection.rows[index - previous])
+        local_index = index - previous
+        return (
+            selection,
+            int(selection.rows[local_index]),
+            int(selection.timing_mode_indices[local_index]),
+        )
 
     def _open(self, path: Path) -> h5py.File:
         handle = self._handles.get(path)
@@ -331,22 +354,26 @@ class SpaceTimeTimingDataset(Dataset):
             self._handles[path] = handle
         return handle
 
-    def _read_target(self, shard: h5py.File, row: int) -> np.ndarray:
+    def _read_target(self, shard: h5py.File, row: int, timing_mode_index: int) -> np.ndarray:
         if self.representation == "c":
             return encode_timing_control_points(
                 np.asarray(shard["timing/control_points"][row], dtype=np.float64)
             ).astype(np.float32)
-        tau = float(shard["timing/tau"][row])
+        tau = float(
+            shard["timing/tau_modes"][row, timing_mode_index]
+            if timing_mode_index >= 0
+            else shard["timing/tau"][row]
+        )
         shape = np.asarray(
             shard["timing/shape_control_points"][row], dtype=np.float32
         )
         return np.concatenate((np.asarray([tau], dtype=np.float32), shape))
 
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
-        selection, row = self._locate(index)
+        selection, row, timing_mode_index = self._locate(index)
         shard = self._open(selection.shard_path)
         path = np.asarray(shard["spatial/control_points"][row], dtype=np.float32)
-        target = self._read_target(shard, row)
+        target = self._read_target(shard, row, timing_mode_index)
         if self.normalization is not None:
             path = (path - self.normalization.path_mean[None, :]) / (
                 self.normalization.path_std[None, :]
@@ -364,6 +391,7 @@ class SpaceTimeTimingDataset(Dataset):
                 int(shard["index/variant_id"][row]), dtype=torch.int64
             ),
             "task_id": torch.tensor(int(shard["index/task_id"][row]), dtype=torch.int64),
+            "timing_mode_index": torch.tensor(timing_mode_index, dtype=torch.int64),
         }
 
     def set_normalization(self, normalization: TimingNormalization) -> None:
@@ -391,19 +419,29 @@ class SpaceTimeTimingDataset(Dataset):
             with h5py.File(str(selection.shard_path), "r") as shard:
                 for start in range(0, selection.rows.size, chunk_rows):
                     rows = selection.rows[start : start + chunk_rows]
+                    modes = selection.timing_mode_indices[start : start + chunk_rows]
+                    unique_rows, inverse = np.unique(rows, return_inverse=True)
                     paths = np.asarray(
-                        shard["spatial/control_points"][rows], dtype=np.float64
-                    )
+                        shard["spatial/control_points"][unique_rows], dtype=np.float64
+                    )[inverse]
                     if self.representation == "c":
                         full = np.asarray(
-                            shard["timing/control_points"][rows], dtype=np.float64
-                        )
+                            shard["timing/control_points"][unique_rows], dtype=np.float64
+                        )[inverse]
                         targets = full[:, [0, 2, 3, 4, 5, 7]]
                     else:
-                        tau = np.asarray(shard["timing/tau"][rows], dtype=np.float64)
+                        if np.all(modes >= 0):
+                            all_tau = np.asarray(
+                                shard["timing/tau_modes"][unique_rows], dtype=np.float64
+                            )[inverse]
+                            tau = all_tau[np.arange(rows.size), modes]
+                        else:
+                            tau = np.asarray(
+                                shard["timing/tau"][unique_rows], dtype=np.float64
+                            )[inverse]
                         shape = np.asarray(
-                            shard["timing/shape_control_points"][rows], dtype=np.float64
-                        )
+                            shard["timing/shape_control_points"][unique_rows], dtype=np.float64
+                        )[inverse]
                         targets = np.concatenate((tau[:, None], shape), axis=1)
                     path_sum += np.sum(paths, axis=(0, 1))
                     path_square_sum += np.sum(np.square(paths), axis=(0, 1))

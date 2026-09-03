@@ -46,7 +46,7 @@ def _parse_args(repository_root: Path) -> argparse.Namespace:
         default=14.0,
         help="task time limit in seconds (default: 14)",
     )
-    parser.add_argument("--duration-floor", type=float, default=0.0)
+    parser.add_argument("--duration-floor", type=float, default=2.0)
     parser.add_argument("--density-floor", type=float, default=1e-3)
     parser.add_argument("--logit-clip", type=float, default=1e-3)
     parser.add_argument("--t-min-safety-factor", type=float, default=1.0)
@@ -59,6 +59,22 @@ def _parse_args(repository_root: Path) -> argparse.Namespace:
         help="fit r from the deployed c curve (default) or the saved teacher curve",
     )
     return parser.parse_args()
+
+
+def _tau_r_variant_ids(manifest) -> list:
+    explicit = [
+        int(variant["variant_id"])
+        for variant in manifest.get("variants", [])
+        if "tau_r" in variant.get("training_representations", [])
+    ]
+    if explicit:
+        return explicit
+    shape_names = {"toppra", "fast_anchor", "local_slowdown", "near_wait"}
+    return [
+        int(variant["variant_id"])
+        for variant in manifest.get("variants", [])
+        if variant.get("name") in shape_names
+    ]
 
 
 def _atomic_write_yaml(path: Path, value: Dict[str, object]) -> None:
@@ -108,6 +124,7 @@ def augment_dataset(args: argparse.Namespace) -> Dict[str, object]:
         num_control_points=int(timing_config["num_control_points"]),
         degree=int(timing_config["degree"]),
         num_phase_points=int(timing_config["num_phase_points"]),
+        tau_r_variant_ids=_tau_r_variant_ids(manifest),
         u_min=float(timing_config["u_min"]),
     )
     normalized_spline = NormalizedTimingSplineNumpy(
@@ -132,7 +149,13 @@ def augment_dataset(args: argparse.Namespace) -> Dict[str, object]:
     if not shard_paths:
         raise ValueError(f"no completed shards found in {dataset_root / 'shards'}")
     started = time.monotonic()
-    totals = {"rows": 0, "valid_rows": 0, "invalid_rows": 0, "logit_clipped_rows": 0}
+    totals = {
+        "rows": 0,
+        "valid_rows": 0,
+        "invalid_rows": 0,
+        "logit_clipped_rows": 0,
+        "tau_r_mode_samples": 0,
+    }
     fit_rmse_max = 0.0
     t_min_min = np.inf
     t_min_max = -np.inf
@@ -164,6 +187,10 @@ def augment_dataset(args: argparse.Namespace) -> Dict[str, object]:
         "duration_max": "timing/t_max",
         "duration_logit": "timing/tau",
         "training_valid": "quality/duration_bounds_valid",
+        "duration_fraction_modes": "timing/duration_fraction_modes",
+        "duration_modes": "timing/duration_modes",
+        "duration_logit_modes": "timing/tau_modes",
+        "mode_training_valid": "quality/tau_r_mode_valid",
     }
     _atomic_write_yaml(manifest_path, manifest)
 

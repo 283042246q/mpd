@@ -106,7 +106,7 @@ def test_augment_shard_adds_normalized_fields_atomically(tmp_path):
     normalized_spline = NormalizedTimingSplineNumpy(num_phase_points=32)
     config = augmentation_config(
         duration_max=14.0,
-        duration_floor=0.0,
+        duration_floor=2.0,
         density_floor=1e-3,
         logit_clip=1e-3,
         t_min_safety_factor=1.0,
@@ -136,3 +136,13 @@ def test_augment_shard_adds_normalized_fields_atomically(tmp_path):
             assert shard[name].dtype == dtype
         assert shard["timing/t_max"][0] == 14.0
         assert bool(shard["quality/duration_bounds_valid"][0])
+        np.testing.assert_allclose(
+            shard["timing/duration_fraction_modes"][0],
+            [0.01, 0.05, 0.15, 0.35, 0.60],
+        )
+        np.testing.assert_allclose(
+            shard["timing/tau_modes"][0],
+            np.log([0.01, 0.05, 0.15, 0.35, 0.60])
+            - np.log1p(-np.asarray([0.01, 0.05, 0.15, 0.35, 0.60])),
+        )
+        assert np.all(shard["quality/tau_r_mode_valid"][0])

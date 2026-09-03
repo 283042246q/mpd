@@ -25,6 +25,7 @@ from mpd.parametric_trajectory.timing_fitting import TimingSplineNumpy
 
 
 NORMALIZED_TIMING_EXTENSION_VERSION = "spacetime_normalized_timing_v1"
+DEFAULT_DURATION_FRACTION_MODES = (0.01, 0.05, 0.15, 0.35, 0.60)
 
 NORMALIZED_TIMING_FIELDS = {
     "timing/shape_control_points": (np.dtype("float32"), (5,)),
@@ -34,10 +35,14 @@ NORMALIZED_TIMING_FIELDS = {
     "timing/t_max": (np.dtype("float32"), ()),
     "timing/duration_fraction": (np.dtype("float32"), ()),
     "timing/tau": (np.dtype("float32"), ()),
+    "timing/duration_fraction_modes": (np.dtype("float32"), (5,)),
+    "timing/duration_modes": (np.dtype("float32"), (5,)),
+    "timing/tau_modes": (np.dtype("float32"), (5,)),
     "quality/normalized_timing_fit_rmse": (np.dtype("float32"), ()),
     "quality/normalized_timing_density_clip_fraction": (np.dtype("float32"), ()),
     "quality/duration_logit_clipped": (np.dtype("bool"), ()),
     "quality/duration_bounds_valid": (np.dtype("bool"), ()),
+    "quality/tau_r_mode_valid": (np.dtype("bool"), (5,)),
 }
 
 
@@ -53,6 +58,8 @@ def augmentation_config(
     shape_source: str,
     timing_degree: int = 3,
     num_phase_points: int = 128,
+    duration_fraction_modes=DEFAULT_DURATION_FRACTION_MODES,
+    tau_r_variant_ids=None,
 ) -> Dict[str, object]:
     if duration_max <= 0.0:
         raise ValueError("duration_max must be positive")
@@ -72,6 +79,18 @@ def augmentation_config(
         raise ValueError("timing_degree and num_phase_points are invalid")
     if shape_source not in ("control_points", "reference_time"):
         raise ValueError("shape_source must be control_points or reference_time")
+    duration_fraction_modes = tuple(float(value) for value in duration_fraction_modes)
+    if len(duration_fraction_modes) != 5:
+        raise ValueError("v1 requires exactly five duration_fraction_modes")
+    if any(not 0.0 < value < 1.0 for value in duration_fraction_modes):
+        raise ValueError("duration_fraction_modes must be strictly inside (0, 1)")
+    if any(
+        right <= left
+        for left, right in zip(duration_fraction_modes, duration_fraction_modes[1:])
+    ):
+        raise ValueError("duration_fraction_modes must be strictly increasing")
+    if tau_r_variant_ids is not None:
+        tau_r_variant_ids = sorted({int(value) for value in tau_r_variant_ids})
     return {
         "extension_version": NORMALIZED_TIMING_EXTENSION_VERSION,
         "representation": NORMALIZED_TIMING_REPRESENTATION,
@@ -88,6 +107,9 @@ def augmentation_config(
         "max_normalized_fit_rmse": float(max_fit_rmse),
         "shape_source": shape_source,
         "invalid_sample_policy": "retain_row_and_set_quality/duration_bounds_valid_false",
+        "duration_fraction_modes": list(duration_fraction_modes),
+        "tau_r_variant_ids": tau_r_variant_ids,
+        "tau_r_mode_policy": "expand_shape_rows_over_duration_fraction_modes",
     }
 
 
@@ -147,6 +169,21 @@ def _derive_fields(
     tolerance = float(config["bounds_tolerance_s"])
     max_fit_rmse = float(config["max_normalized_fit_rmse"])
     shape_source = str(config["shape_source"])
+    duration_fraction_modes = np.asarray(
+        config["duration_fraction_modes"], dtype=np.float64
+    )
+    tau_mode_values = np.log(duration_fraction_modes) - np.log1p(
+        -duration_fraction_modes
+    )
+    configured_variant_ids = config.get("tau_r_variant_ids")
+    tau_r_variant_ids = (
+        None
+        if configured_variant_ids is None
+        else {int(value) for value in configured_variant_ids}
+    )
+    variant_ids = shard.get("index/variant_id")
+    if tau_r_variant_ids is not None and variant_ids is None:
+        raise ValueError("tau_r_variant_ids requires index/variant_id in the shard")
 
     for row in range(rows):
         old_timing = timing_spline.evaluate(
@@ -197,6 +234,23 @@ def _derive_fields(
         result["timing/t_max"][row] = duration_max
         result["timing/duration_fraction"][row] = fraction
         result["timing/tau"][row] = tau
+        result["timing/duration_fraction_modes"][row] = duration_fraction_modes
+        result["timing/tau_modes"][row] = tau_mode_values
+        mode_eligible = tau_r_variant_ids is None or int(variant_ids[row]) in tau_r_variant_ids
+        mode_valid = bool(
+            mode_eligible
+            and np.all(np.isfinite(fit.shape_control_points))
+            and fit.rmse <= max_fit_rmse
+            and np.isfinite(minimum.value)
+            and duration_max > minimum.value
+        )
+        if mode_valid:
+            result["timing/duration_modes"][row] = minimum.value + (
+                duration_max - minimum.value
+            ) * duration_fraction_modes
+        else:
+            result["timing/duration_modes"][row] = np.nan
+        result["quality/tau_r_mode_valid"][row] = mode_valid
         result["quality/normalized_timing_fit_rmse"][row] = fit.rmse
         result["quality/normalized_timing_density_clip_fraction"][row] = (
             fit.relative_density_clip_fraction
@@ -211,6 +265,7 @@ def _derive_fields(
         "valid_rows": int(np.sum(valid)),
         "invalid_rows": int(rows - np.sum(valid)),
         "logit_clipped_rows": int(np.sum(result["quality/duration_logit_clipped"])),
+        "tau_r_mode_samples": int(np.sum(result["quality/tau_r_mode_valid"])),
         "fit_rmse_max": float(np.max(result["quality/normalized_timing_fit_rmse"]))
         if rows
         else float("nan"),

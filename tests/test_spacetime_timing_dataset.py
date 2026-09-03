@@ -45,11 +45,16 @@ def _write_dataset(root: Path) -> Path:
         shard.create_dataset("spatial/control_points", data=paths)
         shard.create_dataset("timing/control_points", data=full_c)
         shard.create_dataset("timing/tau", data=np.linspace(-1.0, 1.0, rows))
+        tau_modes = np.tile(np.asarray([-4.0, -2.0, 0.0], dtype=np.float32), (rows, 1))
+        shard.create_dataset("timing/tau_modes", data=tau_modes)
         shard.create_dataset("timing/shape_control_points", data=shape)
         shard.create_dataset("quality/accepted", data=np.ones(rows, dtype=np.bool_))
         bounds_valid = np.ones(rows, dtype=np.bool_)
         bounds_valid[2] = False
         shard.create_dataset("quality/duration_bounds_valid", data=bounds_valid)
+        mode_valid = np.ones((rows, 3), dtype=np.bool_)
+        mode_valid[1, 2] = False
+        shard.create_dataset("quality/tau_r_mode_valid", data=mode_valid)
         shard.create_dataset("index/base_path_id", data=base_ids)
         shard.create_dataset("index/variant_id", data=np.arange(rows, dtype=np.int16))
         shard.create_dataset("index/task_id", data=np.arange(rows, dtype=np.int64) + 10)
@@ -77,10 +82,11 @@ def test_tau_r_view_filters_invalid_duration_bounds(tmp_path):
     root = _write_dataset(tmp_path / "dataset")
     dataset = SpaceTimeTimingDataset([root], split="train", representation="tau_r")
 
-    assert len(dataset) == 3
+    assert len(dataset) == 8
     first = dataset[0]
     assert first["timing"].shape == (6,)
-    assert np.isclose(first["timing"][0].item(), -1.0)
+    assert np.isclose(first["timing"][0].item(), -4.0)
+    assert first["timing_mode_index"].item() == 0
     normalization = dataset.compute_normalization()
     restored = TimingNormalization.from_dict(normalization.to_dict())
     np.testing.assert_array_equal(restored.target_mean, normalization.target_mean)
