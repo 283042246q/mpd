@@ -249,25 +249,24 @@ class MarvinWarehouseGenerator:
         max_attempts = int(self.config.get("max_attempts_per_trajectory", 30))
         interpolate_num = int(self.config.get("interpolate_num", 128))
         planner_time = float(self.config.get("planner_allowed_time", 10.0))
-        retry_time_scale = max(1.0, float(self.config.get("planner_retry_time_scale", 3.0)))
         direction_cutoff = int(np.ceil(num_trajectories * float(self.config.get("random_to_placement_fraction", 0.5))))
-        for task_id in range(num_trajectories):
+        max_skipped_tasks = int(self.config.get("max_skipped_tasks", max(num_trajectories, 100)))
+        skipped_tasks = 0
+        while len(paths) < num_trajectories:
+            task_id = len(paths)
             mode = MODE_SCHEDULE[task_id % len(MODE_SCHEDULE)]
             direction = "random_to_placement" if task_id < direction_cutoff else "placement_to_placement"
             solved = None
-            for attempt in range(max_attempts):
+            for _ in range(max_attempts):
                 sampled = self._sample_task(mode, direction)
                 if sampled is None:
                     continue
                 q_start, q_goal, source_regions, goal_regions = sampled
                 started = time.perf_counter()
-                allowed_time = planner_time
-                if attempt >= max_attempts // 2:
-                    allowed_time *= retry_time_scale
                 result = self.interface.plan_start_goal(
                     q_start,
                     q_goal,
-                    allowed_time=allowed_time,
+                    allowed_time=planner_time,
                     interpolate_num=interpolate_num,
                     simplify_path=bool(self.config.get("simplify_path", True)),
                     fit_bspline=False,
@@ -283,7 +282,17 @@ class MarvinWarehouseGenerator:
                     solved = (result["sol_path"], q_start, q_goal, source_regions, goal_regions, elapsed)
                     break
             if solved is None:
-                raise RuntimeError(f"failed to plan task {task_id} ({mode}, {direction})")
+                skipped_tasks += 1
+                print(
+                    f"skipping task ({mode}, {direction}): no exact path after "
+                    f"{max_attempts} retries ({skipped_tasks}/{max_skipped_tasks} skipped)"
+                )
+                if skipped_tasks > max_skipped_tasks:
+                    raise RuntimeError(
+                        f"unable to generate {num_trajectories} trajectories: "
+                        f"skipped more than {max_skipped_tasks} tasks"
+                    )
+                continue
             path, q_start, q_goal, source_regions, goal_regions, elapsed = solved
             paths.append(np.asarray(path, dtype=np.float32))
             metadata.append(
@@ -300,7 +309,7 @@ class MarvinWarehouseGenerator:
                     "q_goal": q_goal,
                 }
             )
-            print(f"generated {task_id + 1}/{num_trajectories}: {mode}, {direction}")
+            print(f"generated {len(paths)}/{num_trajectories}: {mode}, {direction}")
         return paths, metadata
 
 
