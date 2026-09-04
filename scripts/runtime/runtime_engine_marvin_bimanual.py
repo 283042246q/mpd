@@ -2,6 +2,13 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from mpd.bimanual.runtime_contract import BimanualRequest
 from scripts.inference.inference_marvin_bimanual import plan
 
@@ -24,4 +31,3 @@ class MarvinBimanualRuntimeEngine:
             raise TimeoutError("planning deadline has expired")
         self._generation += 1
         return self._planner(request)
-

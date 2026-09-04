@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from mpd.bimanual.runtime_contract import BimanualRequest
-from .runtime_engine_marvin_bimanual import MarvinBimanualRuntimeEngine
+try:
+    from .runtime_engine_marvin_bimanual import MarvinBimanualRuntimeEngine
+except ImportError:
+    from runtime_engine_marvin_bimanual import MarvinBimanualRuntimeEngine
 
 
 @dataclass
