@@ -8,6 +8,7 @@ the ``model_hash`` field lets deployment code reject stale copies.
 from __future__ import annotations
 
 import os
+import hashlib
 from typing import Iterable
 
 import torch
@@ -38,6 +39,8 @@ class RobotMarvinBimanual(RobotBase):
             tensor_args=tensor_args,
             **kwargs,
         )
+        with open(os.path.join(robot_dir, "marvin_bimanual_mpd.urdf"), "rb") as model_file:
+            self.model_hash = hashlib.sha256(model_file.read()).hexdigest()
         self.joint_names = tuple(
             joint.name for joint in self.robot_urdf.joints if joint.joint_type != "fixed"
         )
@@ -87,7 +90,6 @@ class RobotMarvinBimanual(RobotBase):
         q_flat = q.reshape(-1, 7)
         transform = torch.eye(4, dtype=q.dtype, device=q.device).expand(q_flat.shape[0], 4, 4).clone()
         transform[..., :3, 3] = self._base_offsets[side].to(dtype=q.dtype, device=q.device)
-        transform[..., 2, 3] += 0.12
         for index in range(7):
             transform = transform @ self._rot_z(q_flat[:, index])
             if index < 6:
@@ -98,7 +100,6 @@ class RobotMarvinBimanual(RobotBase):
         transform = torch.eye(4, dtype=q.dtype, device=q.device)
         transform = transform.clone()
         transform[:3, 3] = self._base_offsets[side].to(dtype=q.dtype, device=q.device)
-        transform[2, 3] += 0.12
         axes, origins = [], []
         for index in range(7):
             axes.append(transform[:3, :3] @ torch.tensor([0.0, 0.0, 1.0], dtype=q.dtype, device=q.device))

@@ -9,7 +9,7 @@ def inactive_arm_hold_cost(q: torch.Tensor, q_start: torch.Tensor, task_mode: st
     """Quadratic hold cost; callers should also apply hard projection."""
     if task_mode not in {"left_only", "right_only"}:
         return torch.zeros(q.shape[:-2], dtype=q.dtype, device=q.device)
-    inactive = q[..., 7:, :] if task_mode == "left_only" else q[..., :7, :]
+    inactive = q[..., 7:] if task_mode == "left_only" else q[..., :7]
     start = q_start[..., 7:] if task_mode == "left_only" else q_start[..., :7]
     return (inactive - start.unsqueeze(-2)).square().mean(dim=(-1, -2))
 
@@ -19,9 +19,9 @@ def project_inactive_arm(q: torch.Tensor, q_start: torch.Tensor, task_mode: str)
         return q
     projected = q.clone()
     if task_mode == "left_only":
-        projected[..., 7:, :] = q_start[..., 7:].unsqueeze(-2)
+        projected[..., 7:] = q_start[..., 7:].unsqueeze(-2)
     else:
-        projected[..., :7, :] = q_start[..., :7].unsqueeze(-2)
+        projected[..., :7] = q_start[..., :7].unsqueeze(-2)
     return projected
 
 
@@ -51,5 +51,4 @@ def closed_chain_cost(*args, translation_weight: float = 1.0, rotation_weight: f
 
 def interarm_clearance_cost(left_points: torch.Tensor, right_points: torch.Tensor, margin: float = 0.08) -> torch.Tensor:
     distances = torch.cdist(left_points, right_points)
-    return torch.relu(margin - distances).square().amin(dim=(-1, -2))
-
+    return torch.relu(margin - distances).square().mean(dim=(-1, -2))
