@@ -44,8 +44,10 @@ MPD Marvin runtime / worker
 - `self_collision_pairs.yaml`；
 - `grasp_profiles.yaml`。
 
-正式部署时应使用 [`export_marvin_mpd_model.py`](../scripts/robots/export_marvin_mpd_model.py)
-从 ROS xacro 导出并重新检查 checksum，避免 ROS 和 MPD 运动学参数漂移。
+注意：当前提交的 `marvin_bimanual_mpd.urdf` 是简化 smoke 模型，并不是由导出脚本生成的
+正式 ROS 模型。正式部署时应使用 [`export_marvin_mpd_model.py`](../scripts/robots/export_marvin_mpd_model.py)
+从 ROS xacro 导出，再同步碰撞球、关节限制和 mesh，并重新检查 checksum，避免 ROS 和 MPD
+运动学参数漂移。
 
 ### 2.2 双臂任务和代价
 
@@ -185,4 +187,3 @@ ros2 launch marvin_mpd_bimanual_bringup \
 5. 仿真、HIL、无载荷和低速载荷真机测试。
 
 协同动态重规划第一版应采用“停稳/保持后换轨”；连续运动中的闭链 bridge 尚未实现。
-

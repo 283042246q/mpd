@@ -1,8 +1,8 @@
-"""Marvin's fixed-order, differentiable 14-DoF bimanual model.
+"""Marvin's fixed-order, differentiable 14-DoF bimanual smoke model.
 
 The model is deliberately additive: Franka/Panda classes and their assets are
-not modified.  The geometry files are a flattened MPD copy of the ROS model;
-the ``model_hash`` field lets deployment code reject stale copies.
+not modified.  The checked-in URDF is a simplified placeholder; production
+deployment must replace it with an exported ROS model and rerun FK checks.
 """
 
 from __future__ import annotations

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Export the ROS Marvin xacro to the MPD robot asset with provenance."""
+"""Export a ROS Marvin xacro to an MPD URDF with provenance.
+
+This utility is not invoked automatically by ``RobotMarvinBimanual`` and does
+not generate collision-sphere YAML or copy meshes.
+"""
 from __future__ import annotations
 
 import argparse
