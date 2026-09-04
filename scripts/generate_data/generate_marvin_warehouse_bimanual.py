@@ -249,21 +249,25 @@ class MarvinWarehouseGenerator:
         max_attempts = int(self.config.get("max_attempts_per_trajectory", 30))
         interpolate_num = int(self.config.get("interpolate_num", 128))
         planner_time = float(self.config.get("planner_allowed_time", 10.0))
+        retry_time_scale = max(1.0, float(self.config.get("planner_retry_time_scale", 3.0)))
         direction_cutoff = int(np.ceil(num_trajectories * float(self.config.get("random_to_placement_fraction", 0.5))))
         for task_id in range(num_trajectories):
             mode = MODE_SCHEDULE[task_id % len(MODE_SCHEDULE)]
             direction = "random_to_placement" if task_id < direction_cutoff else "placement_to_placement"
             solved = None
-            for _ in range(max_attempts):
+            for attempt in range(max_attempts):
                 sampled = self._sample_task(mode, direction)
                 if sampled is None:
                     continue
                 q_start, q_goal, source_regions, goal_regions = sampled
                 started = time.perf_counter()
+                allowed_time = planner_time
+                if attempt >= max_attempts // 2:
+                    allowed_time *= retry_time_scale
                 result = self.interface.plan_start_goal(
                     q_start,
                     q_goal,
-                    allowed_time=planner_time,
+                    allowed_time=allowed_time,
                     interpolate_num=interpolate_num,
                     simplify_path=bool(self.config.get("simplify_path", True)),
                     fit_bspline=False,

@@ -9,6 +9,8 @@ num_trajectories: 1000
 seed: 1726484688
 planner: RRTConnect
 planner_allowed_time: 10.0
+# Difficult 14-DoF dual-arm queries get a longer budget during late retries.
+planner_retry_time_scale: 3.0
 interpolate_num: 128
 min_distance_robot_env: 0.02
 random_to_placement_fraction: 0.5
