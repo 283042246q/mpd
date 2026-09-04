@@ -18,3 +18,4 @@ from .env_empty_2d import EnvEmpty2D, EnvEmpty2DExtraSphere, EnvEmpty2DExtraNonC
 from .env_gradient_pruning_test import EnvGradientPruning2DTest
 from .env_open_drawer_shelf import EnvOpenDrawerShelf
 from .env_three_pillars_passage import EnvThreePillarsPassage
+from .env_marvin_table import EnvMarvinTable

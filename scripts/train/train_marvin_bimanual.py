@@ -26,7 +26,10 @@ def main(argv=None):
     print(f"validated Marvin {config['task_family']} config: state_dim=14 context_q_dim=28")
     if args.dry_run:
         return 0
-    raise RuntimeError("Use scripts/train/train.py with this validated config for the GPU job")
+    from scripts.train.train import experiment
+    # The existing experiment launcher owns CLI/config expansion.  Passing the
+    # validated file keeps all optimizer/network behavior identical to Franka.
+    return experiment(config_file=str(args.config))
 
 
 if __name__ == "__main__":
