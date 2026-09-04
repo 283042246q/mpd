@@ -126,11 +126,24 @@ class MarvinWarehouseGenerator:
         self.worker.terminate()
 
     def _random_valid_state(self):
+        # Marvin's zero configuration is a valid collision-free seed.  Try a
+        # small deterministic cloud around it before uniform sampling; the
+        # intersection of the mesh and sphere models is intentionally narrow.
+        home = np.zeros(14, dtype=np.float64)
+        for scale in (0.0, 0.05, 0.10, 0.20, 0.35):
+            for _ in range(20):
+                candidate = home + self.rng.normal(0.0, scale, size=14)
+                candidate = np.clip(candidate, self.robot.joint_bounds_low_np, self.robot.joint_bounds_high_np)
+                if self.interface.is_state_valid(candidate, check_bounds=True) and self._torch_state_valid(candidate):
+                    return candidate
         for _ in range(int(self.config.get("state_sample_tries", 500))):
             candidate = np.asarray(self.robot.get_random_joint_position(), dtype=np.float64)
             if self.interface.is_state_valid(candidate, check_bounds=True) and self._torch_state_valid(candidate):
                 return candidate
-        raise RuntimeError("failed to find a state valid in both PyBullet and torch collision models")
+        raise RuntimeError(
+            "failed to find a state valid in both PyBullet and torch collision models; "
+            "increase state_sample_tries or inspect the Marvin collision assets"
+        )
 
     def _torch_state_valid(self, q):
         q_tensor = torch.as_tensor(q, dtype=self.torch_robot.tensor_args["dtype"], device=self.torch_robot.tensor_args["device"])

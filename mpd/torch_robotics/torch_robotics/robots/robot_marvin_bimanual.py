@@ -55,6 +55,52 @@ class RobotMarvinBimanual(RobotBase):
         )
         self._canonical_to_torchkin = torch.argsort(self._torchkin_to_canonical)
 
+        # RobotBase installs raw TorchKin functions for collision spheres.  A
+        # branched tree is traversed in an interleaved order, while MPD's
+        # public contract is always [left seven, right seven].  Wrap every
+        # inherited collision FK entry point so collision fields use the same
+        # canonical ordering as fk_left/fk_right.
+        self._fk_collision_spheres_torchkin = self.fk_collision_spheres
+        self.fk_collision_spheres = self._canonical_fk_list(self._fk_collision_spheres_torchkin)
+        self._fk_collision_parent_links_torchkin = self.fk_collision_sphere_parent_links
+        self.fk_collision_sphere_parent_links = self._canonical_fk_list(self._fk_collision_parent_links_torchkin)
+        self._jfk_collision_spheres_torchkin = self.jfk_s_collision_spheres
+        self.jfk_s_collision_spheres = self._canonical_jacobian_fk(self._jfk_collision_spheres_torchkin)
+        self._jfk_collision_parent_links_torchkin = self.jfk_s_collision_sphere_parent_links
+        self.jfk_s_collision_sphere_parent_links = self._canonical_jacobian_fk(
+            self._jfk_collision_parent_links_torchkin
+        )
+        self._fk_collision_parent_pose_cache_torchkin = self.fk_collision_parent_pose_cache
+        self.fk_collision_parent_pose_cache = self._canonical_fk_list(
+            self._fk_collision_parent_pose_cache_torchkin
+        )
+
+    def _canonical_q(self, q):
+        q = torch.as_tensor(q)
+        if q.shape[-1] != self.q_dim:
+            raise ValueError(f"q must end in {self.q_dim} values, got {tuple(q.shape)}")
+        return q.reshape(-1, self.q_dim)[..., self._torchkin_to_canonical]
+
+    def _canonical_fk_list(self, fk_fn):
+        def wrapped(q):
+            q = torch.as_tensor(q)
+            leading_shape = q.shape[:-1]
+            poses = fk_fn(self._canonical_q(q))
+            return [pose.reshape(*leading_shape, *pose.shape[-2:]) for pose in poses]
+
+        return wrapped
+
+    def _canonical_jacobian_fk(self, fk_fn):
+        def wrapped(q):
+            q = torch.as_tensor(q)
+            leading_shape = q.shape[:-1]
+            jacobians, poses = fk_fn(self._canonical_q(q))
+            jacobians = [jacobian.reshape(*leading_shape, *jacobian.shape[-2:]) for jacobian in jacobians]
+            poses = [pose.reshape(*leading_shape, *pose.shape[-2:]) for pose in poses]
+            return jacobians, poses
+
+        return wrapped
+
     @staticmethod
     def split_q(q14: torch.Tensor):
         q14 = torch.as_tensor(q14)
