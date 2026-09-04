@@ -26,7 +26,12 @@ def export(source: Path, destination: Path) -> Path:
         shutil.copyfile(source, destination)
     elif source.suffix in {".xacro", ".xml"}:
         try:
-            result = subprocess.run(["xacro", str(source)], check=True, capture_output=True, text=True)
+            result = subprocess.run(
+                ["xacro", str(source), "ros2_control:=false"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
         except FileNotFoundError as error:
             raise RuntimeError(
                 "xacro was not found. Run from the ROS2/pixi environment, for example "
