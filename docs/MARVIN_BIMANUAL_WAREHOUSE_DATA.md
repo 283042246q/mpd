@@ -41,7 +41,7 @@ PYTHONPATH=. conda run -n mpd-splines-public \
 [Joint1_L ... Joint7_L, Joint1_R ... Joint7_R]
 ```
 
-数据生成器使用 PyBullet/OMPL 的 14 维 `RRTConnect`，并在状态采样、IK/区域过滤和
+数据生成器使用 PyBullet/OMPL 的 14 维 `RRTConnect`，并在状态采样、末端区域过滤和
 每条规划路径上做碰撞检查。目标区域位于中央台面、左柜体和右柜体的开口内。
 
 任务分布如下：
