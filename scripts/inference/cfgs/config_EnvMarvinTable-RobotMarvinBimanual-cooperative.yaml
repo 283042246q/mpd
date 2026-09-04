@@ -1,0 +1,10 @@
+robot_model: marvin_bimanual
+task_family: cooperative
+task_mode: cooperative_rigid
+runtime_mode: snapshot_no_time
+checkpoint: logs/marvin_bimanual/cooperative_v1
+planning_frame: world
+grasp_profile: default_box
+num_trajectory_samples: 64
+top_k_dense_validation: 8
+deadline_s: 1.0
