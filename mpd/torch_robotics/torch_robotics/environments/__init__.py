@@ -19,3 +19,4 @@ from .env_gradient_pruning_test import EnvGradientPruning2DTest
 from .env_open_drawer_shelf import EnvOpenDrawerShelf
 from .env_three_pillars_passage import EnvThreePillarsPassage
 from .env_marvin_table import EnvMarvinTable
+from .env_warehouse_marvin_bimanual import EnvWarehouseMarvinBimanual

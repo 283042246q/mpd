@@ -1,0 +1,46 @@
+# Marvin 14-DoF independent-arm Warehouse dataset.
+# The direction and arm-mode ratios are enforced by the dedicated generator.
+env_id: EnvWarehouseMarvinBimanual
+robot_id: RobotMarvinBimanual
+task_family: independent
+task_mode: dual_independent
+output_dir: data_trajectories/EnvWarehouse-RobotMarvinBimanual-independent-v1
+num_trajectories: 1000
+seed: 1726484688
+planner: RRTConnect
+planner_allowed_time: 10.0
+interpolate_num: 128
+min_distance_robot_env: 0.02
+random_to_placement_fraction: 0.5
+max_attempts_per_trajectory: 30
+state_sample_tries: 500
+ik_tries: 30
+ik_iterations: 500
+ik_step: 0.01
+ik_position_tolerance: 0.012
+ik_orientation_tolerance_deg: 5.0
+min_active_joint_delta: 0.08
+simplify_path: true
+# The exported right-arm meshes have a permanent zero-distance contact between
+# Link5_R and Link7_R in PyBullet.  MPD's migrated sphere collision model still
+# checks this pair; disabling it here prevents the PyBullet data sampler from
+# rejecting every state because of that mesh artifact.
+disabled_self_collision_pairs:
+  - [Link5_R, Link7_R]
+
+# These are the collision-free placement volumes inside the scene's cabinet
+# openings and above the central table.  Left/right default choices keep the
+# two end-effectors in their natural lateral workspaces.
+placement_regions:
+  table:
+    x: [0.25, 0.85]
+    y: [-0.22, 0.22]
+    z: [0.08, 0.18]
+  left_cabinet:
+    x: [0.22, 0.82]
+    y: [0.50, 0.72]
+    z: [0.10, 0.72]
+  right_cabinet:
+    x: [0.22, 0.82]
+    y: [-0.72, -0.50]
+    z: [0.10, 0.72]
