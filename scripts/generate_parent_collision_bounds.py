@@ -107,7 +107,7 @@ def default_bound_count(sphere_count):
     return 3
 
 
-def generate(input_path, padding):
+def generate(input_path, padding, max_bounds=None):
     with input_path.open() as file:
         fine_config = yaml.safe_load(file)
 
@@ -115,9 +115,10 @@ def generate(input_path, padding):
     for parent_name, spheres in fine_config.items():
         if parent_name == "self_collision":
             continue
-        bounds = topology_partitioned_bounds(
-            spheres, default_bound_count(len(spheres)), padding
-        )
+        bound_count = default_bound_count(len(spheres))
+        if max_bounds is not None:
+            bound_count = min(bound_count, max(int(max_bounds), 1))
+        bounds = topology_partitioned_bounds(spheres, bound_count, padding)
         parent_bounds[parent_name] = [
             {
                 "center": [round(float(value), 9) for value in center],
@@ -142,13 +143,14 @@ def main():
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--padding", type=float, default=1e-6)
+    parser.add_argument("--max-bounds", type=int, default=None)
     parser.add_argument(
         "--check",
         action="store_true",
         help="Fail if the saved output differs instead of rewriting it.",
     )
     args = parser.parse_args()
-    generated_data = generate(args.input, args.padding)
+    generated_data = generate(args.input, args.padding, args.max_bounds)
     generated = yaml.safe_dump(generated_data, sort_keys=False, width=100)
     if args.check:
         existing = (

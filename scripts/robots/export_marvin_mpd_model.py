@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Export a ROS Marvin xacro to an MPD URDF with provenance.
 
-This utility is not invoked automatically by ``RobotMarvinBimanual`` and does
-not generate collision-sphere YAML or copy meshes.
+This utility is not invoked automatically by ``RobotMarvinBimanual``.  When an
+asset root is supplied it also copies Marvin meshes and localizes URDF paths.
 """
 from __future__ import annotations
 
@@ -18,7 +18,27 @@ EXPECTED_JOINT_NAMES = tuple(
 )
 
 
-def export(source: Path, destination: Path) -> Path:
+def _localize_meshes(destination: Path, asset_root: Path) -> None:
+    text = destination.read_text()
+    marker = "package://marvin_description/meshes/"
+    mesh_root = asset_root / "meshes"
+    while marker in text:
+        start = text.index(marker) + len(marker)
+        end = start
+        while end < len(text) and text[end] not in '\"<':
+            end += 1
+        relative = Path(text[start:end])
+        source_mesh = mesh_root / relative
+        if not source_mesh.is_file():
+            raise FileNotFoundError(source_mesh)
+        target_mesh = destination.parent / "meshes" / relative
+        target_mesh.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_mesh, target_mesh)
+        text = text[: start - len(marker)] + f"meshes/{relative.as_posix()}" + text[end:]
+    destination.write_text(text)
+
+
+def export(source: Path, destination: Path, asset_root: Path | None = None) -> Path:
     if not source.exists():
         raise FileNotFoundError(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +67,8 @@ def export(source: Path, destination: Path) -> Path:
         destination.write_text(result.stdout)
     else:
         raise ValueError(f"source must be .xacro, .xml, or .urdf; got {source}")
+    if asset_root is not None:
+        _localize_meshes(destination, asset_root)
     root = ET.parse(destination).getroot()
     joint_names = tuple(
         joint.get("name")
@@ -68,8 +90,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
+    parser.add_argument(
+        "--asset-root",
+        type=Path,
+        help="marvin_description package root used to copy and localize meshes",
+    )
     args = parser.parse_args(argv)
-    print(export(args.source, args.destination))
+    print(export(args.source, args.destination, args.asset_root))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
 """Minimal table environment descriptor for Marvin adapters."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 

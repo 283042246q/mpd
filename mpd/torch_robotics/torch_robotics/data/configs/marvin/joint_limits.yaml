@@ -1,14 +1,84 @@
-Joint1_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint2_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint3_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint4_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint5_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint6_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint7_L: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint1_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint2_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint3_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint4_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint5_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint6_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
-Joint7_R: {qdot_max: 2.0, qddot_max: 8.0, qddd_max: 20.0}
+Joint1_L:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint2_L:
+  qmin: -2.0944
+  qmax: 2.0944
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint3_L:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint4_L:
+  qmin: -2.5307
+  qmax: 1.0472
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint5_L:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint6_L:
+  qmin: -1.0472
+  qmax: 1.0472
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint7_L:
+  qmin: -1.5708
+  qmax: 1.5708
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint1_R:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint2_R:
+  qmin: -2.0944
+  qmax: 2.0944
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint3_R:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint4_R:
+  qmin: -2.5307
+  qmax: 1.0472
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint5_R:
+  qmin: -2.9671
+  qmax: 2.9671
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint6_R:
+  qmin: -1.0472
+  qmax: 1.0472
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0
+Joint7_R:
+  qmin: -1.5708
+  qmax: 1.5708
+  qdot_max: 3.1416
+  qddot_max: 8.0
+  qddd_max: 20.0

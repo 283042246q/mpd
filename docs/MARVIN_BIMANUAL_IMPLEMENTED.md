@@ -44,10 +44,11 @@ MPD Marvin runtime / worker
 - `self_collision_pairs.yaml`；
 - `grasp_profiles.yaml`。
 
-注意：当前提交的 `marvin_bimanual_mpd.urdf` 是简化 smoke 模型，并不是由导出脚本生成的
-正式 ROS 模型。正式部署时应使用 [`export_marvin_mpd_model.py`](../scripts/robots/export_marvin_mpd_model.py)
-从 ROS xacro 导出，再同步碰撞球、关节限制和 mesh，并重新检查 checksum，避免 ROS 和 MPD
-运动学参数漂移。
+`marvin_bimanual_mpd.urdf` 由 ROS2 的 arm-only xacro 导出，关闭了 `ros2_control`，并将
+`marvin_description` mesh 路径本地化到 MPD 的 `marvin/meshes/`。关节限制、碰撞球、
+self-collision pair 和 parent bounds 已从 ROS2/CuRobo 配置转换；导出源 checksum 保存在
+同名 `.urdf.sha256` 文件中。重新生成时使用 [`export_marvin_mpd_model.py`](../scripts/robots/export_marvin_mpd_model.py)
+并指定 `--asset-root`，不要使用包含 Pika 夹爪的 18-DoF bringup xacro。
 
 ### 2.2 双臂任务和代价
 
