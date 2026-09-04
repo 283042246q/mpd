@@ -11,23 +11,49 @@ import hashlib
 from pathlib import Path
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
+
+EXPECTED_JOINT_NAMES = tuple(
+    [f"Joint{i}_L" for i in range(1, 8)] + [f"Joint{i}_R" for i in range(1, 8)]
+)
 
 
 def export(source: Path, destination: Path) -> Path:
     if not source.exists():
         raise FileNotFoundError(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        result = subprocess.run(["xacro", str(source)], check=True, capture_output=True, text=True)
+    if source.suffix == ".urdf":
+        shutil.copyfile(source, destination)
+    elif source.suffix in {".xacro", ".xml"}:
+        try:
+            result = subprocess.run(["xacro", str(source)], check=True, capture_output=True, text=True)
+        except FileNotFoundError as error:
+            raise RuntimeError(
+                "xacro was not found. Run from the ROS2/pixi environment, for example "
+                "`cd physical_ai_runtime && source install/setup.bash`, then retry."
+            ) from error
+        except subprocess.CalledProcessError as error:
+            details = (error.stderr or error.stdout or "").strip()
+            raise RuntimeError(
+                "xacro failed while expanding the model. Source the ROS2 overlay "
+                "(`source physical_ai_runtime/install/setup.bash`) so package:// "
+                f"dependencies are discoverable. Details: {details}"
+            ) from error
         destination.write_text(result.stdout)
-    except FileNotFoundError:
-        # Keep the command useful in a non-ROS checkout while making the
-        # provenance failure explicit in the sidecar file.
-        fallback = source.with_suffix("")
-        if fallback.suffix == ".urdf" and fallback.exists():
-            shutil.copyfile(fallback, destination)
-        else:
-            raise RuntimeError("xacro is required to export a Marvin MPD model")
+    else:
+        raise ValueError(f"source must be .xacro, .xml, or .urdf; got {source}")
+    root = ET.parse(destination).getroot()
+    joint_names = tuple(
+        joint.get("name")
+        for joint in root.findall("joint")
+        if joint.get("type") != "fixed"
+    )
+    if joint_names != EXPECTED_JOINT_NAMES:
+        raise RuntimeError(
+            "The exported model must contain exactly Marvin's 14 arm joints in canonical order; "
+            f"found {len(joint_names)} joints: {joint_names}. "
+            "Use marvin_description/urdf/marvin.urdf.xacro (arm-only), not the Pika/gripper bringup xacro."
+        )
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     destination.with_suffix(destination.suffix + ".sha256").write_text(f"{digest}  {source}\n")
     return destination
