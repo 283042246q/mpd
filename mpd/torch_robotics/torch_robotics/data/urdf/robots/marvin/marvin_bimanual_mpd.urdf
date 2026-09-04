@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="marvin_bimanual_mpd">
+  <link name="base_link"/>
+  <link name="base_L"/><link name="base_R"/>
+  <joint name="mount_L" type="fixed"><parent link="base_link"/><child link="base_L"/><origin xyz="0 0.32 0.55" rpy="0 0 0"/></joint>
+  <joint name="mount_R" type="fixed"><parent link="base_link"/><child link="base_R"/><origin xyz="0 -0.32 0.55" rpy="0 0 0"/></joint>
+  <link name="link1_L"/><link name="link2_L"/><link name="link3_L"/><link name="link4_L"/><link name="link5_L"/><link name="link6_L"/><link name="flange_L"/>
+  <link name="link1_R"/><link name="link2_R"/><link name="link3_R"/><link name="link4_R"/><link name="link5_R"/><link name="link6_R"/><link name="flange_R"/>
+  <joint name="Joint1_L" type="revolute"><parent link="base_L"/><child link="link1_L"/><origin xyz="0 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-3.14159" upper="3.14159" effort="100" velocity="2"/></joint>
+  <joint name="Joint2_L" type="revolute"><parent link="link1_L"/><child link="link2_L"/><origin xyz="0 0 0.12" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint3_L" type="revolute"><parent link="link2_L"/><child link="link3_L"/><origin xyz="0.28 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint4_L" type="revolute"><parent link="link3_L"/><child link="link4_L"/><origin xyz="0.25 0 0" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-3.0" upper="3.0" effort="100" velocity="2"/></joint>
+  <joint name="Joint5_L" type="revolute"><parent link="link4_L"/><child link="link5_L"/><origin xyz="0.22 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint6_L" type="revolute"><parent link="link5_L"/><child link="link6_L"/><origin xyz="0.18 0 0" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-3.0" upper="3.0" effort="100" velocity="2"/></joint>
+  <joint name="Joint7_L" type="revolute"><parent link="link6_L"/><child link="flange_L"/><origin xyz="0.12 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-3.14159" upper="3.14159" effort="100" velocity="2"/></joint>
+  <joint name="Joint1_R" type="revolute"><parent link="base_R"/><child link="link1_R"/><origin xyz="0 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-3.14159" upper="3.14159" effort="100" velocity="2"/></joint>
+  <joint name="Joint2_R" type="revolute"><parent link="link1_R"/><child link="link2_R"/><origin xyz="0 0 0.12" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint3_R" type="revolute"><parent link="link2_R"/><child link="link3_R"/><origin xyz="0.28 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint4_R" type="revolute"><parent link="link3_R"/><child link="link4_R"/><origin xyz="0.25 0 0" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-3.0" upper="3.0" effort="100" velocity="2"/></joint>
+  <joint name="Joint5_R" type="revolute"><parent link="link4_R"/><child link="link5_R"/><origin xyz="0.22 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-2.6" upper="2.6" effort="100" velocity="2"/></joint>
+  <joint name="Joint6_R" type="revolute"><parent link="link5_R"/><child link="link6_R"/><origin xyz="0.18 0 0" rpy="0 1.570796 0"/><axis xyz="0 0 1"/><limit lower="-3.0" upper="3.0" effort="100" velocity="2"/></joint>
+  <joint name="Joint7_R" type="revolute"><parent link="link6_R"/><child link="flange_R"/><origin xyz="0.12 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/><limit lower="-3.14159" upper="3.14159" effort="100" velocity="2"/></joint>
+</robot>

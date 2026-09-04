@@ -1,0 +1,6 @@
+pairs:
+  - [link2_L, link4_L]
+  - [link3_L, link5_L]
+  - [link2_R, link4_R]
+  - [link3_R, link5_R]
+  - [link3_L, link3_R]

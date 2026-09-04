@@ -1,0 +1,5 @@
+default_box:
+  object_frame: object
+  left_grasp: {xyz: [0.0, 0.12, 0.0], rpy: [0.0, 0.0, 0.0]}
+  right_grasp: {xyz: [0.0, -0.12, 0.0], rpy: [0.0, 0.0, 0.0]}
+  payload: {type: box, size_xyz: [0.30, 0.24, 0.20]}
