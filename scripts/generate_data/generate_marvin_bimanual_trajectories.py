@@ -50,11 +50,20 @@ def generate(config: dict) -> Path:
         handle.create_dataset("active_joint_mask", data=active)
         handle.create_dataset("min_clearance", data=np.full(len(paths), np.inf, dtype=np.float32))
         handle.create_dataset("closure_error", data=np.zeros((len(paths), 2), dtype=np.float32))
+        handle.create_dataset("object_start_pose", data=np.zeros((len(paths), 7), dtype=np.float32))
+        handle.create_dataset("object_goal_pose", data=np.zeros((len(paths), 7), dtype=np.float32))
+        grasp_left = np.eye(4, dtype=np.float32)
+        grasp_right = np.eye(4, dtype=np.float32)
+        grasp_left[1, 3] = 0.12
+        grasp_right[1, 3] = -0.12
+        handle.create_dataset("T_object_left_grasp", data=np.broadcast_to(grasp_left, (len(paths), 4, 4)))
+        handle.create_dataset("T_object_right_grasp", data=np.broadcast_to(grasp_right, (len(paths), 4, 4)))
         handle.create_dataset("scene_id", data=np.asarray([b"synthetic_table"] * len(paths)))
         handle.create_dataset("scene_hash", data=np.asarray([b"synthetic_table_v1"] * len(paths)))
         handle.create_dataset("generator_version", data=np.asarray([b"marvin_bimanual_generator_v1"] * len(paths)))
     manifest = {"schema": "marvin_bimanual_dataset/v1", "robot_model": "marvin_bimanual", "joint_names": list(names), "task_mode": mode, "num_trajectories": len(paths), "dataset_sha256": hashlib.sha256((output / "dataset_merged.hdf5").read_bytes()).hexdigest()}
     (output / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
+    (output / "args.yaml").write_text(yaml.safe_dump({"env_id": "EnvMarvinTable", "robot_id": "RobotMarvinBimanual", "task_mode": mode, "joint_names": list(names)}, sort_keys=False))
     return output
 
 

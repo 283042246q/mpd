@@ -27,9 +27,9 @@ def main(argv=None):
     if args.dry_run:
         return 0
     from scripts.train.train import experiment
-    # The existing experiment launcher owns CLI/config expansion.  Passing the
-    # validated file keeps all optimizer/network behavior identical to Franka.
-    return experiment(config_file=str(args.config))
+    # Reuse the existing experiment body; only the dimension/config values are
+    # Marvin-specific, while model, loss and optimizer code stay shared.
+    return experiment(**config)
 
 
 if __name__ == "__main__":

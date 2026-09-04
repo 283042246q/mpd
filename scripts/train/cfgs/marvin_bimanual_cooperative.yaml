@@ -1,4 +1,4 @@
-dataset_subdir: data_trajectories_bimanual/EnvMarvinTable-RobotMarvinBimanual-cooperative-v1
+dataset_subdir: ../data_trajectories_bimanual/EnvMarvinTable-RobotMarvinBimanual-cooperative-v1
 dataset_file_merged: dataset_merged.hdf5
 robot_model: marvin_bimanual
 task_family: cooperative
@@ -11,3 +11,4 @@ batch_size: 128
 results_dir: logs/marvin_bimanual/cooperative_v1
 state_dim: 14
 context_q_dim: 28
+debug: false
