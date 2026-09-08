@@ -1,0 +1,6 @@
+# TCP frame relative to gripper_base_link (meters, radians).
+# Typically near the soft-finger tip / grasp point (not flange).
+# Current xyz is a placeholder — set after measuring tip pose vs base.
+origin:
+  xyz: "0 0 0.21"
+  rpy: "0 0 0"

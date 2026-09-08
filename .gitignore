@@ -1,5 +1,6 @@
 benchmark_results/
 data_public/
+data_trajectories_spacetime/
 Motion_Planning_Diffusion_Learning_and_Adapting_Robot_Motion_Planning_With_Diffusion_Models.pdf
 address_token.txt
 # Byte-compiled / optimized / DLL files

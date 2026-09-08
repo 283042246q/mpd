@@ -1,0 +1,5 @@
+execution:
+  em_bimanual:
+    action: /bimanual_arm_jtc/follow_joint_trajectory
+    joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
+    stop_on_any_arm_fault: true

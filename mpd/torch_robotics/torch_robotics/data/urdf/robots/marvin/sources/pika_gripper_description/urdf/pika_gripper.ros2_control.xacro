@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!--
+  ros2_control block for the AgileX Pika gripper.
+
+  Actuated joint: ${prefix}gripper_left_joint (right finger is URDF mimic).
+  use_fake_hardware:=true → mock_components/GenericSystem.
+
+  User-facing hardware params: serial_port, max_width.
+  Other safety defaults live in the plugin (see
+  pika_gripper_hardware_interface/docs/HARDWARE_PARAMETERS.md).
+  Joint travel limits: config/joint_limits.yaml (or joint_limits_file=;
+  max_width defaults to the YAML upper when left empty)
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="pika_joint_limits_hw"
+    value="${xacro.load_yaml('$(find pika_gripper_description)/config/joint_limits.yaml')}"/>
+
+  <xacro:macro name="pika_gripper_ros2_control" params="
+      name:=PikaGripperSystem
+      prefix:=''
+      serial_port:=/dev/ttyUSB0
+      use_fake_hardware:=false
+      joint_limits_file:=''
+      max_width:=''
+      stale_warn_s:=0.2
+      stale_error_s:=0.5">
+
+    <xacro:property name="limits_cfg_hw"
+      value="${xacro.load_yaml(joint_limits_file) if joint_limits_file != '' else pika_joint_limits_hw}"/>
+    <xacro:property name="finger_lim"
+      value="${limits_cfg_hw['gripper_left_joint']['limit']}"/>
+    <!-- Empty max_width → finger-travel upper from joint_limits YAML. -->
+    <xacro:property name="max_width_v"
+      value="${max_width if max_width != '' else finger_lim['upper']}"/>
+
+    <ros2_control name="${name}" type="system">
+      <hardware>
+        <xacro:if value="${use_fake_hardware}">
+          <plugin>mock_components/GenericSystem</plugin>
+        </xacro:if>
+        <xacro:unless value="${use_fake_hardware}">
+          <plugin>pika_gripper_hardware_interface/PikaGripperInterface</plugin>
+          <param name="serial_port">${serial_port}</param>
+          <!-- ROS finger-travel upper clamp [m]; opening on wire ≈ 2×. -->
+          <param name="max_width">${max_width_v}</param>
+          <param name="stale_warn_s">${stale_warn_s}</param>
+          <param name="stale_error_s">${stale_error_s}</param>
+        </xacro:unless>
+      </hardware>
+
+      <joint name="${prefix}gripper_left_joint">
+        <command_interface name="position">
+          <param name="min">${finger_lim['lower']}</param>
+          <param name="max">${finger_lim['upper']}</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+    </ros2_control>
+
+  </xacro:macro>
+
+</robot>

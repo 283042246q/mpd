@@ -1,0 +1,151 @@
+<?xml version="1.0"?>
+<!--
+  Marvin dual-arm + dual-Pika hardware description.
+
+  This is a new entrypoint; marvin_description's arm-only entrypoint remains
+  unchanged.  It composes three ros2_control systems:
+    - MarvinBimanualArmHardware: Joint1_L..Joint7_L + Joint1_R..Joint7_R
+    - LeftPikaGripperHardware: left_gripper_left_joint
+    - RightPikaGripperHardware: right_gripper_left_joint
+
+  All hardware is fake by default. Real hardware must be selected explicitly.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="marvin_pika_bimanual">
+
+  <!-- Marvin stand and dual-arm placement. -->
+  <xacro:arg name="connected_to" default="world"/>
+  <xacro:arg name="xyz" default="0 0 0"/>
+  <xacro:arg name="rpy" default="0 0 0"/>
+  <xacro:arg name="arm_mounts_file"
+    default="$(find marvin_description)/config/arm_mounts.yaml"/>
+  <xacro:property name="arm_mounts"
+    value="${xacro.load_yaml('$(arg arm_mounts_file)')}"/>
+  <xacro:arg name="left_base_xyz"
+    default="${arm_mounts['left_arm']['origin']['xyz']}"/>
+  <xacro:arg name="left_base_rpy"
+    default="${arm_mounts['left_arm']['origin']['rpy']}"/>
+  <xacro:arg name="right_base_xyz"
+    default="${arm_mounts['right_arm']['origin']['xyz']}"/>
+  <xacro:arg name="right_base_rpy"
+    default="${arm_mounts['right_arm']['origin']['rpy']}"/>
+
+  <!-- Site-owned Pika mounting calibration. -->
+  <xacro:arg name="pika_mounts_file"
+    default="$(find marvin_mpd_bimanual_bringup)/config/pika_mounts.yaml"/>
+  <xacro:property name="pika_mounts"
+    value="${xacro.load_yaml('$(arg pika_mounts_file)')}"/>
+  <xacro:arg name="left_adaptor_xyz"
+    default="${pika_mounts['left']['adaptor']['xyz']}"/>
+  <xacro:arg name="left_adaptor_rpy"
+    default="${pika_mounts['left']['adaptor']['rpy']}"/>
+  <xacro:arg name="left_gripper_xyz"
+    default="${pika_mounts['left']['gripper']['xyz']}"/>
+  <xacro:arg name="left_gripper_rpy"
+    default="${pika_mounts['left']['gripper']['rpy']}"/>
+  <xacro:arg name="right_adaptor_xyz"
+    default="${pika_mounts['right']['adaptor']['xyz']}"/>
+  <xacro:arg name="right_adaptor_rpy"
+    default="${pika_mounts['right']['adaptor']['rpy']}"/>
+  <xacro:arg name="right_gripper_xyz"
+    default="${pika_mounts['right']['gripper']['xyz']}"/>
+  <xacro:arg name="right_gripper_rpy"
+    default="${pika_mounts['right']['gripper']['rpy']}"/>
+  <xacro:arg name="left_gripper_tcp_file" default=""/>
+  <xacro:arg name="right_gripper_tcp_file" default=""/>
+  <xacro:arg name="pika_joint_limits_file" default=""/>
+
+  <!-- ros2_control selection. Safe default: three GenericSystem components. -->
+  <xacro:arg name="ros2_control" default="true"/>
+  <xacro:arg name="use_fake_arm_hardware" default="true"/>
+  <xacro:arg name="use_fake_left_gripper_hardware" default="true"/>
+  <xacro:arg name="use_fake_right_gripper_hardware" default="true"/>
+
+  <xacro:arg name="arm_hardware_plugin"
+    default="marvin_hardware_interface/MarvinBimanualArmHardware"/>
+  <xacro:arg name="robot_ip" default="10.19.0.191"/>
+  <xacro:arg name="arm_stale_warn_ms" default="20.0"/>
+  <xacro:arg name="arm_stale_error_ms" default="100.0"/>
+  <xacro:arg name="max_joint_velocity" default="6.2832"/>
+
+  <!-- Use stable udev aliases on the real robot, not ttyUSB enumeration. -->
+  <xacro:arg name="left_gripper_serial_port" default="/dev/pika_left"/>
+  <xacro:arg name="right_gripper_serial_port" default="/dev/pika_right"/>
+  <xacro:arg name="pika_max_width" default="0.045"/>
+  <xacro:arg name="pika_stale_warn_s" default="0.2"/>
+  <xacro:arg name="pika_stale_error_s" default="0.5"/>
+
+  <xacro:include filename="$(find marvin_description)/urdf/parts/marvin_stand.xacro"/>
+  <xacro:include filename="$(find marvin_description)/urdf/parts/marvin_bimanual_arm.xacro"/>
+  <xacro:include filename="$(find marvin_description)/urdf/parts/marvin_arm.ros2_control.xacro"/>
+  <xacro:include filename="$(find pika_gripper_description)/urdf/marvin_pika_adaptor.xacro"/>
+  <xacro:include filename="$(find pika_gripper_description)/urdf/pika_gripper.xacro"/>
+  <xacro:include filename="$(find pika_gripper_description)/urdf/pika_gripper.ros2_control.xacro"/>
+
+  <xacro:marvin_stand/>
+  <xacro:marvin_bimanual_arm
+    connected_to="$(arg connected_to)"
+    xyz="$(arg xyz)"
+    rpy="$(arg rpy)"
+    left_base_xyz="$(arg left_base_xyz)"
+    left_base_rpy="$(arg left_base_rpy)"
+    right_base_xyz="$(arg right_base_xyz)"
+    right_base_rpy="$(arg right_base_rpy)"/>
+
+  <xacro:marvin_pika_adaptor
+    prefix="left_"
+    parent="flange_L"
+    xyz="$(arg left_adaptor_xyz)"
+    rpy="$(arg left_adaptor_rpy)"/>
+  <xacro:pika_gripper
+    prefix="left_"
+    parent="left_pika_adaptor_link"
+    tcp_file="$(arg left_gripper_tcp_file)"
+    joint_limits_file="$(arg pika_joint_limits_file)">
+    <origin xyz="$(arg left_gripper_xyz)" rpy="$(arg left_gripper_rpy)"/>
+  </xacro:pika_gripper>
+
+  <xacro:marvin_pika_adaptor
+    prefix="right_"
+    parent="flange_R"
+    xyz="$(arg right_adaptor_xyz)"
+    rpy="$(arg right_adaptor_rpy)"/>
+  <xacro:pika_gripper
+    prefix="right_"
+    parent="right_pika_adaptor_link"
+    tcp_file="$(arg right_gripper_tcp_file)"
+    joint_limits_file="$(arg pika_joint_limits_file)">
+    <origin xyz="$(arg right_gripper_xyz)" rpy="$(arg right_gripper_rpy)"/>
+  </xacro:pika_gripper>
+
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:marvin_arm_ros2_control
+      name="MarvinBimanualArmHardware"
+      use_fake_hardware="$(arg use_fake_arm_hardware)"
+      hardware_plugin="$(arg arm_hardware_plugin)"
+      robot_ip="$(arg robot_ip)"
+      stale_warn_ms="$(arg arm_stale_warn_ms)"
+      stale_error_ms="$(arg arm_stale_error_ms)"
+      max_joint_velocity="$(arg max_joint_velocity)"/>
+
+    <xacro:pika_gripper_ros2_control
+      name="LeftPikaGripperHardware"
+      prefix="left_"
+      serial_port="$(arg left_gripper_serial_port)"
+      use_fake_hardware="$(arg use_fake_left_gripper_hardware)"
+      joint_limits_file="$(arg pika_joint_limits_file)"
+      max_width="$(arg pika_max_width)"
+      stale_warn_s="$(arg pika_stale_warn_s)"
+      stale_error_s="$(arg pika_stale_error_s)"/>
+
+    <xacro:pika_gripper_ros2_control
+      name="RightPikaGripperHardware"
+      prefix="right_"
+      serial_port="$(arg right_gripper_serial_port)"
+      use_fake_hardware="$(arg use_fake_right_gripper_hardware)"
+      joint_limits_file="$(arg pika_joint_limits_file)"
+      max_width="$(arg pika_max_width)"
+      stale_warn_s="$(arg pika_stale_warn_s)"
+      stale_error_s="$(arg pika_stale_error_s)"/>
+  </xacro:if>
+
+</robot>

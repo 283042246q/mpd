@@ -1,0 +1,12 @@
+# Camera optical frames relative to gripper_base_link (meters, radians).
+# Drivers are outside this package; only TF is declared here.
+# Values are placeholders — replace with eye-in-hand calibration (or CAD export).
+fisheye:
+  origin:
+    xyz: "0.0 0.0 0.055"
+    rpy: "0 0 0"
+
+d405:
+  origin:
+    xyz: "0.02 0.0 0.04"
+    rpy: "0 0 0"

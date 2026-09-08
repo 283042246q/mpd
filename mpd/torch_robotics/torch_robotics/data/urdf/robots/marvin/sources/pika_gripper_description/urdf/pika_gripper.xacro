@@ -1,0 +1,177 @@
+<?xml version="1.0"?>
+<!--
+  Mountable AgileX Pika gripper (validated kinematics).
+
+  Geometry: meshes/gripper_base_link.STL + meshes/pika_finray_link.STL
+  DOF: ${prefix}gripper_left_joint prismatic [0, 0.045]; right mimics left (×1).
+  Right finger mount yaw=-π; Both axes are local +X; the right joint frame has yaw=-pi.
+  Therefore +q opens both fingers outward and q=0 is closed. NOT(both axes local -X so +q closes toward center.)
+  Limits: config/joint_limits.yaml (or joint_limits_file= on the macro)
+  TCP / camera frames: config/gripper_tcp.yaml (or tcp_file=), config/cameras.yaml
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="pika_tcp"
+    value="${xacro.load_yaml('$(find pika_gripper_description)/config/gripper_tcp.yaml')}"/>
+  <xacro:property name="pika_joint_limits"
+    value="${xacro.load_yaml('$(find pika_gripper_description)/config/joint_limits.yaml')}"/>
+  <xacro:property name="pika_cameras"
+    value="${xacro.load_yaml('$(find pika_gripper_description)/config/cameras.yaml')}"/>
+
+  <xacro:macro name="pika_gripper" params="
+      prefix:=''
+      parent
+      *origin
+      description_pkg:=pika_gripper_description
+      tcp_file:=''
+      joint_limits_file:=''
+      tcp_xyz:=''
+      tcp_rpy:=''
+      fisheye_xyz:=''
+      fisheye_rpy:=''
+      d405_xyz:=''
+      d405_rpy:=''">
+
+    <!-- Optional host bringup YAMLs override package defaults. -->
+    <xacro:property name="tcp_cfg"
+      value="${xacro.load_yaml(tcp_file) if tcp_file != '' else pika_tcp}"/>
+    <xacro:property name="limits_cfg"
+      value="${xacro.load_yaml(joint_limits_file) if joint_limits_file != '' else pika_joint_limits}"/>
+    <xacro:property name="finger_lim" value="${limits_cfg['gripper_left_joint']['limit']}"/>
+    <xacro:property name="tcp_xyz_v" value="${tcp_xyz if tcp_xyz != '' else tcp_cfg['origin']['xyz']}"/>
+    <xacro:property name="tcp_rpy_v" value="${tcp_rpy if tcp_rpy != '' else tcp_cfg['origin']['rpy']}"/>
+    <xacro:property name="fisheye_xyz_v" value="${fisheye_xyz if fisheye_xyz != '' else pika_cameras['fisheye']['origin']['xyz']}"/>
+    <xacro:property name="fisheye_rpy_v" value="${fisheye_rpy if fisheye_rpy != '' else pika_cameras['fisheye']['origin']['rpy']}"/>
+    <xacro:property name="d405_xyz_v" value="${d405_xyz if d405_xyz != '' else pika_cameras['d405']['origin']['xyz']}"/>
+    <xacro:property name="d405_rpy_v" value="${d405_rpy if d405_rpy != '' else pika_cameras['d405']['origin']['rpy']}"/>
+
+    <joint name="${prefix}pika_gripper_mount_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="${prefix}gripper_base_link"/>
+    </joint>
+
+    <link name="${prefix}gripper_base_link">
+      <inertial>
+        <origin xyz="-8.1437E-07 0.0084053 0.037477" rpy="0 0 0"/>
+        <mass value="0.18972"/>
+        <inertia
+          ixx="0.00014308" ixy="1.6782E-08" ixz="3.3333E-08"
+          iyy="0.00011036" iyz="-2.6278E-06" izz="0.0002159"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/gripper_base_link.STL"/>
+        </geometry>
+        <material name="${prefix}pika_base_white">
+          <color rgba="1 1 1 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/gripper_base_link.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="${prefix}gripper_left_link">
+      <inertial>
+        <origin xyz="-0.014661 -0.0057614 0.033255" rpy="0 0 0"/>
+        <mass value="0.033674"/>
+        <inertia
+          ixx="3.448E-05" ixy="-4.3614E-09" ixz="1.4473E-05"
+          iyy="3.9744E-05" iyz="1.4911E-08" izz="1.5284E-05"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_finray_link.STL"/>
+        </geometry>
+        <material name="${prefix}pika_finray_gray">
+          <color rgba="0.75 0.75 0.78 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_finray_link.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}gripper_left_joint" type="prismatic">
+      <origin xyz="0.04351 0 0.0815" rpy="0 0 0"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}gripper_left_link"/>
+      <axis xyz="1 0 0"/>
+      <limit
+        lower="${finger_lim['lower']}"
+        upper="${finger_lim['upper']}"
+        effort="${finger_lim['effort']}"
+        velocity="${finger_lim['velocity']}"/>
+    </joint>
+
+    <link name="${prefix}gripper_right_link">
+      <inertial>
+        <origin xyz="0.014661 -0.0058113 0.033255" rpy="0 0 0"/>
+        <mass value="0.033674"/>
+        <inertia
+          ixx="3.448E-05" ixy="-4.3614E-09" ixz="-1.4473E-05"
+          iyy="3.9744E-05" iyz="-1.4956E-08" izz="1.5284E-05"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_finray_link.STL"/>
+        </geometry>
+        <material name="${prefix}pika_finray_gray_r">
+          <color rgba="0.75 0.75 0.78 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_finray_link.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}gripper_right_joint" type="prismatic">
+      <origin xyz="-0.043529 0 0.0815" rpy="0 0 -3.14159"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}gripper_right_link"/>
+      <axis xyz="1 0 0"/>
+      <limit
+        lower="${finger_lim['lower']}"
+        upper="${finger_lim['upper']}"
+        effort="${finger_lim['effort']}"
+        velocity="${finger_lim['velocity']}"/>
+      <mimic joint="${prefix}gripper_left_joint" multiplier="1" offset="0"/>
+    </joint>
+
+    <joint name="${prefix}pika_gripper_tcp_joint" type="fixed">
+      <origin xyz="${tcp_xyz_v}" rpy="${tcp_rpy_v}"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}pika_gripper_tcp"/>
+    </joint>
+    <link name="${prefix}pika_gripper_tcp"/>
+
+    <joint name="${prefix}pika_fisheye_joint" type="fixed">
+      <origin xyz="${fisheye_xyz_v}" rpy="${fisheye_rpy_v}"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}pika_fisheye_link"/>
+    </joint>
+    <link name="${prefix}pika_fisheye_link"/>
+
+    <joint name="${prefix}pika_d405_joint" type="fixed">
+      <origin xyz="${d405_xyz_v}" rpy="${d405_rpy_v}"/>
+      <parent link="${prefix}gripper_base_link"/>
+      <child link="${prefix}pika_d405_link"/>
+    </joint>
+    <link name="${prefix}pika_d405_link"/>
+
+  </xacro:macro>
+
+</robot>

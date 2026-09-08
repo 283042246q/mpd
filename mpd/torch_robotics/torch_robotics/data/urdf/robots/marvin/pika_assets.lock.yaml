@@ -1,0 +1,376 @@
+schema: marvin_pika_assets/v1
+packages:
+  marvin_description:
+    repository: https://github.com/Gabriel-Ning/marvin_description.git
+    commit: 96fa5389bec20d83fb7a2bff3f720994645d4525
+    declared_license:
+    - Apache-2.0
+    source_sha256:
+      LICENSE: e4da13b8ee8adf3c184f3cfaa765c1b002efd9e1b7a200fe7c507a30391f8fb9
+      config/arm_mounts.yaml: 4a915a474b531472b2f7f1b01cd7160847b70e170de97ad1926e6d4bc1aa7e52
+      config/curobo/marvin.yml: 11883df9efe9839af79de381ca167e689c960269777779ff26a0e148464e926e
+      config/inertials.yaml: 5b5e255fd051e7bf26ad22f73b66ac3d04351dcdb79bd9183746d736dd29252a
+      config/joint_limits.yaml: dfacfe5dcfcbd381c611d36d236b3460995f4f1f862a4f2c49b9dd2271361983
+      config/kinematics.yaml: ebcbe3a5937a21a33e866c31265737bb2e2fa16d0f57f0793a779a5c3e2f0aa7
+      config/stand.yaml: dfa7151b28eac70101609635b28ece3075d5d624bc0feec49e6ce45c080e05fa
+      package.xml: 08cec6f53416f15418e216050ea6553d4cac788c959e7187882fb0c4304d4577
+      urdf/marvin.urdf.xacro: 8677870949da516c975748b494f8bfa32d0e05dd13455ad49699f3e40c40b092
+      urdf/parts/marvin_arm.ros2_control.xacro: b78b15dada6b1324ab42b5e19b7f9305a0e3a462e03f5964bf2682930544dcbc
+      urdf/parts/marvin_arm_parameters.xacro: 5406b068a73c4df59da332b76d52dcd2fdbb408191bb7b77ee0735c0ad1a4bb0
+      urdf/parts/marvin_bimanual_arm.xacro: d1ba49d0df14c297f76efbf4ce5888dd6763bc332ab77d30b55c6cab1d8aa13b
+      urdf/parts/marvin_left_arm.xacro: 1c19b6b55c0f7c5e37711615e57bc3c3d1b6ca901231b4cffa038f79b259c04f
+      urdf/parts/marvin_right_arm.xacro: e5d424c72a9dd99007e6f95890e02c7fc2d5b32e4c2abb70d95a93f3c3deaa27
+      urdf/parts/marvin_stand.xacro: 066313da6019e7d672fb14e40ecf04ecd65b98cd550860a6778ecdf04c4df945
+  pika_gripper_description:
+    repository: https://github.com/Gabriel-Ning/pika_gripper_description.git
+    commit: fba751fa42131d06880045f4028e389ccdd4d8da
+    declared_license:
+    - Apache-2.0
+    source_sha256:
+      config/cameras.yaml: 68c127be596da5acc9cdc38542ebdad139cbde8b4b131ef907851b995cba25b3
+      config/gripper_tcp.yaml: 895d4d82483e767c8d026c25680c8872967a339207882ba6f80a6c1f9add9d49
+      config/joint_limits.yaml: e8182dfb7cc93412ca4929d3881ef9199ebfe99fab48ed0e81c70f533fd8297d
+      docs/MESH_SOURCES.md: 0c5b5600f4065bf4e8fc2ecd8f4b122764fbb8e63c8558566cf96dafdfca2cb5
+      package.xml: c83791d2898ab255ac9965830f1fcd976ae210c9909a9bd3e3832c8e38977da0
+      urdf/franka_pika_adaptor.xacro: e894ce12a2c21649a071934200ef542b9c794e018477463e73face76d8601e27
+      urdf/marvin_pika_adaptor.xacro: 0b356e39495d0e84ba14f651ea7df5e4b44dd83e4d33f9e084f8825a83e8cf29
+      urdf/pika_gripper.ros2_control.xacro: 003418cd64e4d40631bb88b1b6d6981203d070ad7317911a6ce88b6b00a50e95
+      urdf/pika_gripper.xacro: a2c97a48cc3804c436ec5b95d3dc12b509daf3d66116983a7e262655aa553f02
+      urdf/pika_gripper_standalone.urdf.xacro: 9e06f3ea69956ad659bc988c1c8e9645185711975f71fcb85736edf9f673e9f0
+  marvin_mpd_bimanual_bringup:
+    repository: https://github.com/283042246q/physical_ai_runtime.git
+    commit: 00eba6d96a3434603b7a37c601436eae7a0a9671
+    declared_license:
+    - Apache-2.0
+    source_sha256:
+      config/controllers_bimanual.yaml: 68dcb8f84cd24a06a035bf6cfdd55101780cdb72e20d3284714e14b95cacf865
+      config/execution_bimanual.yaml: 872a006ed633cd1168e323522c37216856449e2c448f38ab20fecc6c7258e4a7
+      config/pika_mounts.yaml: e2d2f507512df89b0ec063458b1d1d20dba2aec95e351eaf56026c88fa5f9f20
+      config/planning_static.yaml: 4fbf94b1ab9cc189fc038f1ab0426688b6f00a0a5cdbad8420e9311525c58f45
+      package.xml: 460581947aa3f898cbdf1e4c226cb6d60654b7626668af9fed8150ee04bf9f18
+      urdf/marvin_pika_bimanual.urdf.xacro: 9785ebab65a32f2048d99f6bab20bff6b652f873313f3a95fe2672af611f1448
+mesh_sources:
+  meshes/marvin_description/base/base_link.STL:
+    package: marvin_description
+    path: meshes/base/base_link.STL
+    sha256: 97b44935ef314fd49cbae47504681ae16675e0762d506d93023765d1e3d1a877
+  meshes/marvin_description/m6/Base_L.STL:
+    package: marvin_description
+    path: meshes/m6/Base_L.STL
+    sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  meshes/marvin_description/m6/Link1_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link1_L.STL
+    sha256: d00097eec49600a4111ee5a124d6636f50ea09a7a1dc8486d98f4370dde7a932
+  meshes/marvin_description/m6/Link2_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link2_L.STL
+    sha256: 4776a6a2086ddc61b1643aff93386e545baccef2751db29d863fe027a76f325e
+  meshes/marvin_description/m6/Link3_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link3_L.STL
+    sha256: d58f1039bd3eb2ccc1a1959b89d2de7ae714344ad8cb8b78ef97b92dcd317d26
+  meshes/marvin_description/m6/Link4_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link4_L.STL
+    sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  meshes/marvin_description/m6/Link5_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link5_L.STL
+    sha256: 573f15ee62b0a9b2d62aceeb756800fd86969a685535e91416b73d51f1c57613
+  meshes/marvin_description/m6/Link6_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link6_L.STL
+    sha256: b6b7570d8ebf1d2acb01baf8941b892f5a5f72aaa05503ab8340da8a2a7b2c13
+  meshes/marvin_description/m6/Link7_L.STL:
+    package: marvin_description
+    path: meshes/m6/Link7_L.STL
+    sha256: 126cc7d41c37049ce34d2636bfe2d460c21e3429ed080877d1c5e983109ef798
+  meshes/marvin_description/m6/Base_R.STL:
+    package: marvin_description
+    path: meshes/m6/Base_R.STL
+    sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  meshes/marvin_description/m6/Link1_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link1_R.STL
+    sha256: fdb1075fe0b41e5c2cb7c2fe13c9d2e62ff4dd6eb540ea841b8603db28369dd0
+  meshes/marvin_description/m6/Link2_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link2_R.STL
+    sha256: 53eb9fc69c939d2ebd4f32c1df341c1c42bc3d9d0911db0c9fcee70aa2701b34
+  meshes/marvin_description/m6/Link3_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link3_R.STL
+    sha256: 122456d8fc3e81694f352fc1f29d0bc19066f7f3d7572857a1be1e7c030dec9c
+  meshes/marvin_description/m6/Link4_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link4_R.STL
+    sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  meshes/marvin_description/m6/Link5_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link5_R.STL
+    sha256: 2de51a340695c89b2fd58b1171dfacc4d85aa4e6cd50879e021a2d0bde8599a8
+  meshes/marvin_description/m6/Link6_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link6_R.STL
+    sha256: 49722d14b9ac34a84a41c95f49bd0b2a8859d4a05f66b247822bf36b0a703cd5
+  meshes/marvin_description/m6/Link7_R.STL:
+    package: marvin_description
+    path: meshes/m6/Link7_R.STL
+    sha256: 6eb75b059ff383e90a153be840bcce84b23d8f8afd074b1bc9dfec1b18c2351f
+  meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL:
+    package: pika_gripper_description
+    path: meshes/pika_adaptor/pika_marvin_adaptor.STL
+    sha256: 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+  meshes/pika_gripper_description/gripper_base_link.STL:
+    package: pika_gripper_description
+    path: meshes/gripper_base_link.STL
+    sha256: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+  meshes/pika_gripper_description/pika_finray_link.STL:
+    package: pika_gripper_description
+    path: meshes/pika_finray_link.STL
+    sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+joint_names:
+- Joint1_L
+- Joint2_L
+- Joint3_L
+- Joint4_L
+- Joint5_L
+- Joint6_L
+- Joint7_L
+- Joint1_R
+- Joint2_R
+- Joint3_R
+- Joint4_R
+- Joint5_R
+- Joint6_R
+- Joint7_R
+ee_links:
+- left_pika_gripper_tcp
+- right_pika_gripper_tcp
+frozen_fingers:
+  left_gripper_left_link:
+    joint: left_gripper_left_joint
+    q: 0.045
+    lower: 0.0
+    upper: 0.045
+    axis:
+    - 1.0
+    - 0.0
+    - 0.0
+  left_gripper_right_link:
+    joint: left_gripper_right_joint
+    q: 0.045
+    lower: 0.0
+    upper: 0.045
+    axis:
+    - 1.0
+    - 0.0
+    - 0.0
+  right_gripper_left_link:
+    joint: right_gripper_left_joint
+    q: 0.045
+    lower: 0.0
+    upper: 0.045
+    axis:
+    - 1.0
+    - 0.0
+    - 0.0
+  right_gripper_right_link:
+    joint: right_gripper_right_joint
+    q: 0.045
+    lower: 0.0
+    upper: 0.045
+    axis:
+    - 1.0
+    - 0.0
+    - 0.0
+tcp_calibrated: false
+collision:
+  method: full_aabb_grid_circumspheres
+  cell_size_m: 0.025
+  finger_travel_envelope: true
+  link_envelopes:
+    left_pika_adaptor_link:
+      lower:
+      - -0.028574135154485703
+      - -0.028574135154485703
+      - -0.001500000013038516
+      upper:
+      - 0.028574135154485703
+      - 0.028574135154485703
+      - 0.009999999776482582
+    left_gripper_base_link:
+      lower:
+      - -0.1075093001127243
+      - -0.03823162615299225
+      - 1.4156092964512368e-10
+      upper:
+      - 0.10749069601297379
+      - 0.10491491109132767
+      - 0.08479999750852585
+    left_gripper_left_link:
+      lower:
+      - -0.08398237273097038
+      - -0.01905701495707035
+      - -0.006633336190134287
+      upper:
+      - 0.01549997366964817
+      - 0.01894298568367958
+      - 0.14033806324005127
+    left_gripper_right_link:
+      lower:
+      - -0.08398237273097038
+      - -0.01905701495707035
+      - -0.006633336190134287
+      upper:
+      - 0.01549997366964817
+      - 0.01894298568367958
+      - 0.14033806324005127
+    right_pika_adaptor_link:
+      lower:
+      - -0.028574135154485703
+      - -0.028574135154485703
+      - -0.001500000013038516
+      upper:
+      - 0.028574135154485703
+      - 0.028574135154485703
+      - 0.009999999776482582
+    right_gripper_base_link:
+      lower:
+      - -0.1075093001127243
+      - -0.03823162615299225
+      - 1.4156092964512368e-10
+      upper:
+      - 0.10749069601297379
+      - 0.10491491109132767
+      - 0.08479999750852585
+    right_gripper_left_link:
+      lower:
+      - -0.08398237273097038
+      - -0.01905701495707035
+      - -0.006633336190134287
+      upper:
+      - 0.01549997366964817
+      - 0.01894298568367958
+      - 0.14033806324005127
+    right_gripper_right_link:
+      lower:
+      - -0.08398237273097038
+      - -0.01905701495707035
+      - -0.006633336190134287
+      upper:
+      - 0.01549997366964817
+      - 0.01894298568367958
+      - 0.14033806324005127
+  excluded_rigid_mount_pairs:
+  - - left_pika_adaptor_link
+    - Link7_L
+  - - left_pika_adaptor_link
+    - left_gripper_base_link
+  - - left_pika_adaptor_link
+    - left_gripper_left_link
+  - - left_pika_adaptor_link
+    - left_gripper_right_link
+  - - left_gripper_base_link
+    - Link7_L
+  - - left_gripper_base_link
+    - left_gripper_left_link
+  - - left_gripper_base_link
+    - left_gripper_right_link
+  - - left_gripper_left_link
+    - Link7_L
+  - - left_gripper_left_link
+    - left_gripper_right_link
+  - - left_gripper_right_link
+    - Link7_L
+  - - right_pika_adaptor_link
+    - Link7_R
+  - - right_pika_adaptor_link
+    - right_gripper_base_link
+  - - right_pika_adaptor_link
+    - right_gripper_left_link
+  - - right_pika_adaptor_link
+    - right_gripper_right_link
+  - - right_gripper_base_link
+    - Link7_R
+  - - right_gripper_base_link
+    - right_gripper_left_link
+  - - right_gripper_base_link
+    - right_gripper_right_link
+  - - right_gripper_left_link
+    - Link7_R
+  - - right_gripper_left_link
+    - right_gripper_right_link
+  - - right_gripper_right_link
+    - Link7_R
+files:
+  mpd/torch_robotics/torch_robotics/data/configs/marvin/pika/collision_parent_bounds.yaml: 9185d524fff40498e0c72a3d46d16136d3885ce7382295593fc5a634ca1ef72d
+  mpd/torch_robotics/torch_robotics/data/configs/marvin/pika/collision_spheres.yaml: ad812aa9661fcf3d38fa481f482bcda484740f25a59c19dc551947cc7b4be95b
+  mpd/torch_robotics/torch_robotics/data/configs/marvin/pika/joint_limits.yaml: e4eb1b2ddeb4f1f5dafd220aa49f4e7fbfa9c58ff0639eee528ce39090e4caff
+  mpd/torch_robotics/torch_robotics/data/configs/marvin/pika/self_collision_pairs.yaml: ab07376ad409c85767495e37c250bf7923a87c2ecfa1bc2501bb4569c905b4b3
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/licenses/Apache-2.0.txt: cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/licenses/SOURCES.md: a4095e1f7c153407194420defdd8ec4f9916961303a3023d7c88aebfe291ea1c
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/licenses/pika_ros-BSD-3-Clause.txt: 7625fecd7927e75d6f9e74c7bc2094da51ef8f8f1650c94d391da31235357635
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/marvin_pika_bimanual_mpd.urdf: 41e057811aef172f568a3353b84f1185780f9c65921275c128bf13fad96ab180
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/base/base_link.STL: 97b44935ef314fd49cbae47504681ae16675e0762d506d93023765d1e3d1a877
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Base_L.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Base_R.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link1_L.STL: d00097eec49600a4111ee5a124d6636f50ea09a7a1dc8486d98f4370dde7a932
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link1_R.STL: fdb1075fe0b41e5c2cb7c2fe13c9d2e62ff4dd6eb540ea841b8603db28369dd0
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link2_L.STL: 4776a6a2086ddc61b1643aff93386e545baccef2751db29d863fe027a76f325e
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link2_R.STL: 53eb9fc69c939d2ebd4f32c1df341c1c42bc3d9d0911db0c9fcee70aa2701b34
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link3_L.STL: d58f1039bd3eb2ccc1a1959b89d2de7ae714344ad8cb8b78ef97b92dcd317d26
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link3_R.STL: 122456d8fc3e81694f352fc1f29d0bc19066f7f3d7572857a1be1e7c030dec9c
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link4_L.STL: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link4_R.STL: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link5_L.STL: 573f15ee62b0a9b2d62aceeb756800fd86969a685535e91416b73d51f1c57613
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link5_R.STL: 2de51a340695c89b2fd58b1171dfacc4d85aa4e6cd50879e021a2d0bde8599a8
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link6_L.STL: b6b7570d8ebf1d2acb01baf8941b892f5a5f72aaa05503ab8340da8a2a7b2c13
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link6_R.STL: 49722d14b9ac34a84a41c95f49bd0b2a8859d4a05f66b247822bf36b0a703cd5
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link7_L.STL: 126cc7d41c37049ce34d2636bfe2d460c21e3429ed080877d1c5e983109ef798
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link7_R.STL: 6eb75b059ff383e90a153be840bcce84b23d8f8afd074b1bc9dfec1b18c2351f
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/gripper_base_link.STL: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL
+  : 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/LICENSE: e4da13b8ee8adf3c184f3cfaa765c1b002efd9e1b7a200fe7c507a30391f8fb9
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/arm_mounts.yaml: 4a915a474b531472b2f7f1b01cd7160847b70e170de97ad1926e6d4bc1aa7e52
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/curobo/marvin.yml: 11883df9efe9839af79de381ca167e689c960269777779ff26a0e148464e926e
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/inertials.yaml: 5b5e255fd051e7bf26ad22f73b66ac3d04351dcdb79bd9183746d736dd29252a
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/joint_limits.yaml: dfacfe5dcfcbd381c611d36d236b3460995f4f1f862a4f2c49b9dd2271361983
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/kinematics.yaml: ebcbe3a5937a21a33e866c31265737bb2e2fa16d0f57f0793a779a5c3e2f0aa7
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/config/stand.yaml: dfa7151b28eac70101609635b28ece3075d5d624bc0feec49e6ce45c080e05fa
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/package.xml: 08cec6f53416f15418e216050ea6553d4cac788c959e7187882fb0c4304d4577
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/marvin.urdf.xacro: 8677870949da516c975748b494f8bfa32d0e05dd13455ad49699f3e40c40b092
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_arm.ros2_control.xacro
+  : b78b15dada6b1324ab42b5e19b7f9305a0e3a462e03f5964bf2682930544dcbc
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_arm_parameters.xacro
+  : 5406b068a73c4df59da332b76d52dcd2fdbb408191bb7b77ee0735c0ad1a4bb0
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_bimanual_arm.xacro: d1ba49d0df14c297f76efbf4ce5888dd6763bc332ab77d30b55c6cab1d8aa13b
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_left_arm.xacro: 1c19b6b55c0f7c5e37711615e57bc3c3d1b6ca901231b4cffa038f79b259c04f
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_right_arm.xacro: e5d424c72a9dd99007e6f95890e02c7fc2d5b32e4c2abb70d95a93f3c3deaa27
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_stand.xacro: 066313da6019e7d672fb14e40ecf04ecd65b98cd550860a6778ecdf04c4df945
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/controllers_bimanual.yaml
+  : 68dcb8f84cd24a06a035bf6cfdd55101780cdb72e20d3284714e14b95cacf865
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/execution_bimanual.yaml
+  : 872a006ed633cd1168e323522c37216856449e2c448f38ab20fecc6c7258e4a7
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/pika_mounts.yaml: e2d2f507512df89b0ec063458b1d1d20dba2aec95e351eaf56026c88fa5f9f20
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/planning_static.yaml: 4fbf94b1ab9cc189fc038f1ab0426688b6f00a0a5cdbad8420e9311525c58f45
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/package.xml: 460581947aa3f898cbdf1e4c226cb6d60654b7626668af9fed8150ee04bf9f18
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/urdf/marvin_pika_bimanual.urdf.xacro
+  : 9785ebab65a32f2048d99f6bab20bff6b652f873313f3a95fe2672af611f1448
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/config/cameras.yaml: 68c127be596da5acc9cdc38542ebdad139cbde8b4b131ef907851b995cba25b3
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/config/gripper_tcp.yaml: 895d4d82483e767c8d026c25680c8872967a339207882ba6f80a6c1f9add9d49
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/config/joint_limits.yaml: e8182dfb7cc93412ca4929d3881ef9199ebfe99fab48ed0e81c70f533fd8297d
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/docs/MESH_SOURCES.md: 0c5b5600f4065bf4e8fc2ecd8f4b122764fbb8e63c8558566cf96dafdfca2cb5
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/package.xml: c83791d2898ab255ac9965830f1fcd976ae210c9909a9bd3e3832c8e38977da0
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/franka_pika_adaptor.xacro: e894ce12a2c21649a071934200ef542b9c794e018477463e73face76d8601e27
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/marvin_pika_adaptor.xacro: 0b356e39495d0e84ba14f651ea7df5e4b44dd83e4d33f9e084f8825a83e8cf29
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/pika_gripper.ros2_control.xacro
+  : 003418cd64e4d40631bb88b1b6d6981203d070ad7317911a6ce88b6b00a50e95
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/pika_gripper.xacro: a2c97a48cc3804c436ec5b95d3dc12b509daf3d66116983a7e262655aa553f02
+  ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/pika_gripper_standalone.urdf.xacro
+  : 9e06f3ea69956ad659bc988c1c8e9645185711975f71fcb85736edf9f673e9f0
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/ros_marvin_pika_expanded.urdf: e22c6793c5c4427a4be04aafe3c37a8cb235ec7b38e3e1067d2326b1c5235b8f
+asset_sha256: 0086fa3d8ee69cb54f5d4159926f919fbd551ff3c96635d385a464f54539b06e

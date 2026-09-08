@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- Standalone bench model: world-fixed validated Pika gripper. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="pika_gripper_standalone">
+
+  <xacro:arg name="serial_port" default="/dev/ttyUSB0"/>
+  <xacro:arg name="max_width" default="0.045"/>
+  <xacro:arg name="use_fake_hardware" default="true"/>
+  <xacro:arg name="xyz" default="0 0 0"/>
+  <xacro:arg name="rpy" default="0 0 0"/>
+  <xacro:arg name="tcp_xyz" default=""/>
+  <xacro:arg name="tcp_rpy" default=""/>
+
+  <xacro:include filename="$(find pika_gripper_description)/urdf/pika_gripper.xacro"/>
+  <xacro:include filename="$(find pika_gripper_description)/urdf/pika_gripper.ros2_control.xacro"/>
+
+  <link name="world"/>
+
+  <xacro:pika_gripper
+    parent="world"
+    tcp_xyz="$(arg tcp_xyz)"
+    tcp_rpy="$(arg tcp_rpy)">
+    <origin xyz="$(arg xyz)" rpy="$(arg rpy)"/>
+  </xacro:pika_gripper>
+
+  <xacro:pika_gripper_ros2_control
+    serial_port="$(arg serial_port)"
+    max_width="$(arg max_width)"
+    use_fake_hardware="$(arg use_fake_hardware)"/>
+
+</robot>

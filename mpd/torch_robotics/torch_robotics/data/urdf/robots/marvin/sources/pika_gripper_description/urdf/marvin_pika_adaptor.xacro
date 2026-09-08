@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!-- Flange adapter: Marvin flange_* -> Pika
+     (meshes/pika_adaptor/pika_marvin_adaptor.STL).
+     Mount pose defaults to identity; override xyz/rpy at the call site if needed. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="marvin_pika_adaptor" params="
+      prefix
+      parent
+      description_pkg:=pika_gripper_description
+      xyz:='0 0 0'
+      rpy:='0 0 0'">
+
+    <joint name="${prefix}pika_adaptor_joint" type="fixed">
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <parent link="${parent}"/>
+      <child link="${prefix}pika_adaptor_link"/>
+    </joint>
+
+    <link name="${prefix}pika_adaptor_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_adaptor/pika_marvin_adaptor.STL"/>
+        </geometry>
+        <material name="${prefix}pika_adaptor_gray">
+          <color rgba="0.55 0.55 0.58 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/pika_adaptor/pika_marvin_adaptor.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+  </xacro:macro>
+
+</robot>
