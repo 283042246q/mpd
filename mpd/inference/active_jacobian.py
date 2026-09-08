@@ -62,8 +62,13 @@ class ActiveJacobianComputer:
             )
             self._parent_subset_jfk_cache[parent_key] = jfk_fn
 
-        parent_jacobians, parent_poses = jfk_fn(q)
+        # Branched robots may expose a canonical order different from TorchKin.
+        # Robots without these adapters (e.g. Panda) keep the original path.
+        raw_q = self.robot.q_to_torchkin(q) if hasattr(self.robot, "q_to_torchkin") else q
+        parent_jacobians, parent_poses = jfk_fn(raw_q)
         parent_jacobians = torch.stack(parent_jacobians).transpose(0, 1)
+        if hasattr(self.robot, "jacobian_from_torchkin"):
+            parent_jacobians = self.robot.jacobian_from_torchkin(parent_jacobians)
         parent_poses = torch.stack(parent_poses).transpose(0, 1)
         parent_lookup = torch.full(
             (len(self.robot.collision_sphere_unique_parent_links),),
@@ -133,6 +138,8 @@ class ActiveJacobianComputer:
         )
         parent_jacobians, _ = jacobian_from_poses(selected_related_poses)
         parent_jacobians = torch.stack(parent_jacobians).transpose(0, 1)
+        if hasattr(self.robot, "jacobian_from_torchkin"):
+            parent_jacobians = self.robot.jacobian_from_torchkin(parent_jacobians)
 
         parent_lookup = torch.full(
             (len(self.robot.collision_sphere_unique_parent_links),),

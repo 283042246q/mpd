@@ -32,10 +32,11 @@ MPD Marvin runtime / worker
 
 - 14 个关节、左右 slice、`split_q`/`merge_q`；
 - `fk_left`、`fk_right`、`jfk_left`、`jfk_right`、`jfk_bimanual`；
-- 左右末端 `flange_L` 和 `flange_R`；
-- `model_hash`，用于部署时发现模型副本过期。
+- 默认双 Pika 末端 `left_pika_gripper_tcp` 和 `right_pika_gripper_tcp`；
+- `with_pika=False` 保留旧 `flange_L` / `flange_R` 模型；
+- `model_hash`（URDF）及双 Pika 的 `asset_hash`（资产清单）。
 
-模型资产位于 `mpd/torch_robotics/torch_robotics/data/` 下的 `marvin/` 目录，包括：
+模型资产位于 `mpd/torch_robotics/torch_robotics/data/` 下的 URDF 和配置 `marvin/` 目录，包括：
 
 - `marvin_bimanual_mpd.urdf`；
 - `joint_limits.yaml`；
@@ -44,11 +45,19 @@ MPD Marvin runtime / worker
 - `self_collision_pairs.yaml`；
 - `grasp_profiles.yaml`。
 
+现在另有默认的 `marvin_pika_bimanual_mpd.urdf`、`configs/marvin/pika/`、
+Pika mesh、源快照、授权声明和 `pika_assets.lock.yaml`。完整路径、碰撞语义、
+导入/自动门禁命令见 [双 Pika 资产说明](MARVIN_PIKA_ASSETS.md)。
+
 `marvin_bimanual_mpd.urdf` 由 ROS2 的 arm-only xacro 导出，关闭了 `ros2_control`，并将
 `marvin_description` mesh 路径本地化到 MPD 的 `marvin/meshes/`。关节限制、碰撞球、
 self-collision pair 和 parent bounds 已从 ROS2/CuRobo 配置转换；导出源 checksum 保存在
 同名 `.urdf.sha256` 文件中。重新生成时使用 [`export_marvin_mpd_model.py`](../scripts/robots/export_marvin_mpd_model.py)
-并指定 `--asset-root`，不要使用包含 Pika 夹爪的 18-DoF bringup xacro。
+并指定 `--asset-root`；此旧工具只用于 arm-only。双 Pika 请使用新的
+`python -m scripts.robots.build_marvin_pika_assets --ros-root ...`：它展开组合
+bringup Xacro 后正确冻结四个手指滑动关节（其中两个为 mimic），保持 14 维，
+同时生成包含手指全行程的保守碰撞模型。不要将带可动手指的展开 URDF 直接
+交给 14 维 MPD。
 
 ### 2.2 双臂任务和代价
 

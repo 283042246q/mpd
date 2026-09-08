@@ -16,7 +16,8 @@ from torch_robotics.torch_utils.torch_utils import dict_to_device, DEFAULT_TENSO
 
 
 def get_num_epochs(num_train_steps, batch_size, dataset_len):
-    return ceil(num_train_steps * batch_size / dataset_len)
+    # DataLoader uses drop_last=False: even a partial batch is one step.
+    return ceil(num_train_steps / ceil(dataset_len / batch_size))
 
 
 def save_models_to_disk(models_prefix_l, total_steps, checkpoints_dir=None):
@@ -355,7 +356,11 @@ def train(
                     break
                 t_dataloading_start = time.perf_counter()
 
-            if max_steps is not None and train_steps_current == max_steps:
+            if (
+                stop_training
+                or train_steps_current >= num_train_steps
+                or (max_steps is not None and train_steps_current == max_steps)
+            ):
                 break
 
         # Update ema model at the end of training

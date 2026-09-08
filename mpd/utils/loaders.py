@@ -48,6 +48,7 @@ def get_planning_task_and_dataset(
     dataset_file_merged="dataset_merged.hdf5",
     context_qs=False,
     context_ee_goal_pose=False,
+    context_ee_goal_pose_bimanual=False,
     batch_size=2,
     val_set_size_fraction=0.025,
     results_dir=None,
@@ -64,6 +65,7 @@ def get_planning_task_and_dataset(
     # B-spline trajectory parameters
     bspline_degree=5,
     bspline_num_control_points_desired=13,
+    bspline_num_control_points_exact=False,
     bspline_zero_vel_at_start_and_goal=True,
     bspline_zero_acc_at_start_and_goal=True,
     num_T_pts=128,
@@ -111,6 +113,10 @@ def get_planning_task_and_dataset(
         bspline_zero_vel_at_start_and_goal,
         bspline_zero_acc_at_start_and_goal,
     )
+    if bspline_num_control_points_exact:
+        # Prevalidated generated splines must retain their serialized control
+        # point count. TemporalUnet pads arbitrary learnable horizons internally.
+        bspline_n_control_points = int(bspline_num_control_points_desired)
     print(f"--------------- Parametric trajectory -- {parametric_trajectory_class}")
     print(
         f"Number of B-spline control points.\n"
@@ -183,6 +189,7 @@ def get_planning_task_and_dataset(
         preload_data_to_device=preload_data_to_device,
         context_qs=context_qs,
         context_ee_goal_pose=context_ee_goal_pose,
+        context_ee_goal_pose_bimanual=context_ee_goal_pose_bimanual,
         tensor_args=tensor_args,
         **kwargs,
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import yaml
 
 import torch
 import torchkin
@@ -17,15 +18,25 @@ class RobotMarvinBimanual(RobotBase):
     JOINT_NAMES = tuple([f"Joint{index}_L" for index in range(1, 8)] + [f"Joint{index}_R" for index in range(1, 8)])
     LEFT_SLICE = slice(0, 7)
     RIGHT_SLICE = slice(7, 14)
-    link_name_ee = "flange_L"  # compatibility for generic single-EE utilities
-    link_name_ee_left = "flange_L"
-    link_name_ee_right = "flange_R"
+    link_name_ee = "left_pika_gripper_tcp"
+    link_name_ee_left = "left_pika_gripper_tcp"
+    link_name_ee_right = "right_pika_gripper_tcp"
+    link_name_flange_left = "flange_L"
+    link_name_flange_right = "flange_R"
 
-    def __init__(self, *, tensor_args=DEFAULT_TENSOR_ARGS, grasped_object=None, **kwargs):
+    def __init__(self, *, with_pika=True, tensor_args=DEFAULT_TENSOR_ARGS, grasped_object=None, **kwargs):
         robot_dir = os.path.join(get_robot_path(), "marvin")
         config_dir = os.path.join(get_configs_path(), "marvin")
+        self.with_pika = with_pika
+        if with_pika:
+            config_dir = os.path.join(config_dir, "pika")
+        self.link_name_ee_left = "left_pika_gripper_tcp" if with_pika else "flange_L"
+        self.link_name_ee_right = "right_pika_gripper_tcp" if with_pika else "flange_R"
+        self.link_name_ee = self.link_name_ee_left
+        model_name = "marvin_pika_bimanual_mpd.urdf" if with_pika else "marvin_bimanual_mpd.urdf"
+        self.self_collision_pairs_file_path = os.path.join(config_dir, "self_collision_pairs.yaml")
         super().__init__(
-            urdf_robot_file=os.path.join(robot_dir, "marvin_bimanual_mpd.urdf"),
+            urdf_robot_file=os.path.join(robot_dir, model_name),
             collision_spheres_file_path=os.path.join(config_dir, "collision_spheres.yaml"),
             collision_parent_bounds_file_path=os.path.join(config_dir, "collision_parent_bounds.yaml"),
             joint_limits_file_path=os.path.join(config_dir, "joint_limits.yaml"),
@@ -34,8 +45,13 @@ class RobotMarvinBimanual(RobotBase):
             tensor_args=tensor_args,
             **kwargs,
         )
-        with open(os.path.join(robot_dir, "marvin_bimanual_mpd.urdf"), "rb") as model_file:
+        with open(os.path.join(robot_dir, model_name), "rb") as model_file:
             self.model_hash = hashlib.sha256(model_file.read()).hexdigest()
+        if with_pika:
+            with open(os.path.join(robot_dir, "pika_assets.lock.yaml")) as file:
+                self.asset_manifest = yaml.safe_load(file)
+            self.asset_hash = self.asset_manifest["asset_sha256"]
+            self.tcp_calibrated = self.asset_manifest["tcp_calibrated"]
         self.joint_names = tuple(
             joint.name for joint in self.robot_urdf.joints if joint.joint_type != "fixed"
         )
@@ -54,6 +70,9 @@ class RobotMarvinBimanual(RobotBase):
             device=self.q_pos_min.device,
         )
         self._canonical_to_torchkin = torch.argsort(self._torchkin_to_canonical)
+        self.fk_ee = self._canonical_fk_list(self.fk_ee)
+        self.jfk_s_ee = self._canonical_jacobian_fk(self.jfk_s_ee)
+        self.jfk_b_ee = self._canonical_jacobian_fk(self.jfk_b_ee)
 
         # RobotBase installs raw TorchKin functions for collision spheres.  A
         # branched tree is traversed in an interleaved order, while MPD's
@@ -74,12 +93,24 @@ class RobotMarvinBimanual(RobotBase):
         self.fk_collision_parent_pose_cache = self._canonical_fk_list(
             self._fk_collision_parent_pose_cache_torchkin
         )
+        self.jfk_b_collision_spheres = self._canonical_jacobian_fk(self.jfk_b_collision_spheres)
+        self.jfk_b_collision_sphere_parent_links = self._canonical_jacobian_fk(
+            self.jfk_b_collision_sphere_parent_links
+        )
 
     def _canonical_q(self, q):
         q = torch.as_tensor(q)
         if q.shape[-1] != self.q_dim:
             raise ValueError(f"q must end in {self.q_dim} values, got {tuple(q.shape)}")
         return q.reshape(-1, self.q_dim)[..., self._torchkin_to_canonical]
+
+    def q_to_torchkin(self, q):
+        """Adapter for consumers that create their own subset FK functions."""
+        return q[..., self._torchkin_to_canonical]
+
+    def jacobian_from_torchkin(self, jacobian):
+        """Map the last (joint) axis of a raw TorchKin Jacobian to MPD order."""
+        return jacobian[..., self._canonical_to_torchkin]
 
     def _canonical_fk_list(self, fk_fn):
         def wrapped(q):
@@ -95,7 +126,8 @@ class RobotMarvinBimanual(RobotBase):
             q = torch.as_tensor(q)
             leading_shape = q.shape[:-1]
             jacobians, poses = fk_fn(self._canonical_q(q))
-            jacobians = [jacobian.reshape(*leading_shape, *jacobian.shape[-2:]) for jacobian in jacobians]
+            jacobians = [jacobian[..., self._canonical_to_torchkin].reshape(
+                *leading_shape, *jacobian.shape[-2:]) for jacobian in jacobians]
             poses = [pose.reshape(*leading_shape, *pose.shape[-2:]) for pose in poses]
             return jacobians, poses
 

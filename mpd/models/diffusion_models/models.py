@@ -1,6 +1,7 @@
 import einops
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from mpd.models.layers.layers import (
     Downsample1d,
@@ -70,6 +71,11 @@ class TemporalUnet(nn.Module):
 
         dims = [input_dim, *map(lambda m: unet_input_dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
+        self.horizon_multiple = 2 ** max(0, len(in_out) - 1)
+        padded_n_support_points = (
+            (n_support_points + self.horizon_multiple - 1) // self.horizon_multiple
+        ) * self.horizon_multiple
+        network_n_support_points = padded_n_support_points
         print(f"[ models/temporal ] Channel dimensions: {in_out}")
 
         # Networks
@@ -89,8 +95,8 @@ class TemporalUnet(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        ResidualTemporalBlock(dim_in, dim_out, cond_dim, n_support_points=n_support_points),
-                        ResidualTemporalBlock(dim_out, dim_out, cond_dim, n_support_points=n_support_points),
+                        ResidualTemporalBlock(dim_in, dim_out, cond_dim, n_support_points=network_n_support_points),
+                        ResidualTemporalBlock(dim_out, dim_out, cond_dim, n_support_points=network_n_support_points),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))) if self_attention else nn.Identity(),
                         (
                             SpatialTransformer(
@@ -109,10 +115,12 @@ class TemporalUnet(nn.Module):
             )
 
             if not is_last:
-                n_support_points = n_support_points // 2
+                network_n_support_points = network_n_support_points // 2
 
         mid_dim = dims[-1]
-        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, cond_dim, n_support_points=n_support_points)
+        self.mid_block1 = ResidualTemporalBlock(
+            mid_dim, mid_dim, cond_dim, n_support_points=network_n_support_points
+        )
         self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim))) if self_attention else nn.Identity()
         self.mid_attention = (
             SpatialTransformer(
@@ -121,7 +129,9 @@ class TemporalUnet(nn.Module):
             if conditioning_type == "attention"
             else nn.Identity()
         )
-        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, cond_dim, n_support_points=n_support_points)
+        self.mid_block2 = ResidualTemporalBlock(
+            mid_dim, mid_dim, cond_dim, n_support_points=network_n_support_points
+        )
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (num_resolutions - 1)
@@ -129,8 +139,10 @@ class TemporalUnet(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        ResidualTemporalBlock(dim_out * 2, dim_in, cond_dim, n_support_points=n_support_points),
-                        ResidualTemporalBlock(dim_in, dim_in, cond_dim, n_support_points=n_support_points),
+                        ResidualTemporalBlock(
+                            dim_out * 2, dim_in, cond_dim, n_support_points=network_n_support_points
+                        ),
+                        ResidualTemporalBlock(dim_in, dim_in, cond_dim, n_support_points=network_n_support_points),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))) if self_attention else nn.Identity(),
                         (
                             SpatialTransformer(
@@ -149,7 +161,7 @@ class TemporalUnet(nn.Module):
             )
 
             if not is_last:
-                n_support_points = n_support_points * 2
+                network_n_support_points = network_n_support_points * 2
 
         self.final_conv = nn.Sequential(
             Conv1dBlock(unet_input_dim, unet_input_dim, kernel_size=5, n_groups=group_norm_n_groups(unet_input_dim)),
@@ -161,13 +173,15 @@ class TemporalUnet(nn.Module):
         x : [ batch x horizon x state_dim ]
         context: [batch x context_dim]
         """
-        b, h, d = x.shape
+        b, horizon, d = x.shape
+        if horizon != self.n_support_points:
+            raise ValueError(f"expected horizon {self.n_support_points}, got {horizon}")
 
         t_emb = self.time_mlp(time)
         c_emb = t_emb
         if self.conditioning_type == "concatenate":
             x_emb = self.state_encoder(x)
-            context = einops.repeat(context, "m n -> m h n", h=h)
+            context = einops.repeat(context, "m n -> m h n", h=horizon)
             x = torch.cat((x_emb, context), dim=-1)
         elif self.conditioning_type == "attention":
             # reshape to keep the interface
@@ -177,8 +191,11 @@ class TemporalUnet(nn.Module):
 
         # swap horizon and channels (state_dim)
         x = einops.rearrange(x, "b h c -> b c h")  # batch, horizon, channels (state_dim)
+        pad_right = (-horizon) % self.horizon_multiple
+        if pad_right:
+            x = F.pad(x, (0, pad_right))
 
-        h = []
+        skips = []
         for resnet, resnet2, attn_self, attn_conditioning, downsample in self.downs:
             x = resnet(x, c_emb)
             # if self.conditioning_type == 'attention':
@@ -187,7 +204,7 @@ class TemporalUnet(nn.Module):
             x = attn_self(x)
             if self.conditioning_type == "attention":
                 x = attn_conditioning(x, context=context)
-            h.append(x)
+            skips.append(x)
             x = downsample(x)
 
         x = self.mid_block1(x, c_emb)
@@ -197,7 +214,7 @@ class TemporalUnet(nn.Module):
         x = self.mid_block2(x, c_emb)
 
         for resnet, resnet2, attn_self, attn_conditioning, upsample in self.ups:
-            x = torch.cat((x, h.pop()), dim=1)
+            x = torch.cat((x, skips.pop()), dim=1)
             x = resnet(x, c_emb)
             x = resnet2(x, c_emb)
             x = attn_self(x)
@@ -208,6 +225,7 @@ class TemporalUnet(nn.Module):
         x = self.final_conv(x)
 
         x = einops.rearrange(x, "b c h -> b h c")
+        x = x[:, :horizon]
 
         return x
 

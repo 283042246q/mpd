@@ -63,6 +63,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         dataset_file_merged="dataset_merged.hdf5",
         context_qs=True,
         context_ee_goal_pose=False,
+        context_ee_goal_pose_bimanual=False,
         normalizer="SafeLimitsNormalizer",
         normalize_ee_pose_goal=True,
         reload_data=False,
@@ -86,6 +87,9 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
         # Use end-effector pose goal as a context variable
         self.context_ee_goal_pose = context_ee_goal_pose
+        self.context_ee_goal_pose_bimanual = context_ee_goal_pose_bimanual
+        if self.context_ee_goal_pose_bimanual and not self.context_ee_goal_pose:
+            raise ValueError("bimanual EE context requires context_ee_goal_pose=True")
 
         ######################################################################################
         # -------------------------------- Load trajectories ---------------------------------
@@ -97,6 +101,7 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         self.field_key_context_ee_goal_pose = "ee_goal_pose"
         self.field_key_context_ee_goal_orientation = "ee_goal_orientation"
         self.field_key_context_ee_goal_position = "ee_goal_position"
+        self.field_key_context_active_ee_mask = "active_ee_mask"
         self.fields = {}
 
         # ------------ load data ------------
@@ -182,6 +187,10 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             data_reload_prefix += f"-n_pts_{self.planning_task.parametric_trajectory.bspline.n_pts}"
             data_reload_prefix += f"-zero_vel_{self.planning_task.parametric_trajectory.zero_vel_at_start_and_goal}"
             data_reload_prefix += f"-zero_acc_{self.planning_task.parametric_trajectory.zero_acc_at_start_and_goal}"
+            if self.context_ee_goal_pose_bimanual:
+                # Never reuse a legacy joint/single-EE cache that lacks the
+                # two stored TCP slots and their mask. Preserve Panda cache names.
+                data_reload_prefix += "-marvin_dual_ee_v1"
             data_reload_file_path = os.path.join(self.base_dir, f"{data_reload_prefix}.pickle")
 
             if os.path.exists(data_reload_file_path) and not self.reload_data:
@@ -195,6 +204,21 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                 inner_control_points_all = []
                 q_start_all = []
                 q_goal_all = []
+                ee_pose_goal_all = []
+                active_ee_mask_all = []
+
+                if self.context_ee_goal_pose_bimanual:
+                    missing = {"ee_goal_pose", "active_ee_mask"}.difference(dataset_h5.keys())
+                    if missing:
+                        raise ValueError(
+                            "Marvin dual-slot EE context must be read from HDF5; "
+                            f"missing fields: {sorted(missing)}"
+                        )
+                    n_h5 = len(dataset_h5["sol_path"])
+                    if dataset_h5["ee_goal_pose"].shape != (n_h5, 2, 3, 4):
+                        raise ValueError("ee_goal_pose must have shape (N, 2, 3, 4)")
+                    if dataset_h5["active_ee_mask"].shape != (n_h5, 2):
+                        raise ValueError("active_ee_mask must have shape (N, 2)")
 
                 task_ids_processed = []
                 # fit a bspline to each path
@@ -253,6 +277,21 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                     # start and goal joint positions are the first and last control points by definition
                     q_start_all.append(control_points[0])
                     q_goal_all.append(control_points[-1])
+                    if self.context_ee_goal_pose_bimanual:
+                        ee_pose_goal_all.append(
+                            to_torch(
+                                dataset_h5["ee_goal_pose"][i],
+                                dtype=self.tensor_args["dtype"],
+                                device="cpu",
+                            )
+                        )
+                        active_ee_mask_all.append(
+                            to_torch(
+                                dataset_h5["active_ee_mask"][i],
+                                dtype=self.tensor_args["dtype"],
+                                device="cpu",
+                            )
+                        )
 
                     # If joint start and goal are used as context variables, remove the first and last control points
                     # from the learned control points.
@@ -289,7 +328,12 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
                 # update fields for all samples
                 self.fields = self.build_fields_data_sample(
-                    self.fields, torch.stack(q_start_all), torch.stack(q_goal_all), device="cpu"
+                    self.fields,
+                    torch.stack(q_start_all),
+                    torch.stack(q_goal_all),
+                    ee_pose_goal=torch.stack(ee_pose_goal_all) if ee_pose_goal_all else None,
+                    active_ee_mask=torch.stack(active_ee_mask_all) if active_ee_mask_all else None,
+                    device="cpu",
                 )
 
                 # Compute collision free statistics of the fitted bspline (this can take a while).
@@ -311,7 +355,16 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             print("... done loading data.")
             print(f"Loading data took {t_load_data.elapsed:.2f} seconds.")
 
-    def build_fields_data_sample(self, fields_d, q_start, q_goal, ee_pose_goal=None, device=None, **kwargs):
+    def build_fields_data_sample(
+        self,
+        fields_d,
+        q_start,
+        q_goal,
+        ee_pose_goal=None,
+        active_ee_mask=None,
+        device=None,
+        **kwargs,
+    ):
         fields_d[self.field_key_q_start] = q_start
         fields_d[self.field_key_q_goal] = q_goal
 
@@ -324,7 +377,15 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
         # Context data
         # end-effector pose goal
-        if ee_pose_goal is None:
+        if self.context_ee_goal_pose_bimanual:
+            if ee_pose_goal is None or active_ee_mask is None:
+                raise ValueError(
+                    "dual-slot EE context requires stored ee_goal_pose and active_ee_mask; "
+                    "generic robot.get_EE_pose() is intentionally disabled"
+                )
+            if ee_pose_goal.shape[-3:] != (2, 3, 4) or active_ee_mask.shape[-1:] != (2,):
+                raise ValueError("expected ee_goal_pose (..., 2, 3, 4) and active_ee_mask (..., 2)")
+        elif ee_pose_goal is None:
             ee_pose_goal = self.planning_task.robot.get_EE_pose(
                 to_torch(q_goal, **self.planning_task.robot.tensor_args)
             ).to(device if device is not None else self.tensor_args["device"])
@@ -333,6 +394,8 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         fields_d[self.field_key_context_ee_goal_pose] = ee_pose_goal
         fields_d[self.field_key_context_ee_goal_orientation] = ee_pose_goal_orientation
         fields_d[self.field_key_context_ee_goal_position] = ee_pose_goal_position
+        if self.context_ee_goal_pose_bimanual:
+            fields_d[self.field_key_context_active_ee_mask] = active_ee_mask.to(dtype=q_start.dtype)
 
         return fields_d
 
@@ -364,10 +427,18 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
         return data
 
-    def create_data_sample_normalized(self, q_start_pos, q_goal_pos, ee_pose_goal=None, **kwargs):
+    def create_data_sample_normalized(
+        self, q_start_pos, q_goal_pos, ee_pose_goal=None, active_ee_mask=None, **kwargs
+    ):
         # create a data sample
         data_sample = {}
-        data_sample = self.build_fields_data_sample(data_sample, q_start_pos, q_goal_pos, ee_pose_goal=ee_pose_goal)
+        data_sample = self.build_fields_data_sample(
+            data_sample,
+            q_start_pos,
+            q_goal_pos,
+            ee_pose_goal=ee_pose_goal,
+            active_ee_mask=active_ee_mask,
+        )
 
         for k in list(data_sample.keys()):
             v = data_sample[k]
@@ -376,6 +447,8 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                 data_sample[f"{k}_normalized"] = data_sample[k]
             elif k == self.field_key_context_ee_goal_pose:
                 pass
+            elif k == self.field_key_context_active_ee_mask:
+                data_sample[f"{k}_normalized"] = data_sample[k]
             else:
                 data_sample[f"{k}_normalized"] = self.normalize(v, k)
 
@@ -451,6 +524,10 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
                     f"{self.field_key_context_ee_goal_position}_normalized"
                 ],
             }
+        if self.context_ee_goal_pose_bimanual:
+            context_d[self.field_key_context_active_ee_mask] = data_sample[
+                self.field_key_context_active_ee_mask
+            ]
         return context_d
 
     def get_unnormalized(self, index):
@@ -546,6 +623,10 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
 
     def run_collision_statistics(self, chunk_size=2000):
         # checks the collision statistics of the fitted bsplines
+        if isinstance(self.planning_task.robot, robots.RobotMarvinBimanual):
+            # Pika's fine model has >1000 spheres; 2000 x 128 states
+            # would allocate enormous self-pair tensors before training.
+            chunk_size = min(chunk_size, 2)
 
         # get all control points idxs
         idxs_cps_sequential = np.arange(self.fields[self.field_key_control_points].shape[0])
@@ -594,23 +675,29 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
             # the end-effector goal orientation (flattened)
             # and the end-effector goal position
             # This is context has the same format as the input to the generative model
-            context_dataset = torch.cat(
-                [
-                    self.fields[self.field_key_q_start],
-                    self.fields[self.field_key_context_ee_goal_orientation],  # orientation flattened
-                    self.fields[self.field_key_context_ee_goal_position],
-                ],
-                dim=-1,
-            )
+            orientation = self.fields[self.field_key_context_ee_goal_orientation]
+            position = self.fields[self.field_key_context_ee_goal_position]
+            if self.context_ee_goal_pose_bimanual:
+                orientation = orientation.flatten(start_dim=-2)
+                position = position.flatten(start_dim=-2)
+            context_parts = [self.fields[self.field_key_q_start], orientation, position]
+            if self.context_ee_goal_pose_bimanual:
+                context_parts.append(self.fields[self.field_key_context_active_ee_mask])
+            context_dataset = torch.cat(context_parts, dim=-1)
             context_dataset = to_torch(context_dataset, device=q_start.device)
-            context_query = torch.cat(
-                [
-                    q_start,
-                    einops.rearrange(EE_pose_goal[..., :3, :3], "... d e -> ... (d e)"),
-                    EE_pose_goal[..., :3, 3],
-                ],
-                dim=-1,
-            )[None, ...]
+            query_orientation = einops.rearrange(EE_pose_goal[..., :3, :3], "... d e -> ... (d e)")
+            query_position = EE_pose_goal[..., :3, 3]
+            if self.context_ee_goal_pose_bimanual:
+                query_orientation = query_orientation.flatten(start_dim=-2)
+                query_position = query_position.flatten(start_dim=-2)
+                active_ee_mask = kwargs.get("active_ee_mask")
+                if active_ee_mask is None:
+                    raise ValueError("bimanual KNN query requires active_ee_mask")
+                context_query = torch.cat(
+                    [q_start, query_orientation, query_position, active_ee_mask.to(q_start)], dim=-1
+                )[None, ...]
+            else:
+                context_query = torch.cat([q_start, query_orientation, query_position], dim=-1)[None, ...]
         elif self.context_qs:
             context_dataset = to_torch(self.fields[self.field_key_context_qs], device=q_start.device)
             context_query = torch.cat((q_start, q_goal), dim=-1)[None, ...]

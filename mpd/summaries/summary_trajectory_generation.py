@@ -29,6 +29,9 @@ class SummaryTrajectoryGeneration(SummaryBase):
     ):
 
         dataset = datasubset.dataset
+        bimanual = hasattr(planning_task.robot, "fk_right")
+        if bimanual:
+            batch_size_statistics = min(batch_size_statistics, 2)
 
         # ------------------------------------------------------------------------------------
         # Compute statistics on a set of random tasks
@@ -37,18 +40,23 @@ class SummaryTrajectoryGeneration(SummaryBase):
             datasubset.indices, size=min(batch_size_statistics, len(datasubset.indices)), replace=False
         )
 
-        n_samples = 25
+        n_samples = 4 if bimanual else 25
         horizon = dataset.n_learnable_control_points
         control_points_normalized_l = []
         q_start_l = []
         q_goal_l = []
         ee_goal_pose_l = []
+        active_ee_mask_l = []
         for idx in control_points_idxs:
             data_sample = dict_to_device(dataset[idx], device=tensor_args["device"])
 
             q_start_l.append(einops.repeat(data_sample["q_start"], "... -> n ...", n=n_samples))
             q_goal_l.append(einops.repeat(data_sample["q_goal"], "... -> n ...", n=n_samples))
             ee_goal_pose_l.append(einops.repeat(data_sample["ee_goal_pose"], "... -> n ...", n=n_samples))
+            if getattr(dataset, "context_ee_goal_pose_bimanual", False):
+                active_ee_mask_l.append(
+                    einops.repeat(data_sample["active_ee_mask"], "... -> n ...", n=n_samples)
+                )
 
             # ------------------------------------------------------------------------------------
             # Sample control points with the inference model
@@ -74,6 +82,26 @@ class SummaryTrajectoryGeneration(SummaryBase):
             control_points, q_start, q_goal, get_type=["pos"]
         )["pos"]
 
+        if bimanual:
+            # The inherited get_EE_pose reports the LEFT TCP only. Report
+            # both arms explicitly and expose inactive-arm drift of the prior.
+            for arm, sl in (("left", slice(0, 7)), ("right", slice(7, 14))):
+                fk = getattr(planning_task.robot, f"fk_{arm}")
+                pos_error, ori_error = compute_ee_pose_errors(fk(q_goal), fk(q_pos_trajs[:, -1]))
+                wandb.log(
+                    {
+                        f"{prefix}{arm}_tcp_position_error": torch.linalg.norm(pos_error, dim=-1).mean(),
+                        f"{prefix}{arm}_tcp_orientation_error_deg": torch.rad2deg(
+                            torch.linalg.norm(ori_error, dim=-1)
+                        ).mean(),
+                    },
+                    step=train_step,
+                )
+                inactive = torch.all(torch.abs(q_start[:, sl] - q_goal[:, sl]) < 1e-6, dim=-1)
+                if inactive.any():
+                    drift = (q_pos_trajs[inactive, :, sl] - q_start[inactive, sl].unsqueeze(1)).abs().max()
+                    wandb.log({f"{prefix}{arm}_inactive_max_drift_rad": drift}, step=train_step)
+
         # ------------------------------------------------------------------------------------
         # STATISTICS
         wandb.log(
@@ -87,12 +115,25 @@ class SummaryTrajectoryGeneration(SummaryBase):
 
         # EE pose errors
         ee_pose_goal = torch.cat(ee_goal_pose_l, dim=0)
-        ee_pose_goal_achieved = planning_task.robot.get_EE_pose(q_pos_trajs[..., -1, :])
+        if getattr(dataset, "context_ee_goal_pose_bimanual", False):
+            ee_pose_goal_achieved = torch.stack(
+                (
+                    planning_task.robot.fk_left(q_pos_trajs[..., -1, :]),
+                    planning_task.robot.fk_right(q_pos_trajs[..., -1, :]),
+                ),
+                dim=1,
+            )
+        else:
+            ee_pose_goal_achieved = planning_task.robot.get_EE_pose(q_pos_trajs[..., -1, :])
         error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
             ee_pose_goal, ee_pose_goal_achieved
         )
         ee_pose_goal_error_position_norm = torch.linalg.norm(error_ee_pose_goal_position, dim=-1)
         ee_pose_goal_error_orientation_norm = torch.rad2deg(torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1))
+        if active_ee_mask_l:
+            active = torch.cat(active_ee_mask_l, dim=0).bool()
+            ee_pose_goal_error_position_norm = ee_pose_goal_error_position_norm[active]
+            ee_pose_goal_error_orientation_norm = ee_pose_goal_error_orientation_norm[active]
 
         wandb.log(
             {f"{prefix}ee_pose_goal_error_position_norm MEAN": ee_pose_goal_error_position_norm.mean()}, step=train_step

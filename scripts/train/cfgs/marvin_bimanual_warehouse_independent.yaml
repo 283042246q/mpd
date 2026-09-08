@@ -1,18 +1,23 @@
 # Train the shared MPD diffusion model on Marvin Warehouse 14-DoF paths.
-dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v1
+dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-150k
 dataset_file_merged: dataset_merged.hdf5
 robot_model: marvin_bimanual
 task_family: independent
 context_qs: true
-context_ee_goal_pose: false
+context_ee_goal_pose: true
+context_ee_goal_pose_bimanual: true
 parametric_trajectory_class: ParametricTrajectoryBspline
 bspline_degree: 5
 bspline_num_control_points_desired: 22
+bspline_num_control_points_exact: true
 unet_input_dim: 32
 batch_size: 128
 state_dim: 14
-context_q_dim: 28
-results_dir: logs/marvin_bimanual/warehouse_independent_v1
+context_q_dim: 14
+raw_context_dim: 40
+results_dir: logs/marvin_bimanual/warehouse_independent_v3_dual_ee
+clip_grad: true
+wandb_mode: disabled
 num_train_steps: 1000000
 device: cuda:0
 debug: false

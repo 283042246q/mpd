@@ -10,7 +10,12 @@ from matplotlib import pyplot as plt
 from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd import trainer
 from mpd.models import UNET_DIM_MULTS, TemporalUnet
-from mpd.models.diffusion_models.context_models import ContextModelQs, ContextModelEEPoseGoal, ContextModelCombined
+from mpd.models.diffusion_models.context_models import (
+    ContextModelCombined,
+    ContextModelEEPoseGoal,
+    ContextModelMarvinDualEE,
+    ContextModelQs,
+)
 from mpd.trainer.trainer import get_num_epochs
 from mpd.utils.loaders import get_planning_task_and_dataset, get_model, get_loss, get_summary
 from torch_robotics.torch_utils.seed import fix_random_seed
@@ -49,6 +54,8 @@ def experiment(
     bspline_degree: int = 5,
     # 期望的 B-spline 控制点数量；程序会调整，使可学习控制点数量是 8 的倍数
     bspline_num_control_points_desired: int = 22,
+    # Keep the exact serialized count for prevalidated generated splines.
+    bspline_num_control_points_exact: bool = False,
     # B-spline 展开后的轨迹采样点数，用于碰撞检查、可视化和后续仿真
     num_T_pts: int = 128,
     ########################################################################
@@ -65,6 +72,8 @@ def experiment(
     # End-effector pose conditioned model
     # 是否把末端目标位姿作为条件输入；Panda/Warehouse 通常需要开启
     context_ee_goal_pose: bool = False,
+    # Two fixed Pika TCP slots plus an activity mask (Marvin only).
+    context_ee_goal_pose_bimanual: bool = False,
     # 末端目标位姿条件编码 MLP 层数
     context_ee_goal_pose_n_layers: int = 2,
     # 末端目标位姿条件编码输出维度
@@ -163,9 +172,11 @@ def experiment(
         n_task_samples=n_task_samples,
         bspline_degree=bspline_degree,
         bspline_num_control_points_desired=bspline_num_control_points_desired,
+        bspline_num_control_points_exact=bspline_num_control_points_exact,
         num_T_pts=num_T_pts,
         context_qs=context_qs,
         context_ee_goal_pose=context_ee_goal_pose,
+        context_ee_goal_pose_bimanual=context_ee_goal_pose_bimanual,
         batch_size=batch_size,
         results_dir=results_dir,
         save_indices=True,
@@ -173,6 +184,22 @@ def experiment(
     )
 
     full_dataset = train_subset.dataset
+
+    if kwargs.get("robot_model") == "marvin_bimanual":
+        expected_context_q_dim = 14 if context_ee_goal_pose_bimanual else 28
+        if (planning_task.robot.q_dim, full_dataset.state_dim, full_dataset.context_q_dim) != (
+            14,
+            14,
+            expected_context_q_dim,
+        ):
+            raise ValueError(
+                "Marvin dimensions must be robot/state=14 and joint context="
+                f"{expected_context_q_dim}"
+            )
+        if not context_qs:
+            raise ValueError("Marvin training requires q_start context")
+        if context_ee_goal_pose != context_ee_goal_pose_bimanual:
+            raise ValueError("Marvin EE conditioning must use the dual-slot Pika TCP encoder")
 
     if debug:
         full_dataset.render(
@@ -185,30 +212,39 @@ def experiment(
 
     ########################################################################
     # Model
-    context_model_qs = None
-    if context_qs:
-        context_model_qs = ContextModelQs(
-            in_dim=full_dataset.context_q_dim,
-            out_dim=context_q_out_dim,
-            n_layers=context_qs_n_layers,
-            act=context_qs_act,
-        )
-
-    context_model_ee_pose_goal = None
-    if context_ee_goal_pose:
-        context_model_ee_pose_goal = ContextModelEEPoseGoal(
-            out_dim=context_ee_goal_pose_out_dim,
+    if context_ee_goal_pose_bimanual:
+        # Scheme 3: concatenate the raw fields in a fixed, auditable 40-D
+        # order before the first context MLP.
+        context_model = ContextModelMarvinDualEE(
+            out_dim=context_combined_out_dim,
             n_layers=context_ee_goal_pose_n_layers,
             act=context_ee_goal_pose_act,
         )
+    else:
+        context_model_qs = None
+        if context_qs:
+            context_model_qs = ContextModelQs(
+                in_dim=full_dataset.context_q_dim,
+                out_dim=context_q_out_dim,
+                n_layers=context_qs_n_layers,
+                act=context_qs_act,
+            )
 
-    context_model = None
-    if not (context_model_qs is None and context_model_ee_pose_goal is None):
-        context_model = ContextModelCombined(
-            context_model_qs=context_model_qs,
-            context_model_ee_pose_goal=context_model_ee_pose_goal,
-            out_dim=context_combined_out_dim,
-        )
+        context_model_ee_pose_goal = None
+        if context_ee_goal_pose:
+            context_model_ee_pose_goal = ContextModelEEPoseGoal(
+                out_dim=context_ee_goal_pose_out_dim,
+                n_layers=context_ee_goal_pose_n_layers,
+                act=context_ee_goal_pose_act,
+            )
+
+        context_model = None
+        if not (context_model_qs is None and context_model_ee_pose_goal is None):
+            context_model = ContextModelCombined(
+                context_model_qs=context_model_qs,
+                context_model_ee_pose_goal=context_model_ee_pose_goal,
+                out_dim=context_combined_out_dim,
+            )
 
     diffusion_configs = dict(
         variance_schedule=variance_schedule,
