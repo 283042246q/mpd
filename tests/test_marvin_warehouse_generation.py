@@ -157,6 +157,110 @@ def test_failed_rrt_discards_pair_and_samples_new_endpoints():
     assert not np.array_equal(planned[0], planned[1])
 
 
+def test_plan_once_reuses_cached_mode_setup(monkeypatch):
+    import scripts.generate_data.generate_marvin_warehouse_bimanual as generation
+
+    class FakeState:
+        def __init__(self, space):
+            self.values = [0.0] * space
+
+        def __getitem__(self, index):
+            return self.values[index]
+
+        def __setitem__(self, index, value):
+            self.values[index] = value
+
+    class FakeSetup:
+        def __init__(self):
+            self.clear_calls = 0
+            self.solve_calls = 0
+            self.endpoints = []
+
+        def clear(self):
+            self.clear_calls += 1
+
+        def setStartAndGoalStates(self, start, goal):
+            self.endpoints.append((start.values.copy(), goal.values.copy()))
+
+        def solve(self, allowed_time):
+            assert allowed_time == 0.01
+            self.solve_calls += 1
+
+        def haveExactSolutionPath(self):
+            return False
+
+    monkeypatch.setattr(generation.ob, "State", FakeState)
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator.config = {"planner_allowed_time": 0.01}
+    generator.stats = Counter()
+    setup = FakeSetup()
+    context = {"q_start": np.zeros(14)}
+    generator._rrt_setups = {
+        "left_only": {
+            "indices": np.arange(7),
+            "space": 7,
+            "setup": setup,
+            "expand": lambda state: state,
+            "state_context": context,
+        }
+    }
+
+    first_start = np.arange(14, dtype=float)
+    second_start = first_start + 100
+    assert generator.plan_once(first_start, first_start + 1, "left_only") is None
+    assert generator.plan_once(second_start, second_start + 1, "left_only") is None
+    assert setup.clear_calls == setup.solve_calls == 2
+    assert setup.endpoints == [
+        (first_start[:7].tolist(), (first_start[:7] + 1).tolist()),
+        (second_start[:7].tolist(), (second_start[:7] + 1).tolist()),
+    ]
+    assert np.array_equal(context["q_start"], second_start)
+
+
+def test_close_releases_all_ompl_setups_before_bullet_disconnect(monkeypatch):
+    events = []
+
+    class FakeSetup:
+        def __init__(self, name):
+            self.name = name
+
+        def clear(self):
+            events.append(self.name)
+
+    class FakeInterface:
+        def __init__(self):
+            self.ss = FakeSetup("generic_ompl")
+            self.planner = object()
+            self.si = object()
+            self.space = object()
+
+    class FakeWorker:
+        def terminate(self):
+            events.append("bullet_disconnect")
+
+    monkeypatch.setattr("scripts.generate_data.generate_marvin_warehouse_bimanual.gc.collect", lambda: 0)
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator._closed = False
+    generator._rrt_setups = {
+        mode: {"setup": FakeSetup(mode)}
+        for mode in ("dual_independent", "left_only", "right_only")
+    }
+    generator.interface = FakeInterface()
+    generator.worker = FakeWorker()
+
+    generator.close()
+    generator.close()  # cleanup is deliberately idempotent
+    assert events == [
+        "dual_independent",
+        "left_only",
+        "right_only",
+        "generic_ompl",
+        "bullet_disconnect",
+    ]
+    assert generator._rrt_setups == {}
+    assert generator.interface is None and generator.worker is None
+
+
 def test_bimanual_rejects_single_tcp_training_context_and_accepts_dual_slots():
     with pytest.raises(ValueError, match="dual-slot"):
         validate_train(dict(robot_model="marvin_bimanual", task_family="independent", context_ee_goal_pose=True))

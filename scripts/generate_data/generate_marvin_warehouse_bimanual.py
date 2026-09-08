@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import gc
 import hashlib
 import json
 import os
 from pathlib import Path
 import time
+import weakref
 
 for _name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ.setdefault(_name, "1")
@@ -163,6 +165,11 @@ class MarvinWarehouseGenerator:
         }
         self._pin_data = {arm: self._pin_model.createData() for arm in ARM_SLICES}
         self.deadline = float("inf")
+        self._closed = False
+        self._rrt_setups = {
+            mode: self._build_rrt_setup(mode)
+            for mode in ("dual_independent", "left_only", "right_only")
+        }
 
     def _configure_marvin_self_collision_pairs(self):
         config = yaml.safe_load(Path(self.torch_robot.self_collision_pairs_file_path).read_text())
@@ -178,8 +185,106 @@ class MarvinWarehouseGenerator:
             raise ValueError("empty Marvin collision pair list")
         self.interface.check_link_pairs = pairs
 
+    def _build_rrt_setup(self, mode):
+        """Create one persistent OMPL setup for a task mode in this worker."""
+        indices = np.concatenate([np.arange(14)[ARM_SLICES[a]] for a in active_arms(mode)])
+        space = ob.RealVectorStateSpace(len(indices))
+        bounds = ob.RealVectorBounds(len(indices))
+        for i, j in enumerate(indices):
+            bounds.setLow(i, float(self.robot.joint_bounds_low_np[j]))
+            bounds.setHigh(i, float(self.robot.joint_bounds_high_np[j]))
+        space.setBounds(bounds)
+        setup = og.SimpleSetup(space)
+
+        # The callback is installed once and reads the current start state from
+        # this mutable slot.  A weak reference avoids a Python reference cycle
+        # self -> setup -> callback -> self during native teardown.
+        state_context = {"q_start": np.zeros(14, dtype=float)}
+
+        def expand(state, *, _indices=indices, _context=state_context):
+            q = _context["q_start"].copy()
+            q[_indices] = [state[i] for i in range(len(_indices))]
+            return q
+
+        owner_ref = weakref.ref(self)
+
+        def is_valid(state, *, _owner_ref=owner_ref, _expand=expand):
+            owner = _owner_ref()
+            return owner is not None and owner.valid(_expand(state))
+
+        validity_checker = ob.StateValidityCheckerFn(is_valid)
+        setup.setStateValidityChecker(validity_checker)
+        setup.getSpaceInformation().setStateValidityCheckingResolution(
+            float(self.config.get("state_validity_resolution", 0.002))
+        )
+        planner = og.RRTConnect(setup.getSpaceInformation())
+        planner_range = self.config.get("planner_range", 0.35)
+        if planner_range is not None:
+            planner.setRange(float(planner_range))
+        setup.setPlanner(planner)
+        self.stats["rrt_setup_builds"] += 1
+        return {
+            "indices": indices,
+            "space": space,
+            "setup": setup,
+            "planner": planner,
+            "validity_checker": validity_checker,
+            "expand": expand,
+            "state_context": state_context,
+        }
+
+    def _release_rrt_setups(self):
+        """Destroy cached OMPL objects while the Bullet client is still live."""
+        setups = getattr(self, "_rrt_setups", None)
+        self._rrt_setups = {}
+        if not setups:
+            return
+        for bundle in setups.values():
+            setup = bundle.get("setup")
+            if setup is not None:
+                try:
+                    setup.clear()
+                except Exception:
+                    # Cleanup must continue so the remaining native references
+                    # are released before Bullet disconnects.
+                    pass
+            bundle.clear()
+            del setup
+        setups.clear()
+        gc.collect()
+
+    def _release_generic_pbompl_setup(self):
+        """Release the unused full-14D setup owned by GenerateDataOMPL."""
+        interface = getattr(self, "interface", None)
+        if interface is None:
+            return
+        setup = getattr(interface, "ss", None)
+        if setup is not None:
+            try:
+                setup.clear()
+            except Exception:
+                pass
+        # PbOMPL holds a bound-method validity callback, so detach all Python
+        # owners before dropping the last local SimpleSetup reference.
+        for attr in ("planner", "ss", "si", "space"):
+            if hasattr(interface, attr):
+                setattr(interface, attr, None)
+        del setup
+        gc.collect()
+
     def close(self):
-        self.worker.terminate()
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self._release_rrt_setups()
+        self._release_generic_pbompl_setup()
+        worker = getattr(self, "worker", None)
+        try:
+            if worker is not None:
+                worker.terminate()
+        finally:
+            self.interface = None
+            self.worker = None
 
     def dual_ee_goal_pose(self, q_goal):
         """Return the two Pika TCP poses for a canonical 14-D joint goal.
@@ -448,31 +553,19 @@ class MarvinWarehouseGenerator:
 
     def plan_once(self, q_start, q_goal, mode):
         """A 7D subspace freezes the inactive arm during ALL RRT operations."""
-        indices = np.concatenate([np.arange(14)[ARM_SLICES[a]] for a in active_arms(mode)])
-        space = ob.RealVectorStateSpace(len(indices))
-        bounds = ob.RealVectorBounds(len(indices))
-        for i, j in enumerate(indices):
-            bounds.setLow(i, float(self.robot.joint_bounds_low_np[j]))
-            bounds.setHigh(i, float(self.robot.joint_bounds_high_np[j]))
-        space.setBounds(bounds)
-        setup = og.SimpleSetup(space)
+        try:
+            bundle = self._rrt_setups[mode]
+        except KeyError as error:
+            raise ValueError(f"unsupported RRT task mode: {mode}") from error
+        indices = bundle["indices"]
+        space = bundle["space"]
+        setup = bundle["setup"]
+        expand = bundle["expand"]
+        bundle["state_context"]["q_start"] = np.asarray(q_start, dtype=float).copy()
 
-        def expand(state):
-            q = q_start.copy()
-            q[indices] = [state[i] for i in range(len(indices))]
-            return q
-
-        # Use the same feasible set while growing the tree and during the
-        # final audit; mesh-only RRT often crosses sphere-model collisions.
-        setup.setStateValidityChecker(ob.StateValidityCheckerFn(lambda state: self.valid(expand(state))))
-        setup.getSpaceInformation().setStateValidityCheckingResolution(
-            float(self.config.get("state_validity_resolution", 0.002))
-        )
-        planner = og.RRTConnect(setup.getSpaceInformation())
-        planner_range = self.config.get("planner_range", 0.35)
-        if planner_range is not None:
-            planner.setRange(float(planner_range))
-        setup.setPlanner(planner)
+        # Reuse the mode-specific state space, validity callback and planner.
+        # clear() discards the previous problem/tree while retaining the setup.
+        setup.clear()
         start, goal = ob.State(space), ob.State(space)
         for i, j in enumerate(indices):
             start[i], goal[i] = float(q_start[j]), float(q_goal[j])
