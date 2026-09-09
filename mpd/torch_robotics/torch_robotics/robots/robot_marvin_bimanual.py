@@ -183,6 +183,17 @@ class RobotMarvinBimanual(RobotBase):
         pose = pose.reshape(*leading_shape, 3, 4)
         return jacobian, pose
 
+    def _pose_and_full_jacobian(self, q14: torch.Tensor, fk_fn, joint_slice):
+        jacobian_arm, pose = self._pose_and_jacobian(q14, fk_fn, joint_slice)
+        jacobian_full = torch.zeros(
+            *jacobian_arm.shape[:-1],
+            14,
+            dtype=jacobian_arm.dtype,
+            device=jacobian_arm.device,
+        )
+        jacobian_full[..., joint_slice] = jacobian_arm
+        return jacobian_full, pose
+
     def fk_left(self, q14: torch.Tensor) -> torch.Tensor:
         return self._pose(q14, self._fk_left)
 
@@ -197,6 +208,20 @@ class RobotMarvinBimanual(RobotBase):
 
     def jfk_bimanual(self, q14: torch.Tensor):
         return self.jfk_left(q14), self.jfk_right(q14)
+
+    def jfk_s_ee_bimanual(self, q14: torch.Tensor):
+        """Return both TCP spatial Jacobians with canonical 14 columns.
+
+        This mirrors RobotBase.jfk_s_ee's list contract while retaining the
+        fixed [left, right] slot order required by dual-EE guidance.
+        """
+        left_jacobian, left_pose = self._pose_and_full_jacobian(
+            q14, self._fk_left, self.LEFT_SLICE
+        )
+        right_jacobian, right_pose = self._pose_and_full_jacobian(
+            q14, self._fk_right, self.RIGHT_SLICE
+        )
+        return [left_jacobian, right_jacobian], [left_pose, right_pose]
 
     def render(self, ax, q=None, **kwargs):
         # Rendering is intentionally optional for headless runtime use.

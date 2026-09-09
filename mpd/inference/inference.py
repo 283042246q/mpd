@@ -85,6 +85,30 @@ def _normalize_best_trajectory_metric(values, configured_scale=None):
     return values / scale, scale
 
 
+def _aggregate_bimanual_ee_error(values, active_ee_mask, args_inference):
+    """Balance average performance with the worst active arm."""
+    mask = torch.as_tensor(
+        active_ee_mask, dtype=values.dtype, device=values.device
+    )
+    if mask.shape != (2,):
+        raise ValueError("bimanual ranking requires active_ee_mask shape [2]")
+    denominator = torch.clamp(mask.sum(), min=1.0)
+    mean_value = (values * mask).sum(dim=-1) / denominator
+    masked = torch.where(mask.bool(), values, torch.full_like(values, -torch.inf))
+    worst_value = masked.amax(dim=-1)
+    options = _config_value(args_inference, "bimanual_goal_ranking", {})
+    mean_weight = float(_config_value(options, "mean_weight", 0.4))
+    worst_weight = float(_config_value(options, "worst_weight", 0.6))
+    weight_sum = mean_weight + worst_weight
+    if mean_weight < 0.0 or worst_weight < 0.0 or weight_sum <= 0.0:
+        raise ValueError("bimanual goal ranking weights must be non-negative and non-zero")
+    return (
+        (mean_weight * mean_value + worst_weight * worst_value) / weight_sum,
+        mean_value,
+        worst_value,
+    )
+
+
 def _compute_candidate_ranking(
     method,
     args_inference,
@@ -127,18 +151,24 @@ def _compute_candidate_ranking(
         ee_position = torch.linalg.norm(error_position, dim=-1)
         ee_orientation = torch.rad2deg(torch.linalg.norm(error_orientation, dim=-1))
         if is_bimanual:
-            mask = torch.as_tensor(
-                active_ee_mask,
-                dtype=ee_position.dtype,
-                device=ee_position.device,
-            )
-            if mask.shape != (2,):
-                raise ValueError("bimanual ranking requires active_ee_mask shape [2]")
-            denominator = torch.clamp(mask.sum(), min=1.0)
             metadata["per_arm_ee_position"] = ee_position
             metadata["per_arm_ee_orientation"] = ee_orientation
-            ee_position = (ee_position * mask).sum(dim=-1) / denominator
-            ee_orientation = (ee_orientation * mask).sum(dim=-1) / denominator
+            ee_position, position_mean, position_worst = (
+                _aggregate_bimanual_ee_error(
+                    ee_position, active_ee_mask, args_inference
+                )
+            )
+            ee_orientation, orientation_mean, orientation_worst = (
+                _aggregate_bimanual_ee_error(
+                    ee_orientation, active_ee_mask, args_inference
+                )
+            )
+            metadata["bimanual_ee_aggregate"] = {
+                "position_mean": position_mean,
+                "position_worst": position_worst,
+                "orientation_mean": orientation_mean,
+                "orientation_worst": orientation_worst,
+            }
 
     if method == "weighted_metrics":
         metric_values = {
@@ -782,7 +812,14 @@ class GenerativeOptimizationPlanner:
         self.cost_guide = None
         if args_inference.costs is not None:
             try:
-                self.cost_guide = CostGuideManagerParametricTrajectory(
+                cost_guide_class = CostGuideManagerParametricTrajectory
+                if getattr(dataset, "context_ee_goal_pose_bimanual", False):
+                    from mpd.bimanual.cost_guide import (
+                        BimanualCostGuideManagerParametricTrajectory,
+                    )
+
+                    cost_guide_class = BimanualCostGuideManagerParametricTrajectory
+                self.cost_guide = cost_guide_class(
                     planning_task, dataset, args_inference, tensor_args, debug, **kwargs
                 )
             except NoCostException:
@@ -791,7 +828,14 @@ class GenerativeOptimizationPlanner:
         self.dense_validation_config = resolve_dense_validation_config(args_inference)
         self.dense_validator = None
         if self.dense_validation_config["enabled"]:
-            self.dense_validator = DenseTrajectoryValidator(
+            dense_validator_class = DenseTrajectoryValidator
+            if getattr(dataset, "context_ee_goal_pose_bimanual", False):
+                from mpd.bimanual.trajectory_validator import (
+                    BimanualDenseTrajectoryValidator,
+                )
+
+                dense_validator_class = BimanualDenseTrajectoryValidator
+            self.dense_validator = dense_validator_class(
                 planning_task,
                 config=self.dense_validation_config,
             )
@@ -1279,14 +1323,20 @@ class GenerativeOptimizationPlanner:
                     torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1)
                 )
                 if getattr(self.dataset, "context_ee_goal_pose_bimanual", False):
-                    mask = active_ee_mask.to(ee_pose_goal_error_position_norm)
-                    denominator = torch.clamp(mask.sum(), min=1.0)
-                    ee_pose_goal_error_position_norm = (
-                        ee_pose_goal_error_position_norm * mask
-                    ).sum(dim=-1) / denominator
-                    ee_pose_goal_error_orientation_norm = (
-                        ee_pose_goal_error_orientation_norm * mask
-                    ).sum(dim=-1) / denominator
+                    ee_pose_goal_error_position_norm, _, _ = (
+                        _aggregate_bimanual_ee_error(
+                            ee_pose_goal_error_position_norm,
+                            active_ee_mask,
+                            self.args_inference,
+                        )
+                    )
+                    ee_pose_goal_error_orientation_norm, _, _ = (
+                        _aggregate_bimanual_ee_error(
+                            ee_pose_goal_error_orientation_norm,
+                            active_ee_mask,
+                            self.args_inference,
+                        )
+                    )
 
             if candidate_ranking_metadata is not None:
                 valid_candidate_scores = candidate_scores.index_select(

@@ -86,6 +86,9 @@ class BimanualPlanningTask(PlanningTask):
     def set_object_goal(self, object_goal_pose):
         self.object_goal_pose = object_goal_pose
 
+    def jfk_s_ee(self, q):
+        return self.robot.jfk_s_ee_bimanual(q)
+
     def project(self, q: torch.Tensor) -> torch.Tensor:
         return project_inactive_arm(q, self.q_pos_start, self.task_mode)
 

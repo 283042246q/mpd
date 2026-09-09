@@ -297,7 +297,10 @@ class CostGuideManagerParametricTrajectory:
 
             # end effector links and jacobians
             with self.guidance_profiler.section("ee_fk_jacobian"):
-                jacs_spatial_ee, link_poses_ee = self.robot.jfk_s_ee(q_traj_pos_aux)
+                ee_jacobian_fn = getattr(
+                    self.planning_task, "jfk_s_ee", self.robot.jfk_s_ee
+                )
+                jacs_spatial_ee, link_poses_ee = ee_jacobian_fn(q_traj_pos_aux)
             jacs_spatial_th_ee = torch.stack(jacs_spatial_ee).transpose(
                 0, 1
             )  # ((batch_size, traejectory_length), n_links, 6, d)
@@ -694,7 +697,10 @@ class CostGuideManagerParametricTrajectory:
         endpoint_only = bool(self.gradient_pruning_config["endpoint"]["ee_only_last_point"])
         with self.guidance_profiler.section("ee_fk_jacobian"):
             q_ee = q_dense[:, -1] if endpoint_only else q_dense.reshape(-1, q_dense.shape[-1])
-            jacobians_ee, poses_ee = self.robot.jfk_s_ee(q_ee)
+            ee_jacobian_fn = getattr(
+                self.planning_task, "jfk_s_ee", self.robot.jfk_s_ee
+            )
+            jacobians_ee, poses_ee = ee_jacobian_fn(q_ee)
             jacobians_ee = torch.stack(jacobians_ee).transpose(0, 1)
             poses_ee = torch.stack(poses_ee).transpose(0, 1)
             if endpoint_only:
