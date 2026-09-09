@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import math
@@ -198,10 +199,19 @@ def _stub_plan(request: BimanualRequest, points: int, duration_s: float):
         "top_k_candidate_indices": np.asarray([0], dtype=np.int64),
         "joint_names": np.asarray(JOINT_NAMES, dtype=np.str_),
     }
+    if request.left_goal_pose is not None and request.right_goal_pose is not None:
+        arrays["ee_goal_pose"] = np.stack(
+            (
+                _pose_xyzw_to_matrix(request.left_goal_pose),
+                _pose_xyzw_to_matrix(request.right_goal_pose),
+            )
+        )
+        arrays["active_ee_mask"] = np.asarray(request.active_ee_mask, dtype=np.float64)
     scene = {
         "schema": "mpd_isaaclab_scene",
         "schema_version": 1,
         "env_name": request.scene_id,
+        "frame_id": request.planning_frame,
         "obstacles": [],
         "unsupported_obstacles": [],
         "backend": "contract_stub",
@@ -286,6 +296,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         raise InferenceConfigurationError("request robot_model_hash does not match Marvin asset")
 
     scene = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
+    scene["frame_id"] = request.planning_frame
     scene_hash = _sha256_json(scene)
     if request.scene_hash and request.scene_hash != scene_hash:
         raise InferenceConfigurationError("request scene_hash does not match Warehouse scene")
@@ -360,8 +371,15 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     scores = results.valid_trajectory_selection_scores
     ordered_valid = valid_indices if scores is None else valid_indices[torch.argsort(scores)]
     top_k_count = min(int(config.runtime_top_k_valid_trajectories), ordered_valid.numel())
+    if top_k_count < 1:
+        raise InferenceConfigurationError("runtime_top_k_valid_trajectories must be positive")
     top_k_indices = ordered_valid[:top_k_count]
-    if selected_index in top_k_indices.tolist():
+    if selected_index not in top_k_indices.tolist():
+        selected_tensor = torch.as_tensor(
+            [selected_index], dtype=top_k_indices.dtype, device=top_k_indices.device
+        )
+        top_k_indices = torch.cat((selected_tensor, top_k_indices[: top_k_count - 1]))
+    else:
         selected_offset = top_k_indices.tolist().index(selected_index)
         if selected_offset:
             top_k_indices = torch.cat(
@@ -456,6 +474,19 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         "joint_names": np.asarray(JOINT_NAMES, dtype=np.str_),
         "ee_goal_pose": ee_goal.detach().cpu().numpy().astype(np.float64),
         "active_ee_mask": active_mask.detach().cpu().numpy().astype(np.float64),
+        "mpd_tcp_pose_start": np.stack(
+            (
+                robot.fk_left(q_start).detach().cpu().numpy(),
+                robot.fk_right(q_start).detach().cpu().numpy(),
+            )
+        ).astype(np.float64),
+        "mpd_top_k_tcp_pose_final": torch.stack(
+            (
+                robot.fk_left(top_positions[:, -1]),
+                robot.fk_right(top_positions[:, -1]),
+            ),
+            dim=1,
+        ).detach().cpu().numpy().astype(np.float64),
     }
     return result, arrays, scene
 
@@ -487,6 +518,75 @@ def _failure(request_id, status, error):
     }
 
 
+def _release_inference_resources() -> None:
+    """Release MPD allocations before Isaac Lab starts in a separate process."""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except ImportError:
+        pass
+
+
+def _run_isaaclab_backend(args, output_dir: Path) -> dict:
+    from scripts.isaaclab.marvin_bimanual_subprocess import (
+        run_marvin_isaaclab_evaluator,
+        run_marvin_isaaclab_replay,
+    )
+
+    evaluation_path = output_dir / "isaaclab-evaluation.json"
+    evaluation = run_marvin_isaaclab_evaluator(
+        output_dir,
+        evaluation_path,
+        output_dir / "isaaclab-evaluation.log",
+        conda_env=args.isaaclab_conda_env,
+        device=args.isaaclab_device,
+        headless=args.isaaclab_headless,
+        action_repeat=args.isaaclab_action_repeat,
+        timeout_s=args.isaaclab_timeout_s,
+        asset_cache=args.isaaclab_asset_cache,
+    )
+    summary = {
+        "schema": "marvin_bimanual_isaaclab_run/v1",
+        "status": (
+            "safety_validation_failed"
+            if evaluation.get("safety_false_negative")
+            else "completed"
+        ),
+        "artifact": output_dir.as_posix(),
+        "evaluation": evaluation,
+        "replay": None,
+    }
+    if args.isaaclab_replay:
+        video_path = None
+        screenshot_path = None
+        if args.isaaclab_capture:
+            video_path = args.isaaclab_video or (output_dir / "isaaclab-replay.mp4")
+            screenshot_path = args.isaaclab_screenshot or (output_dir / "isaaclab-replay.png")
+        summary["replay"] = run_marvin_isaaclab_replay(
+            output_dir,
+            output_dir / "isaaclab-replay.json",
+            output_dir / "isaaclab-replay.log",
+            evaluation=evaluation_path,
+            video_path=video_path,
+            screenshot_path=screenshot_path,
+            trajectory_index=args.isaaclab_trajectory_index,
+            conda_env=args.isaaclab_conda_env,
+            device=args.isaaclab_device,
+            headless=args.isaaclab_headless,
+            action_repeat=args.isaaclab_action_repeat,
+            timeout_s=args.isaaclab_timeout_s,
+            video_fps=args.isaaclab_video_fps,
+            width=args.isaaclab_width,
+            height=args.isaaclab_height,
+            asset_cache=args.isaaclab_asset_cache,
+        )
+    return summary
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request", required=True, type=Path)
@@ -503,11 +603,54 @@ def _build_parser():
     )
     parser.add_argument("--stub-points", type=int, default=64)
     parser.add_argument("--stub-duration", type=float, default=2.0)
+    parser.add_argument(
+        "--sim-backend",
+        choices=("none", "isaaclab"),
+        default="none",
+        help="Optionally validate and replay the completed artifact in a separate Isaac Lab process",
+    )
+    parser.add_argument("--isaaclab-conda-env", default="env_isaaclab")
+    parser.add_argument("--isaaclab-device", default="cuda:0")
+    parser.add_argument("--isaaclab-action-repeat", type=int, default=4)
+    parser.add_argument("--isaaclab-timeout-s", type=int, default=900)
+    parser.add_argument("--isaaclab-trajectory-index", type=int, default=0)
+    parser.add_argument("--isaaclab-video-fps", type=float, default=24.0)
+    parser.add_argument("--isaaclab-width", type=int, default=960)
+    parser.add_argument("--isaaclab-height", type=int, default=540)
+    parser.add_argument(
+        "--isaaclab-asset-cache",
+        type=Path,
+        default=REPO_ROOT / ".cache/isaaclab/marvin_bimanual",
+    )
+    parser.add_argument("--isaaclab-video", type=Path, default=None)
+    parser.add_argument("--isaaclab-screenshot", type=Path, default=None)
+    headless = parser.add_mutually_exclusive_group()
+    headless.add_argument("--isaaclab-headless", dest="isaaclab_headless", action="store_true")
+    headless.add_argument("--no-isaaclab-headless", dest="isaaclab_headless", action="store_false")
+    parser.set_defaults(isaaclab_headless=True)
+    replay = parser.add_mutually_exclusive_group()
+    replay.add_argument("--isaaclab-replay", dest="isaaclab_replay", action="store_true")
+    replay.add_argument("--no-isaaclab-replay", dest="isaaclab_replay", action="store_false")
+    parser.set_defaults(isaaclab_replay=True)
+    capture = parser.add_mutually_exclusive_group()
+    capture.add_argument("--isaaclab-capture", dest="isaaclab_capture", action="store_true")
+    capture.add_argument("--no-isaaclab-capture", dest="isaaclab_capture", action="store_false")
+    parser.set_defaults(isaaclab_capture=True)
     return parser
 
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    if (
+        args.isaaclab_action_repeat < 1
+        or args.isaaclab_timeout_s < 1
+        or args.isaaclab_video_fps <= 0.0
+        or args.isaaclab_width < 1
+        or args.isaaclab_height < 1
+    ):
+        raise SystemExit("Isaac Lab repeat, timeout, fps, width, and height must be positive")
+    if args.isaaclab_trajectory_index < 0:
+        raise SystemExit("--isaaclab-trajectory-index must be non-negative")
     if args.output is not None:
         result_path = args.output.expanduser().resolve()
         output_dir = result_path.parent
@@ -535,6 +678,26 @@ def main(argv=None):
         _write_npz(trajectory_path, arrays)
         _write_json(scene_path, scene)
         _write_json(result_path, result)
+        if args.sim_backend == "isaaclab":
+            _release_inference_resources()
+            isaaclab_run_path = output_dir / "isaaclab-run.json"
+            try:
+                isaaclab_summary = _run_isaaclab_backend(args, output_dir)
+                _write_json(isaaclab_run_path, isaaclab_summary)
+                if isaaclab_summary["status"] != "completed":
+                    return 7
+            except Exception as error:
+                _write_json(
+                    isaaclab_run_path,
+                    {
+                        "schema": "marvin_bimanual_isaaclab_run/v1",
+                        "status": "fault",
+                        "artifact": output_dir.as_posix(),
+                        "error": {"type": type(error).__name__, "message": str(error)},
+                    },
+                )
+                print(error, file=sys.stderr)
+                return 6
         print(result_path)
         return 0
     except ContractError as error:
