@@ -9,11 +9,14 @@ from matplotlib import pyplot as plt
 
 from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd import trainer
-from mpd.models import UNET_DIM_MULTS, TemporalUnet
+from mpd.models import CoupledBimanualTemporalUnet, UNET_DIM_MULTS, TemporalUnet
 from mpd.models.diffusion_models.context_models import (
     ContextModelCombined,
     ContextModelEEPoseGoal,
+    ContextModelMarvinCrossArmEE,
+    ContextModelMarvinCrossArmTokens,
     ContextModelMarvinDualEE,
+    ContextModelMarvinStructuredEE,
     ContextModelQs,
 )
 from mpd.trainer.trainer import get_num_epochs
@@ -83,6 +86,15 @@ def experiment(
     # Combined context model
     # 多个条件编码合并后的输出维度
     context_combined_out_dim: int = 128,
+    # Marvin dual-slot ablation: A=flat/joint, B=per-arm/joint,
+    # C=per-arm cross-attention/joint, D=per-arm cross-attention/coupled streams.
+    bimanual_network_variant: str = "A",
+    # Cross-arm attention hyperparameters shared by C/D context and D denoiser.
+    bimanual_attention_heads: int = 4,
+    bimanual_context_attention_layers: int = 2,
+    bimanual_denoiser_attention_layers: int = 1,
+    bimanual_attention_ff_multiplier: int = 2,
+    bimanual_attention_dropout: float = 0.0,
     ########################################################################
     # Generative prior model
     # 生成模型类型，可选扩散模型或 CVAE
@@ -212,14 +224,33 @@ def experiment(
 
     ########################################################################
     # Model
+    bimanual_network_variant = str(bimanual_network_variant).upper()
+    if bimanual_network_variant not in {"A", "B", "C", "D"}:
+        raise ValueError("bimanual_network_variant must be one of A, B, C, D")
+
     if context_ee_goal_pose_bimanual:
-        # Scheme 3: concatenate the raw fields in a fixed, auditable 40-D
-        # order before the first context MLP.
-        context_model = ContextModelMarvinDualEE(
+        common_context_args = dict(
             out_dim=context_combined_out_dim,
             n_layers=context_ee_goal_pose_n_layers,
             act=context_ee_goal_pose_act,
         )
+        if bimanual_network_variant == "A":
+            # Exact legacy baseline: raw 40-D vector followed by the original MLP.
+            context_model = ContextModelMarvinDualEE(**common_context_args)
+        elif bimanual_network_variant == "B":
+            context_model = ContextModelMarvinStructuredEE(**common_context_args)
+        else:
+            attention_context_args = dict(
+                **common_context_args,
+                attention_heads=bimanual_attention_heads,
+                attention_layers=bimanual_context_attention_layers,
+                ff_multiplier=bimanual_attention_ff_multiplier,
+                dropout=bimanual_attention_dropout,
+            )
+            if bimanual_network_variant == "C":
+                context_model = ContextModelMarvinCrossArmEE(**attention_context_args)
+            else:
+                context_model = ContextModelMarvinCrossArmTokens(**attention_context_args)
     else:
         context_model_qs = None
         if context_qs:
@@ -265,9 +296,28 @@ def experiment(
         conditioning_embed_dim=context_model.out_dim if context_model is not None else None,
     )
 
+    denoise_model_class = TemporalUnet
+    if context_ee_goal_pose_bimanual and bimanual_network_variant == "D":
+        if generative_model_class != "GaussianDiffusionModel":
+            raise ValueError("bimanual network variant D is implemented for GaussianDiffusionModel only")
+        denoise_model_class = CoupledBimanualTemporalUnet
+        unet_configs.update(
+            context_token_dim=context_combined_out_dim,
+            attention_num_heads=bimanual_attention_heads,
+            attention_layers=bimanual_denoiser_attention_layers,
+            attention_ff_multiplier=bimanual_attention_ff_multiplier,
+            attention_dropout=bimanual_attention_dropout,
+        )
+
+    if context_ee_goal_pose_bimanual:
+        print(
+            f"Marvin network variant {bimanual_network_variant}: "
+            f"context={type(context_model).__name__}, denoiser={denoise_model_class.__name__}"
+        )
+
     model = get_model(
         model_class=generative_model_class,
-        denoise_fn=TemporalUnet(**unet_configs),
+        denoise_fn=denoise_model_class(**unet_configs),
         context_model=context_model,
         tensor_args=tensor_args,
         **cvae_configs,

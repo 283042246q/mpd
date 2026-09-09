@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.train.train_marvin_bimanual import validate_config, run_training
+from scripts.train.train_marvin_bimanual import results_dir_for_variant, validate_config, run_training
 
 
 def validate_dataset(config):
@@ -83,11 +83,19 @@ def main(argv=None):
     parser.add_argument("--device")
     parser.add_argument("--num-train-steps", type=int)
     parser.add_argument("--results-dir")
+    parser.add_argument("--network-variant", type=str.upper, choices=("A", "B", "C", "D"))
     parser.add_argument(
         "--no-summary", action="store_true", help="skip trajectory sampling/plots for a short training smoke test"
     )
     args = parser.parse_args(argv)
-    config = validate_config(yaml.safe_load(args.config.read_text()) or {})
+    config = yaml.safe_load(args.config.read_text()) or {}
+    if args.network_variant is not None:
+        config["bimanual_network_variant"] = args.network_variant
+    if args.results_dir is None and "bimanual_network_variant" in config and config.get("results_dir"):
+        config["results_dir"] = results_dir_for_variant(
+            config["results_dir"], str(config["bimanual_network_variant"]).upper()
+        )
+    config = validate_config(config)
     if not config.get("context_ee_goal_pose") or not config.get("context_ee_goal_pose_bimanual"):
         raise ValueError("Warehouse Marvin training requires scheme-3 dual-slot EE context")
     for key in ("dataset_subdir", "device", "num_train_steps", "results_dir"):
@@ -100,7 +108,10 @@ def main(argv=None):
         raise ValueError("Warehouse training requires an EnvWarehouse-RobotMarvinBimanual dataset")
     if config["task_family"] != "independent":
         raise ValueError("Warehouse cooperative object constraints are not implemented")
-    print(f"validated Marvin Warehouse {config['task_family']} config: state_dim=14 raw_context_dim=40")
+    print(
+        f"validated Marvin Warehouse {config['task_family']} config: state_dim=14 "
+        f"raw_context_dim=40 network_variant={config['bimanual_network_variant']}"
+    )
     if args.check_dataset or not args.dry_run:
         validate_dataset(config)
     if args.dry_run or args.check_dataset:

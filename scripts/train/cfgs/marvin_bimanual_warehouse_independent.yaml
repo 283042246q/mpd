@@ -15,7 +15,17 @@ batch_size: 128
 state_dim: 14
 context_q_dim: 14
 raw_context_dim: 40
-results_dir: logs/marvin_bimanual/warehouse_independent_v3_dual_ee
+# A: flat context + joint U-Net (legacy baseline)
+# B: shared per-arm context + MLP fusion + joint U-Net
+# C: shared per-arm context + 2-layer cross-arm attention + joint U-Net
+# D: cross-arm context tokens + shared dual-stream coupled U-Net
+bimanual_network_variant: A
+bimanual_attention_heads: 4
+bimanual_context_attention_layers: 2
+bimanual_denoiser_attention_layers: 1
+bimanual_attention_ff_multiplier: 2
+bimanual_attention_dropout: 0.0
+results_dir: logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_A
 clip_grad: true
 wandb_mode: disabled
 num_train_steps: 1000000
