@@ -171,7 +171,12 @@ def get_planning_task_and_dataset(
     else:
         raise ValueError(f"Unknown parametric trajectory class: {parametric_trajectory_class}")
 
-    planning_task = PlanningTask(
+    planning_task_class = PlanningTask
+    if context_ee_goal_pose_bimanual:
+        from mpd.bimanual.planning_task import BimanualPlanningTask
+
+        planning_task_class = BimanualPlanningTask
+    planning_task = planning_task_class(
         env=env,
         robot=robot,
         parametric_trajectory=parametric_trajectory,

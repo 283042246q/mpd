@@ -1,0 +1,120 @@
+# Marvin Warehouse dual-EE runtime. The checkpoint directory is created by
+# scripts/train/train_marvin_warehouse_bimanual.py and may not exist until
+# training has produced its first full-model checkpoint.
+model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_A'
+model_selection: bspline
+
+runtime:
+  schema: marvin_bimanual_request/v2
+  result_schema: marvin_bimanual_result/v2
+  robot_model: marvin_bimanual
+  planning_frame: world
+  scene_id: EnvWarehouseMarvinBimanual
+  scene_version: marvin_warehouse_v2
+  network_variant: A
+  joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
+
+dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-150k
+dataset_file_merged: dataset_merged.hdf5
+planning_env_id: EnvWarehouseMarvinBimanual
+start_goal_source: states_file
+robot_model: marvin_bimanual
+task_family: independent
+task_mode: dual_independent
+context_qs: true
+context_ee_goal_pose: true
+context_ee_goal_pose_bimanual: true
+state_dim: 14
+context_q_dim: 14
+raw_context_dim: 40
+parametric_trajectory_class: ParametricTrajectoryBspline
+bspline_degree: 5
+bspline_num_control_points_desired: 22
+bspline_num_control_points_exact: true
+num_T_pts: 128
+trajectory_duration: 10.0
+phase_time_class: PhaseTimeLinear
+obstacle_cutoff_margin_extra: 0.05
+margin_for_dense_collision_checking: 0.0
+project_gradient_hierarchy: false
+
+gradient_pruning:
+  enabled: true
+  force_all_active: false
+  endpoint: {ee_only_last_point: true}
+  candidate: {enabled: false}
+  preselection: {parent_bounds_scan: false}
+  span_certificate: {enabled: false}
+  temporal:
+    enabled: false
+    conditional_enabled: false
+    reuse_selection_within_ddim_step: false
+    coarse_points: 32
+    buckets: [32, 64, 128]
+    always_keep_endpoints: true
+  spatial:
+    parent_link_kinematics: true
+    dense_parent_fast_path: true
+    active_link_pruning: true
+    link_broad_phase: {enabled: false, reuse_scan_cache: false}
+    environment_link_broad_phase: false
+    self_link_pair_broad_phase: false
+  mapping:
+    fused_bspline_integration: false
+    sparse_bspline_support: false
+  scheduling: {enabled: false}
+
+dense_validation:
+  enabled: true
+  runtime_points: 128
+  benchmark_points: 128
+  check_environment: true
+  check_self_collision: true
+  check_joint_limits: true
+  check_joint_position: true
+  check_joint_velocity: true
+  check_joint_acceleration: true
+  reject_invalid: true
+  ranked_early_exit:
+    enabled: false
+    batch_buckets: [4, 8, 16, 32]
+    preallocate_buffers: true
+    cuda_graph: false
+
+costs: null
+n_trajectory_samples: 32
+runtime_top_k_valid_trajectories: 8
+best_trajectory_selection: weighted_metrics
+best_trajectory_weights:
+  ee_position: 0.35
+  ee_orientation: 0.20
+  path_length: 0.15
+  smoothness: 0.15
+  velocity_limit_utilization: 0.075
+  acceleration_limit_utilization: 0.075
+best_trajectory_metric_scales:
+  ee_position: 0.015
+  ee_orientation: 1.5
+  path_length: null
+  smoothness: null
+  velocity_limit_utilization: 0.3
+  acceleration_limit_utilization: 0.15
+
+planner_alg: mpd
+diffusion_sampling_method: ddim
+compute_costs_with_xrecon: false
+n_diffusion_steps_without_noise: 0
+extra_mp_steps: 0
+ddim:
+  t_start_guide_steps_fraction: 0.2
+  ddim_sampling_timesteps: 15
+  ddim_eta: 0.5
+  ddim_skip_type: quadratic
+  ddim_scale_grad_prior: 0.5
+  n_guide_steps: 6
+  guide_lr: 1.0
+  max_perturb_x: 0.15
+  clip_grad: true
+  clip_grad_rule: value
+  max_grad_norm: 1.0
+  max_grad_value: 1.0

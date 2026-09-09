@@ -132,8 +132,9 @@ class PlanningTask(Task):
         self.q_pos_goal = q_pos_goal
         self.parametric_trajectory.q_pos_goal = q_pos_goal
 
-    def set_ee_pose_goal(self, ee_pose_goal, **kwargs):
+    def set_ee_pose_goal(self, ee_pose_goal, active_ee_mask=None, **kwargs):
         self.ee_pose_goal = ee_pose_goal
+        self.active_ee_mask = active_ee_mask
 
     def get_all_collision_fields(self):
         return [field for field in self._collision_fields if field is not None]

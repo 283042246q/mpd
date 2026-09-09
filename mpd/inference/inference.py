@@ -96,6 +96,7 @@ def _compute_candidate_ranking(
     q_velocity,
     q_acceleration,
     ee_pose_goal,
+    active_ee_mask=None,
 ):
     """Score every candidate before dense validation for ranked early exit."""
 
@@ -107,12 +108,37 @@ def _compute_candidate_ranking(
         "lowest_ee_orientation_error",
     }
     if needs_ee and dataset.context_ee_goal_pose:
-        achieved = planning_task.robot.get_EE_pose(q_position[..., -1, :])
+        is_bimanual = bool(
+            getattr(dataset, "context_ee_goal_pose_bimanual", False)
+        )
+        if is_bimanual:
+            achieved = torch.stack(
+                (
+                    planning_task.robot.fk_left(q_position[..., -1, :]),
+                    planning_task.robot.fk_right(q_position[..., -1, :]),
+                ),
+                dim=-3,
+            )
+        else:
+            achieved = planning_task.robot.get_EE_pose(q_position[..., -1, :])
         error_position, error_orientation = compute_ee_pose_errors(
             ee_pose_goal, achieved
         )
         ee_position = torch.linalg.norm(error_position, dim=-1)
         ee_orientation = torch.rad2deg(torch.linalg.norm(error_orientation, dim=-1))
+        if is_bimanual:
+            mask = torch.as_tensor(
+                active_ee_mask,
+                dtype=ee_position.dtype,
+                device=ee_position.device,
+            )
+            if mask.shape != (2,):
+                raise ValueError("bimanual ranking requires active_ee_mask shape [2]")
+            denominator = torch.clamp(mask.sum(), min=1.0)
+            metadata["per_arm_ee_position"] = ee_position
+            metadata["per_arm_ee_orientation"] = ee_orientation
+            ee_position = (ee_position * mask).sum(dim=-1) / denominator
+            ee_orientation = (ee_orientation * mask).sum(dim=-1) / denominator
 
     if method == "weighted_metrics":
         metric_values = {
@@ -835,6 +861,7 @@ class GenerativeOptimizationPlanner:
         q_vel_goal=None,
         q_acc_start=None,
         q_acc_goal=None,
+        active_ee_mask=None,
         **kwargs,
     ):
 
@@ -848,6 +875,14 @@ class GenerativeOptimizationPlanner:
         q_pos_start = to_torch(q_pos_start, **self.tensor_args)
         q_pos_goal = to_torch(q_pos_goal, **self.tensor_args)
         ee_pose_goal = to_torch(EE_pose_goal, **self.tensor_args)
+        if getattr(self.dataset, "context_ee_goal_pose_bimanual", False):
+            if active_ee_mask is None:
+                raise ValueError("bimanual EE inference requires active_ee_mask")
+            active_ee_mask = to_torch(active_ee_mask, **self.tensor_args)
+            if ee_pose_goal.shape != (2, 3, 4) or active_ee_mask.shape != (2,):
+                raise ValueError(
+                    "bimanual inference expects ee_pose_goal [2,3,4] and active_ee_mask [2]"
+                )
         q_vel_start = (
             torch.zeros_like(q_pos_start) if q_vel_start is None else to_torch(q_vel_start, **self.tensor_args)
         )
@@ -861,6 +896,7 @@ class GenerativeOptimizationPlanner:
             q_pos_start=q_pos_start,
             q_pos_goal=q_pos_goal,
             ee_pose_goal=ee_pose_goal,
+            active_ee_mask=active_ee_mask,
             q_vel_start=q_vel_start,
             q_vel_goal=q_vel_goal,
             q_acc_start=q_acc_start,
@@ -869,7 +905,9 @@ class GenerativeOptimizationPlanner:
 
         # Set the start and goal states
         self.planning_task.set_q_pos_start_goal(q_pos_start, q_pos_goal)
-        self.planning_task.set_ee_pose_goal(ee_pose_goal)
+        self.planning_task.set_ee_pose_goal(
+            ee_pose_goal, active_ee_mask=active_ee_mask
+        )
         self.planning_task.parametric_trajectory.set_boundary_conditions(
             q_pos_start=q_pos_start,
             q_pos_goal=q_pos_goal,
@@ -885,6 +923,7 @@ class GenerativeOptimizationPlanner:
             q_pos_start,
             q_pos_goal,
             ee_pose_goal=ee_pose_goal,
+            active_ee_mask=active_ee_mask,
         )
         input_data_one_sample = dict_to_device(input_data_one_sample, self.tensor_args["device"])
         hard_conds = input_data_one_sample["hard_conds"]
@@ -1081,6 +1120,7 @@ class GenerativeOptimizationPlanner:
                         q_trajs_vel_iter_0,
                         q_trajs_acc_iter_0,
                         ee_pose_goal,
+                        active_ee_mask,
                     )
                 )
                 ranked_candidate_indices = torch.argsort(candidate_scores)
@@ -1215,7 +1255,22 @@ class GenerativeOptimizationPlanner:
                 self.dataset.context_ee_goal_pose
                 and candidate_ranking_metadata is None
             ):
-                ee_pose_goal_achieved = self.planning_task.robot.get_EE_pose(q_trajs_pos_valid[..., -1, :])
+                if getattr(self.dataset, "context_ee_goal_pose_bimanual", False):
+                    ee_pose_goal_achieved = torch.stack(
+                        (
+                            self.planning_task.robot.fk_left(
+                                q_trajs_pos_valid[..., -1, :]
+                            ),
+                            self.planning_task.robot.fk_right(
+                                q_trajs_pos_valid[..., -1, :]
+                            ),
+                        ),
+                        dim=-3,
+                    )
+                else:
+                    ee_pose_goal_achieved = self.planning_task.robot.get_EE_pose(
+                        q_trajs_pos_valid[..., -1, :]
+                    )
                 error_ee_pose_goal_position, error_ee_pose_goal_orientation = compute_ee_pose_errors(
                     ee_pose_goal, ee_pose_goal_achieved
                 )
@@ -1223,6 +1278,15 @@ class GenerativeOptimizationPlanner:
                 ee_pose_goal_error_orientation_norm = torch.rad2deg(
                     torch.linalg.norm(error_ee_pose_goal_orientation, dim=-1)
                 )
+                if getattr(self.dataset, "context_ee_goal_pose_bimanual", False):
+                    mask = active_ee_mask.to(ee_pose_goal_error_position_norm)
+                    denominator = torch.clamp(mask.sum(), min=1.0)
+                    ee_pose_goal_error_position_norm = (
+                        ee_pose_goal_error_position_norm * mask
+                    ).sum(dim=-1) / denominator
+                    ee_pose_goal_error_orientation_norm = (
+                        ee_pose_goal_error_orientation_norm * mask
+                    ).sum(dim=-1) / denominator
 
             if candidate_ranking_metadata is not None:
                 valid_candidate_scores = candidate_scores.index_select(
