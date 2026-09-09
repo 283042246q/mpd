@@ -7,6 +7,60 @@ import torch
 from torchlie.functional import SE3 as SE3_Func
 
 
+SELF_COLLISION_PAIR_CATEGORIES = (
+    "left_intraarm",
+    "right_intraarm",
+    "interarm",
+    "shared_base",
+)
+
+
+def collision_link_side(name: str) -> str:
+    """Map a Marvin collision sphere/parent link to a physical side."""
+    name = str(name)
+    if name.startswith("left_") or "_L" in name:
+        return "left"
+    if name.startswith("right_") or "_R" in name:
+        return "right"
+    return "base"
+
+
+def partition_self_collision_pair_indices(robot) -> dict[str, tuple[int, ...]]:
+    """Partition the exact fine-sphere pairs used by ``CollisionSelfField``.
+
+    Contacts between an arm and the shared base/column belong to that arm's
+    intra-arm bucket.  A pair is inter-arm only when one sphere belongs to the
+    left kinematic branch and the other belongs to the right branch.
+    """
+    cached = getattr(robot, "_bimanual_self_collision_pair_partitions", None)
+    if cached is not None:
+        return cached
+    sphere_names = tuple(
+        getattr(
+            robot,
+            "collision_sphere_parent_links",
+            robot.link_collision_spheres_names,
+        )
+    )
+    categories = {key: [] for key in SELF_COLLISION_PAIR_CATEGORIES}
+    for pair_index, pair in enumerate(robot.link_self_collision_tuples):
+        left_index, right_index = int(pair[0]), int(pair[1])
+        side_a = collision_link_side(sphere_names[left_index])
+        side_b = collision_link_side(sphere_names[right_index])
+        if {side_a, side_b} == {"left", "right"}:
+            category = "interarm"
+        elif "left" in (side_a, side_b):
+            category = "left_intraarm"
+        elif "right" in (side_a, side_b):
+            category = "right_intraarm"
+        else:
+            category = "shared_base"
+        categories[category].append(pair_index)
+    result = {key: tuple(value) for key, value in categories.items()}
+    robot._bimanual_self_collision_pair_partitions = result
+    return result
+
+
 def inactive_arm_hold_cost(q: torch.Tensor, q_start: torch.Tensor, task_mode: str) -> torch.Tensor:
     """Quadratic hold cost; callers should also apply hard projection."""
     if task_mode not in {"left_only", "right_only"}:

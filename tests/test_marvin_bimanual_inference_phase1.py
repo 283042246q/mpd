@@ -10,6 +10,7 @@ import torch
 
 from mpd.bimanual.cost_guide import BimanualCostGuideManagerParametricTrajectory
 from mpd.bimanual.costs import dual_ee_goal_cost_gradient
+from mpd.bimanual.costs import partition_self_collision_pair_indices
 from mpd.bimanual.runtime_contract import BimanualRequest, JOINT_NAMES, SCHEMA
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
 from scripts.inference import inference_marvin_bimanual as entrypoint
@@ -107,11 +108,20 @@ class _Dataset:
         return torch.ones_like(value)
 
 
-def _guide(task, enabled):
+def _guide(task, enabled, *, split_self_collision=False):
+    self_collision_costs = (
+        {
+            "CostTaskSpaceCollisionSelfLeftArm": {"weight": 1.0},
+            "CostTaskSpaceCollisionSelfRightArm": {"weight": 1.0},
+            "CostTaskSpaceCollisionInterArm": {"weight": 5.0},
+        }
+        if split_self_collision
+        else {"CostTaskSpaceCollisionSelf": {"weight": 0.7}}
+    )
     args = DotMap(
         {
             "costs": {
-                "CostTaskSpaceCollisionSelf": {"weight": 0.7},
+                **self_collision_costs,
                 "CostTaskSpaceEEGoalPosition": {
                     "weight": 1.0,
                     "error_scale": 0.5,
@@ -199,6 +209,17 @@ def test_marvin_dual_ee_api_returns_full_14d_jacobians():
         assert report.trajectory_valid_mask.tolist() == [True]
         assert torch.isfinite(report.minimum_interarm_clearance).all()
         assert report.failure_codes == [None]
+        partitions = partition_self_collision_pair_indices(robot)
+        assert {key: len(value) for key, value in partitions.items()} == {
+            "left_intraarm": 60817,
+            "right_intraarm": 74797,
+            "interarm": 239868,
+            "shared_base": 0,
+        }
+        all_pair_indices = sorted(
+            index for indices in partitions.values() for index in indices
+        )
+        assert all_pair_indices == list(range(len(robot.link_self_collision_tuples)))
     finally:
         robot.cleanup()
 
@@ -222,6 +243,17 @@ def test_full_and_b3_dual_endpoint_cost_and_gradient_are_equivalent():
     b3_cost, b3_gradient = _guide(task, True)(control_points, return_cost=True)
     torch.testing.assert_close(b3_cost, full_cost, rtol=1e-10, atol=1e-11)
     torch.testing.assert_close(b3_gradient, full_gradient, rtol=1e-10, atol=1e-11)
+
+    split_full_cost, split_full_gradient = _guide(
+        task, False, split_self_collision=True
+    )(control_points, return_cost=True)
+    split_b3_cost, split_b3_gradient = _guide(
+        task, True, split_self_collision=True
+    )(control_points, return_cost=True)
+    torch.testing.assert_close(split_b3_cost, split_full_cost, rtol=1e-10, atol=1e-11)
+    torch.testing.assert_close(
+        split_b3_gradient, split_full_gradient, rtol=1e-10, atol=1e-11
+    )
 
 
 def _request_payload():
@@ -291,3 +323,14 @@ def test_fixed_warehouse_golden_suite_has_required_coverage():
     assert len({item.request_id for item in parsed}) == len(parsed)
     cases = {item.scene["case"] for item in parsed}
     assert {"left_right_swap", "interarm_proximity", "redundant_posture"} <= cases
+
+
+def test_runtime_uses_separate_intraarm_and_interarm_weights():
+    import yaml
+
+    config = yaml.safe_load(entrypoint.DEFAULT_CONFIG.read_text())
+    costs = config["costs"]
+    assert "CostTaskSpaceCollisionSelf" not in costs
+    assert costs["CostTaskSpaceCollisionSelfLeftArm"]["weight"] == 1.0
+    assert costs["CostTaskSpaceCollisionSelfRightArm"]["weight"] == 1.0
+    assert costs["CostTaskSpaceCollisionInterArm"]["weight"] == 5.0

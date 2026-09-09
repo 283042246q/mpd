@@ -389,6 +389,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         "minimum_left_self_clearance_m": best_report.minimum_left_self_clearance[0],
         "minimum_right_self_clearance_m": best_report.minimum_right_self_clearance[0],
         "minimum_interarm_clearance_m": best_report.minimum_interarm_clearance[0],
+        "self_collision_pair_counts": planner.cost_guide.self_collision_pair_counts,
         "joint_position_violation": best_report.joint_position_violation_mask[0],
         "joint_velocity_violation": best_report.joint_velocity_violation_mask[0],
         "joint_acceleration_violation": best_report.joint_acceleration_violation_mask[0],

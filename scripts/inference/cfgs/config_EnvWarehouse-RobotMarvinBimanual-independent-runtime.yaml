@@ -87,8 +87,12 @@ costs:
   CostTaskSpaceCollisionObjects:
     weight: 10.0
     use_only_on_extra_objects: false
-  CostTaskSpaceCollisionSelf:
+  CostTaskSpaceCollisionSelfLeftArm:
     weight: 1.0
+  CostTaskSpaceCollisionSelfRightArm:
+    weight: 1.0
+  CostTaskSpaceCollisionInterArm:
+    weight: 5.0
   CostJointSpaceJointLimits:
     weight: 1.0
   CostTaskSpaceEEGoalPosition:

@@ -334,9 +334,9 @@ class CostGuideManagerParametricTrajectory:
                 if _is_static_zero_weight(weight):
                     continue
 
-                if cost_key == "CostTaskSpaceCollisionObjects":
+                if isinstance(cost_fn, CostTaskSpaceCollisionObjects):
                     profile_name = "environment_sdf_query"
-                elif cost_key == "CostTaskSpaceCollisionSelf":
+                elif isinstance(cost_fn, CostTaskSpaceCollisionSelf):
                     profile_name = "self_collision"
                 elif cost_key in self.EE_GOAL_COST_KEYS:
                     profile_name = "ee_cost_mapping"
@@ -533,7 +533,14 @@ class CostGuideManagerParametricTrajectory:
         environment_field = (
             collision_object_cost.cost.collision_objects_field if collision_object_cost is not None else None
         )
-        self_collision_cost = self.costs.get("CostTaskSpaceCollisionSelf")
+        self_collision_cost = next(
+            (
+                entry
+                for entry in self.costs.values()
+                if isinstance(entry.cost, CostTaskSpaceCollisionSelf)
+            ),
+            None,
+        )
         self_field = self_collision_cost.cost.collision_self_field if self_collision_cost is not None else None
 
         force_all_active = bool(self.gradient_pruning_config["force_all_active"])
@@ -718,7 +725,6 @@ class CostGuideManagerParametricTrajectory:
             integrated_mapping_fn = self.compute_cost_grad_cp_normalized_sparse_support
         elif self.use_fused_bspline_integration:
             integrated_mapping_fn = self.compute_cost_grad_cp_normalized_fused
-        collision_keys = {"CostTaskSpaceCollisionObjects", "CostTaskSpaceCollisionSelf"}
         grad_costs = []
         cost_all = torch.zeros(batch_size, dtype=q_dense.dtype, device=q_dense.device)
 
@@ -730,10 +736,18 @@ class CostGuideManagerParametricTrajectory:
             if _is_static_zero_weight(weight):
                 continue
 
-            if cost_key in collision_keys:
+            is_environment_collision = isinstance(
+                cost_fn, CostTaskSpaceCollisionObjects
+            )
+            is_self_collision = isinstance(cost_fn, CostTaskSpaceCollisionSelf)
+            if is_environment_collision or is_self_collision:
                 cost_single = torch.zeros(batch_size, dtype=q_dense.dtype, device=q_dense.device)
                 grad_single = torch.zeros_like(control_points_normalized)
-                profile_name = "environment_sdf_query" if cost_key == "CostTaskSpaceCollisionObjects" else "self_collision"
+                profile_name = (
+                    "environment_sdf_query"
+                    if is_environment_collision
+                    else "self_collision"
+                )
                 with self.guidance_profiler.section(profile_name):
                     if dense_collision_batch is not None:
                         dense_candidates = dense_collision_batch.candidate_indices
@@ -809,7 +823,7 @@ class CostGuideManagerParametricTrajectory:
                             "self_pair_indices": bucket.self_pair_indices,
                         }
                         if (
-                            cost_key == "CostTaskSpaceCollisionObjects"
+                            is_environment_collision
                             and bucket.environment_sdf_values is not None
                         ):
                             bucket_collision_kwargs["precomputed_sdf_values"] = (
