@@ -151,7 +151,24 @@ def _resolve_model_dir(config: dict) -> Path:
     value = config.get("model_dir_ddpm_bspline")
     if not isinstance(value, str) or not value:
         raise InferenceConfigurationError("model_dir_ddpm_bspline is required")
-    return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+    configured = Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+    if (configured / "args.yaml").is_file():
+        return configured
+    # Training creates one timestamped run below the experiment directory.
+    # Resolve that layout only when it is unambiguous; never guess between
+    # multiple checkpoints because doing so would break reproducibility.
+    runs = sorted(
+        child
+        for child in configured.iterdir()
+        if child.is_dir() and (child / "args.yaml").is_file()
+    ) if configured.is_dir() else []
+    if len(runs) == 1:
+        return runs[0]
+    if not runs:
+        return configured
+    raise InferenceConfigurationError(
+        f"Model directory {configured} contains multiple runs; configure an exact run path"
+    )
 
 
 def _deadline_guard(request: BimanualRequest) -> None:

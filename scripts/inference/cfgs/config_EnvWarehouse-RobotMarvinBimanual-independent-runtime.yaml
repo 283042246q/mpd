@@ -14,7 +14,7 @@ runtime:
   network_variant: A
   joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
 
-dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-150k
+dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-combined-10170
 dataset_file_merged: dataset_merged.hdf5
 planning_env_id: EnvWarehouseMarvinBimanual
 start_goal_source: states_file
