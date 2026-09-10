@@ -256,6 +256,71 @@ class CollisionSelfField(EmbodimentDistanceFieldBase):
             minimum = torch.minimum(minimum, chunk_minimum)
         return minimum
 
+    def compute_minimum_signed_distances_by_group(
+        self, link_pos, pair_group_ids, num_groups, **kwargs
+    ):
+        """Stream exact overall and per-group minimum fine-pair clearances."""
+
+        pair_indices = kwargs.get("self_pair_indices")
+        local_idx_1, local_idx_2, radii = self._resolve_pair_tensors(
+            link_pos,
+            link_indices=kwargs.get("link_indices"),
+            pair_indices=pair_indices,
+        )
+        pair_count = int(local_idx_1.numel())
+        num_groups = int(num_groups)
+        if num_groups < 1:
+            raise ValueError("num_groups must be positive")
+        group_ids = torch.as_tensor(
+            pair_group_ids, dtype=torch.long, device=link_pos.device
+        )
+        if pair_indices is not None:
+            group_ids = group_ids.index_select(
+                0,
+                torch.as_tensor(pair_indices, dtype=torch.long, device=link_pos.device),
+            )
+        if group_ids.numel() != pair_count:
+            raise ValueError("pair_group_ids must contain one entry per selected pair")
+        if pair_count and bool(
+            ((group_ids < 0) | (group_ids >= num_groups)).any().item()
+        ):
+            raise ValueError("pair_group_ids contains an out-of-range group")
+
+        prefix = link_pos.shape[:-2]
+        overall = torch.full(
+            prefix, torch.inf, dtype=link_pos.dtype, device=link_pos.device
+        )
+        grouped = torch.full(
+            (*prefix, num_groups),
+            torch.inf,
+            dtype=link_pos.dtype,
+            device=link_pos.device,
+        )
+        if pair_count == 0:
+            return overall, grouped
+        pair_chunk_size = self._validated_pair_chunk_size(
+            kwargs.get("pair_chunk_size"), pair_count
+        )
+        if pair_chunk_size is None:
+            pair_chunk_size = pair_count
+        for start in range(0, pair_count, pair_chunk_size):
+            end = min(start + pair_chunk_size, pair_count)
+            difference = link_pos.index_select(
+                -2, local_idx_1[start:end]
+            ) - link_pos.index_select(-2, local_idx_2[start:end])
+            clearance = torch.linalg.norm(difference, dim=-1) - radii[start:end]
+            overall = torch.minimum(overall, clearance.amin(dim=-1))
+            chunk_groups = group_ids[start:end]
+            group_index = chunk_groups.reshape(
+                *((1,) * len(prefix)), -1
+            ).expand(*prefix, -1)
+            chunk_grouped = torch.full_like(grouped, torch.inf)
+            chunk_grouped.scatter_reduce_(
+                -1, group_index, clearance, reduce="amin", include_self=True
+            )
+            grouped = torch.minimum(grouped, chunk_grouped)
+        return overall, grouped
+
     def compute_distance_field_cost_and_gradient(self, link_pos, **kwargs):
         # position link_pos tensor # batch x num_links x env_dim (2D or 3D)
         link_indices = kwargs.get("link_indices")

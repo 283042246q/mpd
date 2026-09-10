@@ -113,6 +113,13 @@ DEFAULT_DENSE_VALIDATION_CONFIG = {
     "check_joint_velocity": True,
     "check_joint_acceleration": True,
     "reject_invalid": True,
+    "chunking": {
+        # Exact validator memory optimization. It never consumes guidance masks.
+        "enabled": False,
+        "candidate_chunk_size": 4,
+        "time_chunk_size": 16,
+        "self_pair_chunk_size": 4096,
+    },
     "ranked_early_exit": {
         # Runtime-only latency optimization. Benchmark/evaluation configs keep
         # this disabled so validity statistics still cover every candidate.
@@ -342,6 +349,16 @@ def resolve_dense_validation_config(args_inference) -> dict:
     config["enabled"] = bool(config["enabled"])
     config["runtime_points"] = int(config["runtime_points"])
     config["benchmark_points"] = int(config["benchmark_points"])
+    chunking = config["chunking"]
+    chunking["enabled"] = bool(chunking["enabled"])
+    for key in (
+        "candidate_chunk_size",
+        "time_chunk_size",
+        "self_pair_chunk_size",
+    ):
+        chunking[key] = int(chunking[key])
+        if chunking[key] < 1:
+            raise ValueError(f"dense_validation.chunking.{key} must be positive.")
     ranked_early_exit = config["ranked_early_exit"]
     ranked_early_exit["enabled"] = bool(ranked_early_exit["enabled"])
     ranked_early_exit["preallocate_buffers"] = bool(

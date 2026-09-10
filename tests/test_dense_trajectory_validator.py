@@ -83,6 +83,137 @@ class DenseTrajectoryValidatorTest(unittest.TestCase):
         self.assertEqual(result.trajectory_valid_mask.tolist(), [False, True])
         self.assertEqual(result.trajectory_checked_mask.tolist(), [True, True])
 
+    def test_chunked_dynamic_environment_matches_full(self):
+        class CandidateTimeField:
+            dynamic_world = object()
+            collision_margins = torch.tensor([0.05], dtype=torch.float64)
+
+            @staticmethod
+            def object_signed_distances(positions, trajectory_times=None):
+                assert trajectory_times is not None
+                return torch.abs(trajectory_times - 1.0)[..., None, None]
+
+        class CandidateTimeTask(FakeTask):
+            @staticmethod
+            def get_collision_objects_field():
+                return CandidateTimeField()
+
+        q_position = torch.zeros((3, 7, 2), dtype=torch.float64)
+        q_position[..., 0] = torch.linspace(-0.2, 0.2, 7)
+        zeros = torch.zeros_like(q_position)
+        times = torch.stack(
+            (
+                torch.linspace(0.0, 2.0, 7),
+                torch.linspace(0.0, 0.8, 7),
+                torch.linspace(0.0, 1.2, 7),
+            )
+        ).to(torch.float64)
+        full = DenseTrajectoryValidator(CandidateTimeTask()).validate(
+            q_position=q_position,
+            q_velocity=zeros,
+            q_acceleration=zeros,
+            trajectory_times=times,
+            num_points=7,
+            check_self_collision=False,
+        )
+        chunked = DenseTrajectoryValidator(
+            CandidateTimeTask(),
+            config={
+                "chunking": {
+                    "enabled": True,
+                    "candidate_chunk_size": 2,
+                    "time_chunk_size": 3,
+                    "self_pair_chunk_size": 1,
+                }
+            },
+        ).validate(
+            q_position=q_position,
+            q_velocity=zeros,
+            q_acceleration=zeros,
+            trajectory_times=times,
+            num_points=7,
+            check_self_collision=False,
+        )
+        for name in (
+            "trajectory_valid_mask",
+            "environment_collision_mask",
+            "self_collision_mask",
+            "first_invalid_index",
+            "minimum_environment_clearance",
+            "minimum_self_clearance",
+        ):
+            torch.testing.assert_close(getattr(chunked, name), getattr(full, name))
+
+    def test_chunked_self_pair_clearance_matches_full(self):
+        from torch_robotics.torch_planning_objectives.fields.distance_fields import (
+            CollisionSelfField,
+        )
+
+        class ThreeSphereRobot(FakeRobot):
+            link_collision_spheres_names = ["a", "b", "c"]
+
+            def fk_collision_spheres(self, q):
+                poses = []
+                for offset in (0.0, 0.25, 0.7):
+                    pose = torch.zeros(q.shape[0], 3, 4, dtype=q.dtype)
+                    pose[:, 0, 0] = pose[:, 1, 1] = pose[:, 2, 2] = 1
+                    pose[:, 0, 3] = q[:, 0] + offset
+                    pose[:, 1, 3] = q[:, 1]
+                    poses.append(pose)
+                return poses
+
+        class SelfTask(FakeTask):
+            def __init__(self):
+                self.robot = ThreeSphereRobot()
+                self.parametric_trajectory = object()
+                self.field = CollisionSelfField(
+                    robot=self.robot,
+                    link_self_collision_tuples=[
+                        (0, 1, 0.2, 0.2),
+                        (1, 2, 0.15, 0.15),
+                        (0, 2, 0.1, 0.1),
+                    ],
+                    tensor_args={"device": "cpu", "dtype": torch.float64},
+                )
+
+            def get_collision_objects_field(self):
+                return None
+
+            def get_collision_self_field(self):
+                return self.field
+
+        q_position = torch.randn(3, 7, 2, dtype=torch.float64) * 0.1
+        zeros = torch.zeros_like(q_position)
+        full = DenseTrajectoryValidator(SelfTask()).validate(
+            q_position=q_position,
+            q_velocity=zeros,
+            q_acceleration=zeros,
+            num_points=7,
+        )
+        chunked = DenseTrajectoryValidator(
+            SelfTask(),
+            config={
+                "chunking": {
+                    "enabled": True,
+                    "candidate_chunk_size": 2,
+                    "time_chunk_size": 3,
+                    "self_pair_chunk_size": 2,
+                }
+            },
+        ).validate(
+            q_position=q_position,
+            q_velocity=zeros,
+            q_acceleration=zeros,
+            num_points=7,
+        )
+        for name in (
+            "trajectory_valid_mask",
+            "self_collision_mask",
+            "first_invalid_index",
+            "minimum_self_clearance",
+        ):
+            torch.testing.assert_close(getattr(chunked, name), getattr(full, name))
+
     def test_dense_bspline_uses_structural_degree_when_public_degree_is_overwritten(self):
         trajectory = ParametricTrajectoryBspline(
             n_control_points=8,

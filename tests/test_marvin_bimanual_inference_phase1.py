@@ -209,6 +209,28 @@ def test_marvin_dual_ee_api_returns_full_14d_jacobians():
         assert report.trajectory_valid_mask.tolist() == [True]
         assert torch.isfinite(report.minimum_interarm_clearance).all()
         assert report.failure_codes == [None]
+        chunked_report = BimanualDenseTrajectoryValidator(
+            task,
+            config={
+                "chunking": {
+                    "enabled": True,
+                    "candidate_chunk_size": 1,
+                    "time_chunk_size": 2,
+                    "self_pair_chunk_size": 4096,
+                }
+            },
+        ).validate(
+            q_position=zero[:, None].expand(1, 2, 14),
+            q_velocity=torch.zeros(1, 2, 14, dtype=torch.float64),
+            q_acceleration=torch.zeros(1, 2, 14, dtype=torch.float64),
+            num_points=2,
+        )
+        assert chunked_report.trajectory_valid_mask.tolist() == [True]
+        torch.testing.assert_close(
+            chunked_report.minimum_interarm_clearance,
+            report.minimum_interarm_clearance,
+        )
+        assert chunked_report.failure_codes == [None]
         partitions = partition_self_collision_pair_indices(robot)
         assert {key: len(value) for key, value in partitions.items()} == {
             "left_intraarm": 60817,

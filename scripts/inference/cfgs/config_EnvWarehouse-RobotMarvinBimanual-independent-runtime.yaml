@@ -87,6 +87,11 @@ dense_validation:
   check_joint_velocity: true
   check_joint_acceleration: true
   reject_invalid: true
+  chunking:
+    enabled: false
+    candidate_chunk_size: 4
+    time_chunk_size: 16
+    self_pair_chunk_size: 4096
   ranked_early_exit:
     enabled: false
     batch_buckets: [4, 8, 16, 32]

@@ -91,6 +91,40 @@ class BimanualDenseTrajectoryValidator(DenseTrajectoryValidator):
         self.ee_orientation_tolerance_rad = float(
             config.get("ee_orientation_tolerance_rad", 0.0872664626)
         )
+        category_names = ("left", "right", "interarm", "base")
+        pair_categories = []
+        names = self.robot.link_collision_spheres_names
+        for pair in self.robot.link_self_collision_tuples:
+            side_a = _collision_sphere_side(names[pair[0]])
+            side_b = _collision_sphere_side(names[pair[1]])
+            if {side_a, side_b} == {"left", "right"}:
+                category = "interarm"
+            elif "left" in (side_a, side_b):
+                category = "left"
+            elif "right" in (side_a, side_b):
+                category = "right"
+            else:
+                category = "base"
+            pair_categories.append(category_names.index(category))
+        self._self_pair_category_names = category_names
+        self._self_pair_category_ids = torch.as_tensor(
+            pair_categories, dtype=torch.long
+        )
+
+    def _self_clearance_block(self, positions, pair_chunk_size):
+        self_field = self.planning_task.get_collision_self_field()
+        if self_field is None:
+            return super()._self_clearance_block(positions, pair_chunk_size)
+        overall, grouped = self_field.compute_minimum_signed_distances_by_group(
+            positions,
+            self._self_pair_category_ids,
+            len(self._self_pair_category_names),
+            pair_chunk_size=pair_chunk_size,
+        )
+        return overall, {
+            name: grouped[..., index]
+            for index, name in enumerate(self._self_pair_category_names)
+        }
 
     def _pair_masks(self, device):
         categories = {key: [] for key in ("left", "right", "interarm", "base")}
@@ -126,33 +160,43 @@ class BimanualDenseTrajectoryValidator(DenseTrajectoryValidator):
     def _annotate(self, result):
         q = result.q_position
         batch, horizon, _ = q.shape
-        poses = self.robot.fk_collision_spheres(q.reshape(batch * horizon, -1))
-        poses = torch.stack(poses).transpose(0, 1).reshape(
-            batch, horizon, -1, 3, 4
-        )
-        positions = link_pos_from_link_tensor(poses)[..., : self.robot.task_space_dim]
-        self_field = self.planning_task.get_collision_self_field()
-        if self_field is None:
-            pair_clearance = torch.empty(
-                batch, horizon, 0, dtype=q.dtype, device=q.device
-            )
+        category_minimum = result.self_collision_category_minimum
+        if category_minimum is not None:
+            result.minimum_left_self_clearance = category_minimum["left"]
+            result.minimum_right_self_clearance = category_minimum["right"]
+            result.minimum_interarm_clearance = category_minimum["interarm"]
+            result.minimum_base_self_clearance = category_minimum["base"]
         else:
-            pair_clearance = self_field.compute_embodiment_signed_distances(
-                None, positions
+            # Legacy/default path retained for bitwise-compatible entry points.
+            poses = self.robot.fk_collision_spheres(q.reshape(batch * horizon, -1))
+            poses = torch.stack(poses).transpose(0, 1).reshape(
+                batch, horizon, -1, 3, 4
             )
-        masks = self._pair_masks(q.device)
-        result.minimum_left_self_clearance = self._category_minimum(
-            pair_clearance, masks["left"]
-        )
-        result.minimum_right_self_clearance = self._category_minimum(
-            pair_clearance, masks["right"]
-        )
-        result.minimum_interarm_clearance = self._category_minimum(
-            pair_clearance, masks["interarm"]
-        )
-        result.minimum_base_self_clearance = self._category_minimum(
-            pair_clearance, masks["base"]
-        )
+            positions = link_pos_from_link_tensor(poses)[
+                ..., : self.robot.task_space_dim
+            ]
+            self_field = self.planning_task.get_collision_self_field()
+            if self_field is None:
+                pair_clearance = torch.empty(
+                    batch, horizon, 0, dtype=q.dtype, device=q.device
+                )
+            else:
+                pair_clearance = self_field.compute_embodiment_signed_distances(
+                    None, positions
+                )
+            masks = self._pair_masks(q.device)
+            result.minimum_left_self_clearance = self._category_minimum(
+                pair_clearance, masks["left"]
+            )
+            result.minimum_right_self_clearance = self._category_minimum(
+                pair_clearance, masks["right"]
+            )
+            result.minimum_interarm_clearance = self._category_minimum(
+                pair_clearance, masks["interarm"]
+            )
+            result.minimum_base_self_clearance = self._category_minimum(
+                pair_clearance, masks["base"]
+            )
 
         terminal = q[:, -1]
         achieved = torch.stack(

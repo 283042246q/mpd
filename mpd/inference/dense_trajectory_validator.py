@@ -37,6 +37,7 @@ class DenseValidationResult:
     bucket_capacities_evaluated: tuple = ()
     padding_slots_evaluated: int = 0
     cuda_graph_replays: int = 0
+    self_collision_category_minimum: dict | None = None
 
 
 @dataclass
@@ -227,6 +228,91 @@ class DenseTrajectoryValidator:
             return torch.full(positions.shape[:2], torch.inf, dtype=positions.dtype, device=positions.device)
         return torch.stack(clearances).amin(dim=0)
 
+    def _self_clearance_block(self, positions, pair_chunk_size):
+        self_field = self.planning_task.get_collision_self_field()
+        if self_field is None:
+            return (
+                torch.full(
+                    positions.shape[:2],
+                    torch.inf,
+                    dtype=positions.dtype,
+                    device=positions.device,
+                ),
+                None,
+            )
+        return (
+            self_field.compute_minimum_signed_distances(
+                positions, pair_chunk_size=pair_chunk_size
+            ),
+            None,
+        )
+
+    def _chunked_collision_clearances(self, q_position, trajectory_times=None):
+        """Evaluate the complete collision oracle without full pair materialization."""
+
+        batch, horizon, _ = q_position.shape
+        chunking = self.config.get("chunking", {})
+        candidate_chunk_size = int(chunking.get("candidate_chunk_size", 4))
+        time_chunk_size = int(chunking.get("time_chunk_size", 16))
+        pair_chunk_size = int(chunking.get("self_pair_chunk_size", 4096))
+        environment_clearance = torch.full(
+            (batch, horizon),
+            torch.inf,
+            dtype=q_position.dtype,
+            device=q_position.device,
+        )
+        self_clearance = torch.full_like(environment_clearance, torch.inf)
+        category_minimum = None
+
+        for candidate_start in range(0, batch, candidate_chunk_size):
+            candidate_end = min(candidate_start + candidate_chunk_size, batch)
+            candidate_slice = slice(candidate_start, candidate_end)
+            for time_start in range(0, horizon, time_chunk_size):
+                time_end = min(time_start + time_chunk_size, horizon)
+                time_slice = slice(time_start, time_end)
+                q_block = q_position[candidate_slice, time_slice]
+                block_batch, block_horizon, _ = q_block.shape
+                poses = self.robot.fk_collision_spheres(
+                    q_block.reshape(block_batch * block_horizon, -1)
+                )
+                poses = torch.stack(poses).transpose(0, 1).reshape(
+                    block_batch, block_horizon, -1, 3, 4
+                )
+                positions = link_pos_from_link_tensor(poses)[
+                    ..., : self.robot.task_space_dim
+                ]
+                times_block = (
+                    None
+                    if trajectory_times is None
+                    else trajectory_times[candidate_slice, time_slice]
+                )
+                environment_clearance[candidate_slice, time_slice] = (
+                    self._environment_clearance(
+                        positions, trajectory_times=times_block
+                    )
+                )
+                block_self, block_categories = self._self_clearance_block(
+                    positions, pair_chunk_size
+                )
+                self_clearance[candidate_slice, time_slice] = block_self
+                if block_categories is not None:
+                    if category_minimum is None:
+                        category_minimum = {
+                            key: torch.full(
+                                (batch,),
+                                torch.inf,
+                                dtype=q_position.dtype,
+                                device=q_position.device,
+                            )
+                            for key in block_categories
+                        }
+                    for key, values in block_categories.items():
+                        category_minimum[key][candidate_slice] = torch.minimum(
+                            category_minimum[key][candidate_slice],
+                            values.amin(dim=-1),
+                        )
+        return environment_clearance, self_clearance, category_minimum
+
     def validate(
         self,
         control_points=None,
@@ -276,22 +362,34 @@ class DenseTrajectoryValidator:
                 raise ValueError("trajectory_times must begin at zero")
             if not (torch.diff(trajectory_times, dim=-1) > 0.0).all().item():
                 raise ValueError("trajectory_times must be strictly increasing")
-        poses = self.robot.fk_collision_spheres(q_position.reshape(batch * horizon, -1))
-        poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
-        positions = link_pos_from_link_tensor(poses)[..., : self.robot.task_space_dim]
+        chunking_enabled = bool(self.config.get("chunking", {}).get("enabled", False))
+        self_collision_category_minimum = None
+        if chunking_enabled:
+            (
+                environment_clearance,
+                self_clearance,
+                self_collision_category_minimum,
+            ) = self._chunked_collision_clearances(
+                q_position, trajectory_times=trajectory_times
+            )
+        else:
+            poses = self.robot.fk_collision_spheres(q_position.reshape(batch * horizon, -1))
+            poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
+            positions = link_pos_from_link_tensor(poses)[..., : self.robot.task_space_dim]
 
-        environment_clearance = self._environment_clearance(
-            positions, trajectory_times=trajectory_times
-        )
+            environment_clearance = self._environment_clearance(
+                positions, trajectory_times=trajectory_times
+            )
+            self_field = self.planning_task.get_collision_self_field()
+            if self_field is not None:
+                self_clearance = self_field.compute_embodiment_signed_distances(
+                    None, positions
+                ).amin(dim=-1)
+            else:
+                self_clearance = torch.full_like(environment_clearance, torch.inf)
         environment_collision_mask = environment_clearance <= 0 if check_environment else torch.zeros_like(
             environment_clearance, dtype=torch.bool
         )
-
-        self_field = self.planning_task.get_collision_self_field()
-        if self_field is not None:
-            self_clearance = self_field.compute_embodiment_signed_distances(None, positions).amin(dim=-1)
-        else:
-            self_clearance = torch.full_like(environment_clearance, torch.inf)
         self_collision_mask = self_clearance < 0 if check_self_collision else torch.zeros_like(
             self_clearance, dtype=torch.bool
         )
@@ -340,6 +438,7 @@ class DenseTrajectoryValidator:
             batches_evaluated=1,
             complete=True,
             bucket_capacities_evaluated=(batch,),
+            self_collision_category_minimum=self_collision_category_minimum,
         )
 
     def validate_ranked_batches(
@@ -470,6 +569,19 @@ class DenseTrajectoryValidator:
                 bucket_size - actual_size
                 for _, _, actual_size, bucket_size in evaluated
             ),
+            self_collision_category_minimum=(
+                {
+                    key: torch.full(
+                        (total,),
+                        torch.nan,
+                        dtype=value.dtype,
+                        device=value.device,
+                    )
+                    for key, value in sample.self_collision_category_minimum.items()
+                }
+                if sample.self_collision_category_minimum is not None
+                else None
+            ),
         )
         for indices, result, actual_size, _ in evaluated:
             merged.trajectory_valid_mask[indices] = result.trajectory_valid_mask[:actual_size]
@@ -486,4 +598,9 @@ class DenseTrajectoryValidator:
             merged.q_velocity[indices] = result.q_velocity[:actual_size]
             merged.q_acceleration[indices] = result.q_acceleration[:actual_size]
             merged.trajectory_checked_mask[indices] = True
+            if merged.self_collision_category_minimum is not None:
+                for key in merged.self_collision_category_minimum:
+                    merged.self_collision_category_minimum[key][indices] = (
+                        result.self_collision_category_minimum[key][:actual_size]
+                    )
         return merged
