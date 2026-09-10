@@ -259,6 +259,8 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         )
     tensor_args = {"device": torch.device(device_text), "dtype": torch.float32}
     fix_random_seed(request.seed)
+    if tensor_args["device"].type == "cuda":
+        torch.cuda.reset_peak_memory_stats(tensor_args["device"])
 
     raw_config = load_params_from_yaml(config_path)
     _validate_runtime_config(raw_config)
@@ -447,6 +449,19 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             "self_pair_count": len(robot.link_self_collision_tuples),
         },
     }
+    cuda_memory = None
+    if tensor_args["device"].type == "cuda":
+        free_bytes, total_bytes = torch.cuda.mem_get_info(tensor_args["device"])
+        cuda_memory = {
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(
+                tensor_args["device"]
+            ),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(
+                tensor_args["device"]
+            ),
+            "free_bytes_at_result": free_bytes,
+            "total_bytes": total_bytes,
+        }
     result = {
         "schema": RESULT_SCHEMA,
         "request_id": request.request_id,
@@ -495,6 +510,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         },
         "gradient_pruning": results.gradient_pruning_statistics,
         "collision_geometry": collision_geometry,
+        "cuda_memory": cuda_memory,
         "created_unix_ns": time.time_ns(),
     }
     result = validate_result(_jsonable(result), request=request)

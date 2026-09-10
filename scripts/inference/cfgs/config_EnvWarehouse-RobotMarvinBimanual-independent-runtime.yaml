@@ -43,7 +43,7 @@ project_gradient_hierarchy: false
 collision_optimization:
   pair_streaming:
     enabled: false
-    pair_chunk_size: 4096
+    pair_chunk_size: 1024
   reduced_guide_geometry:
     enabled: false
     profile: foam_pika_100
@@ -95,9 +95,9 @@ dense_validation:
   reject_invalid: true
   chunking:
     enabled: false
-    candidate_chunk_size: 4
-    time_chunk_size: 16
-    self_pair_chunk_size: 4096
+    candidate_chunk_size: 8
+    time_chunk_size: 32
+    self_pair_chunk_size: 1024
   ranked_early_exit:
     enabled: false
     batch_buckets: [4, 8, 16, 32]

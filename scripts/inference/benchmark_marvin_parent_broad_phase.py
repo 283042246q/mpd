@@ -53,7 +53,7 @@ def _measure(device, function):
             "elapsed_seconds": time.perf_counter() - start,
             "value": value,
         }
-    except torch.OutOfMemoryError as error:
+    except torch.cuda.OutOfMemoryError as error:
         result = {"status": "cuda_oom", "error": str(error)}
     except RuntimeError as error:
         if "out of memory" not in str(error).lower():

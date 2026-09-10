@@ -67,7 +67,7 @@ def _run(validator, q, zeros):
             "minimum_right_self_clearance": result.minimum_right_self_clearance.detach().cpu().tolist(),
             "minimum_interarm_clearance": result.minimum_interarm_clearance.detach().cpu().tolist(),
         }
-    except torch.OutOfMemoryError as error:
+    except torch.cuda.OutOfMemoryError as error:
         output = {"status": "cuda_oom", "error": str(error)}
     except RuntimeError as error:
         if "out of memory" not in str(error).lower():

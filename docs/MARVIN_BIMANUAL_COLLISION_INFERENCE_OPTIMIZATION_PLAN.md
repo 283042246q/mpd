@@ -1,6 +1,7 @@
 # Marvin 双臂 MPD 碰撞推理优化实施计划
 
-> 状态：实施基线，2026-09-10。
+> 状态：阶段 A--D 与 CUDA 消融已完成，2026-09-10。实测结果见
+> [MARVIN_BIMANUAL_COLLISION_OPTIMIZATION_ABLATION.md](MARVIN_BIMANUAL_COLLISION_OPTIMIZATION_ABLATION.md)。
 >
 > 范围：Warehouse、Marvin 14-DoF、Pika 双夹爪、`dual_independent` inference。
 >
@@ -37,7 +38,7 @@ MPD candidate q
 collision_optimization:
   pair_streaming:
     enabled: false
-    pair_chunk_size: 4096
+    pair_chunk_size: 1024
   reduced_guide_geometry:
     enabled: false
     profile: foam_pika_100
@@ -45,9 +46,9 @@ collision_optimization:
 dense_validation:
   chunking:
     enabled: false
-    candidate_chunk_size: 4
-    time_chunk_size: 16
-    self_pair_chunk_size: 4096
+    candidate_chunk_size: 8
+    time_chunk_size: 32
+    self_pair_chunk_size: 1024
 
 gradient_pruning:
   spatial:

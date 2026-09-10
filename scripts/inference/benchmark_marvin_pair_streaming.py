@@ -64,7 +64,7 @@ def _run(field, positions, pair_indices, *, pair_chunk_size, repeats):
             "cost_sum": float(cost.sum().detach().cpu()),
             "gradient_norm": float(torch.linalg.norm(gradient).detach().cpu()),
         }
-    except torch.OutOfMemoryError as error:
+    except torch.cuda.OutOfMemoryError as error:
         result = {"status": "cuda_oom", "error": str(error)}
     except RuntimeError as error:
         if "out of memory" not in str(error).lower():
