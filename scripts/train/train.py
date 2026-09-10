@@ -33,6 +33,28 @@ WANDB_ENTITY = "mpd-splines"
 DEBUG = True
 
 
+def load_warm_start_weights(model, checkpoint_path):
+    """Load only model parameters; optimizer/step/RNG state intentionally restart."""
+    checkpoint_path = os.path.abspath(os.path.expanduser(os.fspath(checkpoint_path)))
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Warm-start state_dict not found: {checkpoint_path}")
+    if os.path.getsize(checkpoint_path) == 0:
+        raise ValueError(f"Warm-start state_dict is empty: {checkpoint_path}")
+
+    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    if not isinstance(state_dict, dict) or not state_dict or not all(
+        isinstance(key, str) for key in state_dict
+    ):
+        raise TypeError(
+            "--warm-start-checkpoint must point to a *_state_dict.pth file, "
+            f"not a serialized full model: {checkpoint_path}"
+        )
+    model.load_state_dict(state_dict, strict=True)
+    print(f"Warm-started model weights from: {checkpoint_path}")
+    print("Optimizer, AMP scaler, EMA history, RNG state, and train-step counter start fresh.")
+    return checkpoint_path
+
+
 @single_experiment_yaml
 def experiment(
     ########################################################################
@@ -128,6 +150,8 @@ def experiment(
     clip_grad: bool = False,
     # 总训练 step 数
     num_train_steps: int = 1_000_000,
+    # 仅加载模型 state_dict 进行热启动；不会恢复 optimizer/step/RNG 等训练状态
+    warm_start_checkpoint: str = "",
     # 是否维护 EMA 模型；推理通常使用 EMA checkpoint 更稳定
     use_ema: bool = True,
     # 是否使用自动混合精度训练
@@ -324,6 +348,8 @@ def experiment(
         **diffusion_configs,
         **unet_configs,
     )
+    if warm_start_checkpoint:
+        load_warm_start_weights(model, warm_start_checkpoint)
 
     ########################################################################
     # Loss

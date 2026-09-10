@@ -1,5 +1,6 @@
 from collections import Counter
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -438,6 +439,205 @@ def test_shard_resume_and_merge_keep_global_ids_and_detect_corruption(tmp_path):
     (empty / "manifest.yaml").write_text("")
     (empty / "generation_config.yaml").write_text("")
     assert not shard_complete(empty, config, 20, 10)
+
+
+def test_standalone_merge_allows_gaps_rejects_duplicates_and_preserves_shards(tmp_path):
+    import h5py
+
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import _write_dataset
+    from scripts.generate_data.merge_marvin_warehouse_shards import main as merge_main
+
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+
+    def write_shard(root, directory_start, task_ids):
+        shard = root / "shards" / f"{directory_start:09d}"
+        metadata = []
+        paths = []
+        for task_id in task_ids:
+            mode, direction = task_spec(task_id)
+            pose = np.concatenate(
+                (
+                    np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+                    np.zeros((2, 3, 1), dtype=np.float32),
+                ),
+                axis=-1,
+            )
+            item = dict(
+                task_id=task_id,
+                task_mode=mode,
+                direction=direction,
+                q_start=np.zeros(14),
+                q_goal=np.ones(14),
+                planning_time=0.0,
+                bspline=(np.zeros(28), np.zeros((14, 22)), 5),
+                ee_goal_pose=pose,
+            )
+            for arm in ("left", "right"):
+                item[f"source_region_{arm}"] = "random"
+                item[f"goal_region_{arm}"] = f"{arm}_table"
+            metadata.append(item)
+            paths.append(np.zeros((128, 14)))
+        _write_dataset(shard, config, paths, metadata, config["seed"] + directory_start)
+        return shard
+
+    first = write_shard(tmp_path, 0, range(10))
+    second = write_shard(tmp_path, 20, range(20, 30))
+    assert merge_main([str(tmp_path), "--dry-run"]) == 0
+    assert not (tmp_path / "dataset_merged.hdf5").exists()
+    assert merge_main([str(tmp_path)]) == 0
+    assert first.is_dir() and second.is_dir()
+    assert (first / "dataset_merged.hdf5").is_file()
+    with h5py.File(tmp_path / "dataset_merged.hdf5", "r") as data:
+        assert np.array_equal(data["task_id"][:], np.r_[0:10, 20:30])
+    report = yaml.safe_load((tmp_path / "manifest.yaml").read_text())["standalone_merge"]
+    assert report["missing_task_ids"] == 10
+    assert report["missing_task_id_ranges_first_100"] == [[10, 19]]
+    assert (tmp_path / "merge_report.json").is_file()
+
+    duplicate_root = tmp_path / "duplicates"
+    write_shard(duplicate_root, 0, range(10))
+    write_shard(duplicate_root, 20, range(5, 15))
+    with pytest.raises(ValueError, match="duplicate task_id 5"):
+        merge_main([str(duplicate_root), "--dry-run"])
+    assert not (duplicate_root / "dataset_merged.hdf5").exists()
+
+
+def test_dataset_comparison_pairs_only_equal_numeric_shard_ids(tmp_path):
+    from scripts.generate_data.compare_marvin_warehouse_datasets import compare_matching_shards
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import _write_dataset
+
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    root_a, root_b = tmp_path / "computer_a", tmp_path / "computer_b"
+
+    def write_shard(root, directory_name, task_start, value):
+        shard = root / "shards" / directory_name
+        metadata, paths = [], []
+        for task_id in range(task_start, task_start + 10):
+            mode, direction = task_spec(task_id)
+            pose = np.concatenate(
+                (
+                    np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+                    np.full((2, 3, 1), value, dtype=np.float32),
+                ),
+                axis=-1,
+            )
+            path = np.linspace(value, value + 0.1, 128 * 14).reshape(128, 14)
+            item = dict(
+                task_id=task_id,
+                task_mode=mode,
+                direction=direction,
+                q_start=np.full(14, value),
+                q_goal=np.full(14, value + 0.1),
+                planning_time=value + 1.0,
+                joint_path_length=float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum()),
+                bspline=(np.zeros(28), np.full((14, 22), value), 5),
+                ee_goal_pose=pose,
+            )
+            for arm in ("left", "right"):
+                item[f"source_region_{arm}"] = "random"
+                item[f"goal_region_{arm}"] = f"{arm}_table"
+            metadata.append(item)
+            paths.append(path)
+        _write_dataset(shard, config, paths, metadata, config["seed"] + task_start)
+
+    # Shard 0 is identical.  Shard 30 has the same numeric ID despite different
+    # zero padding, but intentionally different content.
+    write_shard(root_a, "000000000", 0, 0.0)
+    write_shard(root_b, "000000000", 0, 0.0)
+    write_shard(root_a, "000000030", 30, 1.0)
+    write_shard(root_b, "30", 30, 2.0)
+
+    # These two unmatched shards deliberately have identical contents.  They
+    # must not contribute to any overlap statistic.
+    write_shard(root_a, "000000010", 10, 7.0)
+    write_shard(root_b, "000000020", 10, 7.0)
+
+    report = compare_matching_shards(root_a, root_b)
+    assert report["matching_shard_ids"] == ["000000000", "000000030"]
+    assert report["only_in_a"] == ["000000010"]
+    assert report["only_in_b"] == ["000000020"]
+    assert report["training_context_overlap_exact"]["cross_paired_rows"] == 10
+    assert report["training_context_overlap_exact"][
+        "cross_overlap_fraction_of_matched_shard_rows"
+    ] == pytest.approx(0.5)
+    assert report["exact_raw_path_overlap"]["cross_paired_rows"] == 10
+    assert [item["shard_id"] for item in report["per_matching_shard"]] == [
+        "000000000",
+        "000000030",
+    ]
+
+
+def test_combined_datasets_reindex_ids_and_pass_training_validation(tmp_path, monkeypatch):
+    import h5py
+
+    import mpd.paths
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import _write_dataset
+    from scripts.generate_data.merge_marvin_warehouse_datasets import main as combine_main
+    from scripts.train.train_marvin_warehouse_bimanual import validate_dataset
+
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+
+    def write_dataset(root, value):
+        metadata, paths = [], []
+        for task_id in range(10):
+            mode, direction = task_spec(task_id)
+            pose = np.concatenate(
+                (
+                    np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+                    np.full((2, 3, 1), value, dtype=np.float32),
+                ),
+                axis=-1,
+            )
+            item = dict(
+                task_id=task_id,
+                task_mode=mode,
+                direction=direction,
+                q_start=np.full(14, value),
+                q_goal=np.full(14, value + 0.1),
+                planning_time=value + 1.0,
+                joint_path_length=value + 2.0,
+                bspline=(np.zeros(28), np.full((14, 22), value), 5),
+                ee_goal_pose=pose,
+            )
+            for arm in ("left", "right"):
+                item[f"source_region_{arm}"] = "random"
+                item[f"goal_region_{arm}"] = f"{arm}_table"
+            metadata.append(item)
+            paths.append(np.full((128, 14), value))
+        _write_dataset(root, config, paths, metadata, config["seed"])
+
+    source_a, source_b = tmp_path / "source_a", tmp_path / "source_b"
+    output = tmp_path / "EnvWarehouse-RobotMarvinBimanual-combined-test"
+    write_dataset(source_a, 0.0)
+    write_dataset(source_b, 1.0)
+
+    arguments = [str(source_a), str(source_b), "--output-dir", str(output)]
+    assert combine_main(arguments + ["--dry-run"]) == 0
+    assert not output.exists()
+    assert combine_main(arguments) == 0
+    assert (source_a / "dataset_merged.hdf5").is_file()
+    assert (source_b / "dataset_merged.hdf5").is_file()
+
+    with h5py.File(output / "dataset_merged.hdf5", "r") as data:
+        assert np.array_equal(data["task_id"][:], np.arange(20))
+        assert np.all(data["q_start"][:10] == 0.0)
+        assert np.all(data["q_start"][10:] == 1.0)
+        assert data["ee_goal_pose"].shape == (20, 2, 3, 4)
+        assert data["bspline_params_cc"].shape == (20, 14, 22)
+
+    manifest = yaml.safe_load((output / "manifest.yaml").read_text())
+    assert manifest["num_trajectories"] == 20
+    assert manifest["combined_dataset"]["task_ids_reindexed"] is True
+    assert [source["new_task_id_first"] for source in manifest["combined_dataset"]["sources"]] == [0, 10]
+    assert (output / "generation_summary.json").is_file()
+    assert (output / "merge_report.json").is_file()
+
+    monkeypatch.setattr(mpd.paths, "DATASET_BASE_DIR", str(tmp_path))
+    training_config = yaml.safe_load(
+        (Path(__file__).parents[1] / "scripts/train/cfgs/marvin_bimanual_warehouse_independent.yaml").read_text()
+    )
+    training_config["dataset_subdir"] = output.name
+    assert validate_dataset(training_config)["num_trajectories"] == 20
 
 
 def test_shard_layout_uses_workers_without_breaking_ten_task_quotas():

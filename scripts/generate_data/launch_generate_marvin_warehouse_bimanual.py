@@ -240,7 +240,10 @@ def build_shards(num_trajectories, max_shard_size, workers):
 
 def merge_shards(root, paths, config):
     root = Path(root)
-    paths = sorted(map(Path, paths))
+    paths = list(map(Path, paths))
+    # Directory names are normally zero-padded start IDs, but sorting by the
+    # stored IDs also makes manual, validated merges deterministic.
+    paths.sort(key=lambda path: _shard_first_task_id(path))
     target = root / "dataset_merged.hdf5"
     if target.exists():
         raise FileExistsError(target)
@@ -281,6 +284,13 @@ def merge_shards(root, paths, config):
         shards=[str(p.relative_to(root)) for p in paths],
     )
     (root / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
+
+
+def _shard_first_task_id(path):
+    with h5py.File(Path(path) / "dataset_merged.hdf5", "r") as data:
+        if len(data["task_id"]) == 0:
+            raise ValueError(f"empty shard: {path}")
+        return int(data["task_id"][0])
 
 
 def main(argv=None):

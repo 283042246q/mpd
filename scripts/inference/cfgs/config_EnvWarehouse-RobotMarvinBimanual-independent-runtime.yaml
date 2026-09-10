@@ -1,7 +1,7 @@
 # Marvin Warehouse dual-EE runtime. The checkpoint directory is created by
 # scripts/train/train_marvin_warehouse_bimanual.py and may not exist until
 # training has produced its first full-model checkpoint.
-model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_A'
+model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_D'
 model_selection: bspline
 
 runtime:
@@ -11,7 +11,7 @@ runtime:
   planning_frame: world
   scene_id: EnvWarehouseMarvinBimanual
   scene_version: marvin_warehouse_v2
-  network_variant: A
+  network_variant: D
   joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
 
 dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-combined-10170
@@ -136,7 +136,7 @@ compute_costs_with_xrecon: false
 n_diffusion_steps_without_noise: 0
 extra_mp_steps: 0
 ddim:
-  t_start_guide_steps_fraction: 0.2
+  t_start_guide_steps_fraction: 0.33
   ddim_sampling_timesteps: 15
   ddim_eta: 0.5
   ddim_skip_type: quadratic

@@ -83,11 +83,18 @@ def main(argv=None):
     parser.add_argument("--device")
     parser.add_argument("--num-train-steps", type=int)
     parser.add_argument("--results-dir")
+    parser.add_argument(
+        "--warm-start-checkpoint",
+        type=Path,
+        help="load a *_state_dict.pth model/EMA checkpoint and restart optimization at step 0",
+    )
     parser.add_argument("--network-variant", type=str.upper, choices=("A", "B", "C", "D"))
     parser.add_argument(
         "--no-summary", action="store_true", help="skip trajectory sampling/plots for a short training smoke test"
     )
     args = parser.parse_args(argv)
+    if args.warm_start_checkpoint is not None and args.results_dir is None:
+        parser.error("--warm-start-checkpoint requires a new --results-dir to avoid overwriting the source run")
     config = yaml.safe_load(args.config.read_text()) or {}
     if args.network_variant is not None:
         config["bimanual_network_variant"] = args.network_variant
@@ -101,6 +108,13 @@ def main(argv=None):
     for key in ("dataset_subdir", "device", "num_train_steps", "results_dir"):
         if getattr(args, key) is not None:
             config[key] = getattr(args, key)
+    if args.warm_start_checkpoint is not None:
+        checkpoint = args.warm_start_checkpoint.expanduser().resolve()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"Warm-start state_dict not found: {checkpoint}")
+        if checkpoint.stat().st_size == 0:
+            raise ValueError(f"Warm-start state_dict is empty: {checkpoint}")
+        config["warm_start_checkpoint"] = str(checkpoint)
     if args.no_summary:
         config["summary_class"] = None
     dataset_subdir = str(config.get("dataset_subdir", ""))

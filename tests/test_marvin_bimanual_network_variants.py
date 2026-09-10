@@ -13,6 +13,7 @@ from mpd.models.diffusion_models.context_models import (
     ContextModelMarvinStructuredEE,
 )
 from scripts.train.train_marvin_bimanual import results_dir_for_variant, validate_config
+from scripts.train.train import load_warm_start_weights
 
 
 def _context_inputs(batch_size=2):
@@ -157,3 +158,24 @@ def test_variant_config_validation_and_checkpoint_directory_separation():
         assert results_dir_for_variant("logs/run_variant_A", variant) == f"logs/run_variant_{variant}"
     with pytest.raises(ValueError, match="one of A"):
         validate_config(dict(base, bimanual_network_variant="E"))
+
+
+def test_weight_only_warm_start_loads_parameters_and_rejects_empty_file(tmp_path):
+    source = torch.nn.Linear(3, 2)
+    target = torch.nn.Linear(3, 2)
+    with torch.no_grad():
+        source.weight.fill_(1.25)
+        source.bias.fill_(-0.5)
+
+    checkpoint = tmp_path / "ema_model__iter_010000_state_dict.pth"
+    torch.save(source.state_dict(), checkpoint)
+    loaded_path = load_warm_start_weights(target, checkpoint)
+
+    assert loaded_path == str(checkpoint.resolve())
+    assert torch.equal(target.weight, source.weight)
+    assert torch.equal(target.bias, source.bias)
+
+    empty = tmp_path / "empty_state_dict.pth"
+    empty.touch()
+    with pytest.raises(ValueError, match="is empty"):
+        load_warm_start_weights(target, empty)
