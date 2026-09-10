@@ -24,12 +24,35 @@ class RobotMarvinBimanual(RobotBase):
     link_name_flange_left = "flange_L"
     link_name_flange_right = "flange_R"
 
-    def __init__(self, *, with_pika=True, tensor_args=DEFAULT_TENSOR_ARGS, grasped_object=None, **kwargs):
+    def __init__(
+        self,
+        *,
+        with_pika=True,
+        collision_geometry_profile="production",
+        tensor_args=DEFAULT_TENSOR_ARGS,
+        grasped_object=None,
+        **kwargs,
+    ):
         robot_dir = os.path.join(get_robot_path(), "marvin")
-        config_dir = os.path.join(get_configs_path(), "marvin")
+        config_root = os.path.join(get_configs_path(), "marvin")
+        config_dir = config_root
         self.with_pika = with_pika
         if with_pika:
-            config_dir = os.path.join(config_dir, "pika")
+            production_config_dir = os.path.join(config_root, "pika")
+            if collision_geometry_profile == "production":
+                config_dir = production_config_dir
+            elif collision_geometry_profile == "foam_pika_100":
+                config_dir = os.path.join(config_root, "pika_foam_guide")
+            else:
+                raise ValueError(
+                    "collision_geometry_profile must be 'production' or "
+                    "'foam_pika_100'"
+                )
+        elif collision_geometry_profile != "production":
+            raise ValueError("reduced guide geometry requires with_pika=True")
+        else:
+            production_config_dir = config_dir
+        self.collision_geometry_profile = collision_geometry_profile
         self.link_name_ee_left = "left_pika_gripper_tcp" if with_pika else "flange_L"
         self.link_name_ee_right = "right_pika_gripper_tcp" if with_pika else "flange_R"
         self.link_name_ee = self.link_name_ee_left
@@ -39,7 +62,11 @@ class RobotMarvinBimanual(RobotBase):
             urdf_robot_file=os.path.join(robot_dir, model_name),
             collision_spheres_file_path=os.path.join(config_dir, "collision_spheres.yaml"),
             collision_parent_bounds_file_path=os.path.join(config_dir, "collision_parent_bounds.yaml"),
-            joint_limits_file_path=os.path.join(config_dir, "joint_limits.yaml"),
+            # A guide profile changes collision geometry only. Joint limits and
+            # the kinematic model remain the production Marvin/Pika contract.
+            joint_limits_file_path=os.path.join(
+                production_config_dir, "joint_limits.yaml"
+            ),
             link_name_ee=self.link_name_ee,
             grasped_object=grasped_object,
             tensor_args=tensor_args,
@@ -52,6 +79,19 @@ class RobotMarvinBimanual(RobotBase):
                 self.asset_manifest = yaml.safe_load(file)
             self.asset_hash = self.asset_manifest["asset_sha256"]
             self.tcp_calibrated = self.asset_manifest["tcp_calibrated"]
+        collision_geometry_path = os.path.join(config_dir, "collision_spheres.yaml")
+        with open(collision_geometry_path, "rb") as collision_geometry_file:
+            self.collision_geometry_hash = hashlib.sha256(
+                collision_geometry_file.read()
+            ).hexdigest()
+        self.collision_geometry_sphere_count = int(
+            self.link_collision_spheres_radii.numel()
+        )
+        self.guide_geometry_manifest = None
+        guide_manifest_path = os.path.join(config_dir, "guide_geometry_manifest.yaml")
+        if os.path.isfile(guide_manifest_path):
+            with open(guide_manifest_path) as file:
+                self.guide_geometry_manifest = yaml.safe_load(file)
         self.joint_names = tuple(
             joint.name for joint in self.robot_urdf.joints if joint.joint_type != "fixed"
         )

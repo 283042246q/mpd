@@ -1,0 +1,237 @@
+schema: marvin_foam_guide_geometry/v1
+profile: foam_pika_100
+guidance_only: true
+production_validator_profile: pika
+foam_root: /home/eric/Projects/foam
+foam_commit: 116928f71aaa7c40356d79c84d3c9ff1f4497d90
+foam_executable_sha256: 932df38ca869a82c5016d85304687e8cc14eeb74ac19f657730a4b5a90168186
+method: grid
+link_specs:
+  left_pika_adaptor_link:
+    target: 4
+    branch: 4
+    depth: 1
+  left_gripper_base_link:
+    target: 38
+    branch: 7
+    depth: 2
+  left_gripper_left_link:
+    target: 3
+    branch: 10
+    depth: 1
+  left_gripper_right_link:
+    target: 3
+    branch: 10
+    depth: 1
+  right_pika_adaptor_link:
+    target: 4
+    branch: 4
+    depth: 1
+  right_gripper_base_link:
+    target: 38
+    branch: 7
+    depth: 2
+  right_gripper_left_link:
+    target: 3
+    branch: 10
+    depth: 1
+  right_gripper_right_link:
+    target: 3
+    branch: 10
+    depth: 1
+inflation_m: 0.006
+num_cover: 500
+init_spheres: 200
+min_spheres: 20
+optimise: false
+verify_mesh: false
+manifold_leaves: 1000
+simplify_ratio: 0.2
+expand: false
+merge: false
+command_template:
+- /home/eric/Projects/foam/foam/external/makeTreeGrid
+- -nopause
+- -branch
+- '10'
+- -depth
+- '1'
+- -testerLevels
+- '2'
+- -numCover
+- '500'
+- -minCover
+- '2'
+- -balExcess
+- '0.05'
+pika_sphere_count: 96
+total_sphere_count: 489
+links:
+  left_pika_adaptor_link:
+    target_spheres: 4
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 4
+    selected_level: 1
+    foam_error:
+      mean_error: 375.081
+      best_error: 351.945
+      worst_error: 399.92
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.013870907351837897
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL
+      sha256: 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+    preprocessing:
+      input_faces: 12258
+      processed_faces: 680
+  left_gripper_base_link:
+    target_spheres: 38
+    foam_branch: 7
+    foam_depth: 2
+    actual_spheres: 38
+    selected_level: 2
+    foam_error:
+      mean_error: 44.485
+      best_error: 6.46
+      worst_error: 123.2
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.017631745818365675
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/gripper_base_link.STL
+      sha256: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+    preprocessing:
+      input_faces: 118348
+      processed_faces: 1036
+  left_gripper_left_link:
+    target_spheres: 3
+    foam_branch: 10
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 245.283
+      best_error: 211.803
+      worst_error: 290.27
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02372336058242974
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  left_gripper_right_link:
+    target_spheres: 3
+    foam_branch: 10
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 245.283
+      best_error: 211.803
+      worst_error: 290.27
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.023830118950438267
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  right_pika_adaptor_link:
+    target_spheres: 4
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 4
+    selected_level: 1
+    foam_error:
+      mean_error: 375.081
+      best_error: 351.945
+      worst_error: 399.92
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.013911597335072452
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL
+      sha256: 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+    preprocessing:
+      input_faces: 12258
+      processed_faces: 680
+  right_gripper_base_link:
+    target_spheres: 38
+    foam_branch: 7
+    foam_depth: 2
+    actual_spheres: 38
+    selected_level: 2
+    foam_error:
+      mean_error: 44.485
+      best_error: 6.46
+      worst_error: 123.2
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.017727279814095345
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/gripper_base_link.STL
+      sha256: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+    preprocessing:
+      input_faces: 118348
+      processed_faces: 1036
+  right_gripper_left_link:
+    target_spheres: 3
+    foam_branch: 10
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 245.283
+      best_error: 211.803
+      worst_error: 290.27
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02371459623259967
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  right_gripper_right_link:
+    target_spheres: 3
+    foam_branch: 10
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 245.283
+      best_error: 211.803
+      worst_error: 290.27
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02370590231528174
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942

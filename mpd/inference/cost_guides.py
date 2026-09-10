@@ -97,8 +97,14 @@ class CostGuideManagerParametricTrajectory:
         self.tensor_args = tensor_args
 
         self.planning_task = planning_task
+        self.collision_guide_task = kwargs.pop("collision_guide_task", None)
         self.env = planning_task.env
-        self.robot = planning_task.robot
+        self.validation_robot = planning_task.robot
+        self.robot = (
+            self.collision_guide_task.robot
+            if self.collision_guide_task is not None
+            else planning_task.robot
+        )
         self.parametric_trajectory = planning_task.parametric_trajectory
 
         self.dataset = dataset

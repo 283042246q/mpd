@@ -430,6 +430,23 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         "joint_velocity_violation": best_report.joint_velocity_violation_mask[0],
         "joint_acceleration_violation": best_report.joint_acceleration_violation_mask[0],
     }
+    guide_robot = getattr(planner.cost_guide, "guide_collision_robot", None)
+    if guide_robot is None:
+        guide_robot = robot
+    collision_geometry = {
+        "guide": {
+            "profile": guide_robot.collision_geometry_profile,
+            "sha256": guide_robot.collision_geometry_hash,
+            "sphere_count": guide_robot.collision_geometry_sphere_count,
+            "self_pair_count": len(guide_robot.link_self_collision_tuples),
+        },
+        "validator": {
+            "profile": robot.collision_geometry_profile,
+            "sha256": robot.collision_geometry_hash,
+            "sphere_count": robot.collision_geometry_sphere_count,
+            "self_pair_count": len(robot.link_self_collision_tuples),
+        },
+    }
     result = {
         "schema": RESULT_SCHEMA,
         "request_id": request.request_id,
@@ -477,6 +494,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             "ranking_s": results.trajectory_ranking_time,
         },
         "gradient_pruning": results.gradient_pruning_statistics,
+        "collision_geometry": collision_geometry,
         "created_unix_ns": time.time_ns(),
     }
     result = validate_result(_jsonable(result), request=request)

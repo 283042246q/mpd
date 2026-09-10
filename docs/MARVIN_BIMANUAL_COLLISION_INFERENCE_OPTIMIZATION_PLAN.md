@@ -169,18 +169,18 @@ fine self-pair mask直接由 `active_parent_pair_mask[fine_pair_parent_pair_id]`
 
 使用本地 `/home/eric/Projects/foam`，其 SphereTree 可执行文件已经存在；输入只使用仓库内归档的 Marvin/Pika STL，不下载远程资产。
 
-仅重新拟合八个 Pika/tool links：左右 adaptor、gripper base、left finger、right finger。Marvin 原始 arm/base 的 393 个 spheres 不变。两套 Pika 合计目标 90--110 个 spheres，目标分配先按左右对称：
+仅重新拟合八个 Pika/tool links：左右 adaptor、gripper base、left finger、right finger。Marvin 原始 arm/base 的 393 个 spheres 不变。实际选择本地 Foam `makeTreeGrid`，在 manifold/simplify 预处理后构建球树；关闭耗时很高的 mesh verify 和 simplex post-optimisation，并把这些选择写入 manifest。两套 Pika 实际为 96 个 spheres：
 
 ```text
-每侧 adaptor       3--5
-每侧 gripper base  28--34
-每侧两根 finger   合计 14--18
-每侧总计          45--55
+每侧 adaptor        4
+每侧 gripper base  38
+每侧两根 finger     6
+每侧总计           48
 ```
 
-构建脚本从多个 Foam method/depth/branch 候选中选择满足预算、误差最小的层，并记录 Foam commit、参数、mesh hash、每 link 球数和覆盖指标。生成资产存放在新的 `configs/marvin/pika_foam_guide/`，不修改 `configs/marvin/pika/`。
+每个链接从指定 Foam depth/branch 的层级中选择最接近目标球数的一层，并记录 Foam commit、可执行文件 hash、完整参数、mesh hash、原始/预处理三角面数、每 link 球数和 20,000 点表面覆盖指标。球半径增加 6 mm guide inflation；当前抽样的 uncovered ratio 和 maximum signed excess 均为零。生成资产存放在新的 `configs/marvin/pika_foam_guide/`，不修改 `configs/marvin/pika/`。
 
-Foam medial spheres 不自动声明为 production-conservative。允许其作为优化引导近似，但最终结果必须由原始 1035 球 validator 复核。
+Foam spheres 不声明为 production-conservative。允许其作为优化引导近似，但最终结果必须由原始 1035 球 validator 复核；表面抽样门禁也不等价于连续体或 Isaac Lab 的安全证书。
 
 ### 6.2 双模型隔离
 
