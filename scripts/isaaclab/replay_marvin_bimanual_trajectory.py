@@ -43,14 +43,14 @@ def parse_args():
         "--camera-eye",
         nargs=3,
         type=float,
-        default=(2.2, 0.0, 1.35),
+        default=(4.8, 0.0, 2.2),
         help="Camera position; default is centered in the aisle between the shelves.",
     )
     parser.add_argument(
         "--camera-target",
         nargs=3,
         type=float,
-        default=(0.25, 0.0, 0.4),
+        default=(0.45, 0.0, 0.0),
         help="Camera look-at target in the bimanual workspace.",
     )
     parser.add_argument("--graceful-shutdown", action="store_true")
