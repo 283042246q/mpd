@@ -1,0 +1,125 @@
+env_id: EnvWarehouseMarvinBimanual
+robot_id: RobotMarvinBimanual
+task_family: cooperative
+task_mode: cooperative_rigid
+output_dir: data_trajectories/EnvWarehouse-RobotMarvinBimanual-cooperative-v1
+seed: 1726484688
+
+payload:
+  type: box
+  size_xyz: [0.30, 0.24, 0.20]
+  mass: 1.0
+  fixed_geometry: true
+  fixed_mass: true
+
+grasp:
+  profile: default_box
+  fixed_transforms: true
+
+object_planning:
+  state_space: xyz_yaw
+  # The fixed orientation points the common TCP x-axis down. This orientation
+  # and the z>=0.23 region were checked against Marvin's paired IK/self model.
+  base_rotation: [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]]
+  bounds: [[0.38, 0.72], [-0.18, 0.18], [0.22, 0.65], [-0.35, 0.35]]
+  proposals_per_task: 4
+  use_lift_transfer_lower: true
+  use_rrt_connect: true
+  simplify_path: false
+  min_start_goal_distance: 0.12
+  lift_height: 0.18
+  lift_height_step: 0.025
+  lateral_offset: 0.08
+  rrt_allowed_time: 2.0
+  rrt_range: 0.12
+  validity_resolution: 0.01
+
+# A context fixes object endpoints and one paired joint endpoint branch. All
+# solutions with the same task_id therefore describe the same learning task.
+object_regions:
+  start: {x: [0.42, 0.52], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+  goal: {x: [0.58, 0.68], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+
+continuous_ik:
+  initial_branches: 4
+  initial_tries: 40
+  beam_width: 3
+  waypoints: 32
+  max_nfev: 100
+  use_previous_seed: true
+  use_nullspace_perturbation: true
+  nullspace_std: 0.12
+  position_tolerance: 0.003
+  orientation_tolerance_deg: 2.0
+  min_joint_delta: 0.20
+
+joint_optimization:
+  representation: bspline
+  degree: 5
+  control_points: 22
+  projection_points: 64
+  projection_iterations: 2
+  hard_closed_chain: true
+  hard_object_start_goal: true
+
+fallback:
+  planner: constrained_rrt_connect
+  space: projected
+  enabled: true
+  allowed_time: 10.0
+  range: 0.20
+  delta: 0.08
+  lambda: 2.0
+  projection_tolerance: 0.001
+  projection_iterations: 30
+  jacobian_epsilon: 1.0e-5
+
+collision:
+  robot_environment_margin: 0.02
+  payload_environment_margin: 0.01
+  robot_payload_margin: 0.005
+  payload_proxy_radius: 0.025
+  # GenerateDataOMPL inserts the tabletop first. Only grasp/place may touch it.
+  support_obstacle_indices: [0]
+  support_contact_penetration: 0.003
+  allowed_payload_contact_links:
+    - left_pika_adaptor_link
+    - right_pika_adaptor_link
+    # The rigid object is intentionally held between these modeled fingers.
+    - left_gripper_base_link
+    - left_gripper_left_link
+    - left_gripper_right_link
+    - right_gripper_base_link
+    - right_gripper_left_link
+    - right_gripper_right_link
+  disabled_self_collision_pairs:
+    - [Link5_R, Link7_R]
+
+validation:
+  path_points: 128
+  spline_points: 512
+  adaptive_max_joint_step: 0.025
+  closure_translation_tolerance: 0.005
+  closure_rotation_tolerance_deg: 2.0
+  object_endpoint_translation_tolerance: 0.004
+  object_endpoint_rotation_tolerance_deg: 2.0
+  torch_collision: true
+  pybullet_collision: true
+  payload_collision: true
+
+dataset:
+  # First production gate: 100 deterministic contexts, four proposals each.
+  num_contexts: 100
+  solutions_per_task_target: 4
+  group_by_task_id: true
+  preserve_failed_task_statistics: true
+  context_sampling_tries: 30
+  context_timeout_seconds: 600
+  diversity_mean_joint_distance: 0.08
+
+launcher:
+  workers: 3
+  contexts_per_shard: 25
+  worker_lifetime_trajectories: 10
+  max_worker_restarts_per_shard: 3
+  resumable_shards: true
