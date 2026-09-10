@@ -1,0 +1,12 @@
+schema: marvin_bimanual_states/v1
+planning_frame: world
+joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
+samples:
+  # The first seven values are the left arm; the last seven are the right arm.
+  # These two examples are collision-validated dual_independent dataset samples.
+  - name: warehouse_independent_example_000
+    q_start: [-0.247601, -1.393429, -0.067289, 0.410439, 1.997103, 0.257330, -0.011571, -1.276820, 1.855257, 1.291769, -2.154126, 1.656601, 0.312170, 0.184318]
+    q_goal: [0.067100, -1.587877, 0.532668, 0.881221, 0.397933, 0.798452, -0.765617, -2.176570, 1.782029, 0.660530, -1.651116, 2.378090, 0.553208, -0.329214]
+  - name: warehouse_independent_example_001
+    q_start: [-0.284170, -1.582861, -0.559171, -0.380360, 2.069149, -0.045737, -1.188268, 0.271032, -1.580906, 0.718068, 0.095058, 2.289188, -0.280459, 0.333285]
+    q_goal: [-0.185950, -0.038818, -0.390663, -1.689796, 1.100809, -0.727499, -0.224287, -0.493312, -0.173095, 0.968447, -1.610210, -1.735568, -0.340761, -0.072707]

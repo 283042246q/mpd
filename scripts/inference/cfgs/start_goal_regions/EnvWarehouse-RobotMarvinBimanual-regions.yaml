@@ -1,0 +1,63 @@
+schema: marvin_bimanual_regions/v1
+env_id: EnvWarehouseMarvinBimanual
+robot_id: RobotMarvinBimanual
+task_family: independent
+task_mode: dual_independent
+sampler: region_ik
+planner: RRTConnect
+random_to_placement_fraction: 0.5
+seed: 12345
+state_validity_resolution: 0.002
+planner_range: 0.35
+min_distance_robot_env: 0.02
+state_sample_tries: 2000
+ik_tries: 30
+ik_iterations: 100
+ik_reference_seed_fraction: 0.5
+ik_position_tolerance: 0.003
+ik_orientation_tolerance_deg: 2.0
+max_sampling_attempts: 100
+sampling_timeout_seconds: 60.0
+disabled_self_collision_pairs:
+  - [Link5_R, Link7_R]
+
+# Each arm can use "random", one placement-region name, or a list of names.
+inference_selection:
+  start: {left: random, right: random}
+  goal:
+    left: [left_table, left_cabinet]
+    right: [right_table, right_cabinet]
+
+random_regions:
+  left: {x: [[0.15, 0.85]], y: [[0.25, 0.95]], z: [[0.05, 0.55]]}
+  right: {x: [[0.15, 0.85]], y: [[-0.95, -0.25]], z: [[0.05, 0.55]]}
+
+placement_regions:
+  left_table:
+    translation: {x: [[0.54, 0.66]], y: [[0.35, 0.45]], z: [[0.18, 0.28]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  right_table:
+    translation: {x: [[0.54, 0.66]], y: [[-0.45, -0.35]], z: [[0.18, 0.28]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_cabinet:
+    translation: {x: [[0.36, 0.48]], y: [[0.66, 0.72]], z: [[0.14, 0.24]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  right_cabinet:
+    translation: {x: [[0.34, 0.40]], y: [[-0.73, -0.68]], z: [[0.18, 0.24]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+      x: [[-15, 15]]
+      y: [[0, 15]]
+      z: [[-15, 15]]

@@ -363,6 +363,76 @@ scripts/isaaclab/replay_marvin_bimanual_trajectory.py
 - 起点 pose 和 MPD FK 与 Isaac FK 在约定门限内。
 - golden suite 中 MPD 与 Isaac 的安全判定无 false-negative；若几何近似造成差异，先扩大 MPD margin，不通过忽略接触解决。
 
+#### Phase 1/2 直接入口的起终点来源
+
+`scripts/inference/inference_marvin_bimanual.py` 是 Phase 1/2 的直接入口，
+`--request` 可选。不提供现成 request 时，入口根据配置中的
+`start_goal_source`（也可用同名 CLI 参数覆盖）生成严格 v2 request，并将实际使用的
+request 保存到输出目录的 `request.json`。三个生产来源为：
+
+- `dataset`：读取 `dataset_subdir/dataset_file_merged`，只在
+  `task_mode=dual_independent` 的行中按 `--sample-index` 选择，并直接读取该行的
+  `q_start`、`q_goal` 和双 EE goal pose。
+- `states_file`：读取 14D `q_start/q_goal` 列表。每个向量严格采用左臂 7 维在前、
+  右臂 7 维在后的 canonical 顺序；未提供 EE pose 时由 `q_goal` 做双臂 FK。
+- `regions`：读取左右臂的 Warehouse 区域约束，复用生产数据生成器的
+  Pinocchio IK、PyBullet/torch 几何和 endpoint collision gate，生成有效的 14D 起终点。
+
+仓库内样板：
+
+```text
+scripts/inference/cfgs/start_goal_states/EnvWarehouse-RobotMarvinBimanual-states.yaml
+scripts/inference/cfgs/start_goal_regions/EnvWarehouse-RobotMarvinBimanual-regions.yaml
+```
+
+Phase 1，使用配置默认的 `states_file`：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/inference_marvin_bimanual.py \
+  --config scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml \
+  --sample-index 0 \
+  --output-dir /tmp/marvin-phase1-states \
+  --device cuda:0
+```
+
+Phase 1，分别使用训练数据或区域采样：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/inference_marvin_bimanual.py \
+  --config scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml \
+  --start-goal-source dataset --sample-index 0 \
+  --output-dir /tmp/marvin-phase1-dataset --device cuda:0
+
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/inference_marvin_bimanual.py \
+  --config scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml \
+  --start-goal-source regions \
+  --start-goal-file scripts/inference/cfgs/start_goal_regions/EnvWarehouse-RobotMarvinBimanual-regions.yaml \
+  --seed 12345 --sample-index 0 \
+  --output-dir /tmp/marvin-phase1-regions --device cuda:0
+```
+
+Phase 2 在同一条直接命令上增加 Isaac Lab 检测与回放：
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/inference_marvin_bimanual.py \
+  --config scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml \
+  --start-goal-source states_file \
+  --start-goal-file scripts/inference/cfgs/start_goal_states/EnvWarehouse-RobotMarvinBimanual-states.yaml \
+  --sample-index 0 --output-dir /tmp/marvin-phase2-states \
+  --device cuda:0 --sim-backend isaaclab \
+  --isaaclab-conda-env env_isaaclab --isaaclab-device cuda:0
+```
+
+`--sample-index -1` 表示让 `dataset/states_file` 按 `--seed` 做确定性选择；
+`regions` 用 `seed + sample-index` 形成可复现的采样流。旧的
+`--request /path/request.json` 调用仍受支持。Phase 3 的
+`scripts/runtime/infer_once_marvin_bimanual.py` 以及 Phase 4/5 的 socket/ROS
+请求契约保持不变，仍要求调用方显式提供 request。
+
 ### Phase 3：ROS 2 单次规划连接
 
 先复刻 Franka `send_mpd_trajectory.py` 的隔离进程方式，不立即引入动态 worker：

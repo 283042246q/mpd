@@ -18,6 +18,8 @@ dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplif
 dataset_file_merged: dataset_merged.hdf5
 planning_env_id: EnvWarehouseMarvinBimanual
 start_goal_source: states_file
+start_goal_states_path: start_goal_states/EnvWarehouse-RobotMarvinBimanual-states.yaml
+start_goal_regions_path: start_goal_regions/EnvWarehouse-RobotMarvinBimanual-regions.yaml
 robot_model: marvin_bimanual
 task_family: independent
 task_mode: dual_independent

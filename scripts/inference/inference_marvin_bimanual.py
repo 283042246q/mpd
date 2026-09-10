@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import time
 from typing import Any
+import uuid
 
 import numpy as np
 
@@ -606,7 +607,35 @@ def _run_isaaclab_backend(args, output_dir: Path) -> dict:
 
 def _build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--request", required=True, type=Path)
+    parser.add_argument(
+        "--request",
+        type=Path,
+        help=(
+            "existing Marvin request JSON; when omitted, Phase 1/2 generates one "
+            "from --start-goal-source or the inference config"
+        ),
+    )
+    parser.add_argument(
+        "--start-goal-source",
+        choices=("auto", "dataset", "states_file", "regions"),
+        help="override start_goal_source when --request is omitted",
+    )
+    parser.add_argument(
+        "--start-goal-file",
+        type=Path,
+        help="override the states_file or regions YAML configured path",
+    )
+    parser.add_argument(
+        "--sample-index",
+        type=int,
+        default=0,
+        help="eligible dataset/state index; -1 selects deterministically from --seed",
+    )
+    parser.add_argument("--seed", type=int, default=12345)
+    parser.add_argument(
+        "--request-id",
+        help="request ID for a generated request (a UUID-based ID is used by default)",
+    )
     destination = parser.add_mutually_exclusive_group()
     destination.add_argument("--output-dir", type=Path)
     destination.add_argument("--output", type=Path, help="Compatibility path for result.json")
@@ -658,6 +687,21 @@ def _build_parser():
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    if args.request is not None and (
+        args.start_goal_source is not None
+        or args.start_goal_file is not None
+        or args.request_id is not None
+        or args.sample_index != 0
+        or args.seed != 12345
+    ):
+        raise SystemExit(
+            "--request cannot be combined with generated-request options "
+            "(--start-goal-source, --start-goal-file, --sample-index, --seed, --request-id)"
+        )
+    if not 0 <= args.seed <= 2**32 - 1:
+        raise SystemExit("--seed must be in [0, 2^32-1]")
+    if args.sample_index < -1:
+        raise SystemExit("--sample-index must be -1 or non-negative")
     if (
         args.isaaclab_action_repeat < 1
         or args.isaaclab_timeout_s < 1
@@ -680,7 +724,29 @@ def main(argv=None):
     scene_path.unlink(missing_ok=True)
     request_id = None
     try:
-        raw_request = json.loads(args.request.expanduser().read_text())
+        if args.request is not None:
+            raw_request = json.loads(args.request.expanduser().read_text())
+        else:
+            from mpd.bimanual.start_goal_sources import (
+                StartGoalSamplingError,
+                request_from_config_source,
+            )
+
+            generated_request_id = args.request_id or f"marvin-direct-{uuid.uuid4()}"
+            try:
+                raw_request = request_from_config_source(
+                    args.config,
+                    source=args.start_goal_source,
+                    source_path=args.start_goal_file,
+                    sample_index=args.sample_index,
+                    seed=args.seed,
+                    request_id=generated_request_id,
+                )
+            except StartGoalSamplingError as error:
+                raise NoValidTrajectoryError(str(error)) from error
+            except (KeyError, IndexError, OSError, TypeError, ValueError) as error:
+                raise ContractError(f"invalid start/goal source: {error}") from error
+            _write_json(output_dir / "request.json", raw_request)
         request_id = raw_request.get("request_id")
         request = BimanualRequest.from_dict(raw_request)
         request_id = request.request_id
