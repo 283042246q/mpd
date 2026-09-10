@@ -40,6 +40,14 @@ obstacle_cutoff_margin_extra: 0.05
 margin_for_dense_collision_checking: 0.0
 project_gradient_hierarchy: false
 
+collision_optimization:
+  pair_streaming:
+    enabled: false
+    pair_chunk_size: 4096
+  reduced_guide_geometry:
+    enabled: false
+    profile: foam_pika_100
+
 gradient_pruning:
   enabled: true
   force_all_active: false

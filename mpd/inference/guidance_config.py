@@ -129,6 +129,20 @@ DEFAULT_DENSE_VALIDATION_CONFIG = {
 }
 
 
+DEFAULT_COLLISION_OPTIMIZATION_CONFIG = {
+    "pair_streaming": {
+        # Exact memory optimization. Disabled by default so existing Panda and
+        # Marvin entry points retain their previous execution path.
+        "enabled": False,
+        "pair_chunk_size": 4096,
+    },
+    "reduced_guide_geometry": {
+        "enabled": False,
+        "profile": "foam_pika_100",
+    },
+}
+
+
 def _as_plain_mapping(value: Any) -> dict:
     if value is None:
         return {}
@@ -295,6 +309,29 @@ def resolve_gradient_pruning_config(args_inference) -> dict:
     if config["enabled"] and bool(config["scheduling"]["enabled"]):
         raise NotImplementedError(
             "gradient_pruning.scheduling.enabled is not available yet; keep it false."
+        )
+    return config
+
+
+def resolve_collision_optimization_config(args_inference) -> dict:
+    root = _as_plain_mapping(args_inference)
+    config = _deep_merge(
+        DEFAULT_COLLISION_OPTIMIZATION_CONFIG,
+        _as_plain_mapping(root.get("collision_optimization")),
+    )
+    streaming = config["pair_streaming"]
+    streaming["enabled"] = bool(streaming["enabled"])
+    streaming["pair_chunk_size"] = int(streaming["pair_chunk_size"])
+    if streaming["pair_chunk_size"] < 1:
+        raise ValueError(
+            "collision_optimization.pair_streaming.pair_chunk_size must be positive."
+        )
+    reduced = config["reduced_guide_geometry"]
+    reduced["enabled"] = bool(reduced["enabled"])
+    reduced["profile"] = str(reduced["profile"])
+    if not reduced["profile"]:
+        raise ValueError(
+            "collision_optimization.reduced_guide_geometry.profile cannot be empty."
         )
     return config
 

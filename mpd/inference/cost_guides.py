@@ -11,7 +11,10 @@ from mpd.parametric_trajectory.trajectory_waypoints import ParametricTrajectoryW
 from mpd.parametric_trajectory.trajectory_bspline import ParametricTrajectoryBspline
 from mpd.inference.active_jacobian import ActiveJacobianComputer, DenseJacobianBatch
 from mpd.inference.collision_risk_selector import CollisionRiskSelector, TemporalSelection
-from mpd.inference.guidance_config import resolve_gradient_pruning_config
+from mpd.inference.guidance_config import (
+    resolve_collision_optimization_config,
+    resolve_gradient_pruning_config,
+)
 from mpd.inference.guidance_profiler import GuidanceProfiler
 from torch_robotics.torch_kinematics_tree.geometrics.utils import link_pos_from_link_tensor
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
@@ -109,6 +112,17 @@ class CostGuideManagerParametricTrajectory:
         self.setup_costs()
         if not self.costs:
             raise NoCostException
+
+        self.collision_optimization_config = resolve_collision_optimization_config(
+            args_inference
+        )
+        pair_streaming = self.collision_optimization_config["pair_streaming"]
+        self.self_pair_chunk_size = (
+            pair_streaming["pair_chunk_size"] if pair_streaming["enabled"] else None
+        )
+        for entry in self.costs.values():
+            if isinstance(entry.cost, CostTaskSpaceCollisionSelf):
+                entry.cost.self_pair_chunk_size = self.self_pair_chunk_size
 
         self.step_guide_call = 0
         self._t = 0
@@ -1711,6 +1725,7 @@ class CostTaskSpaceCollisionSelf(CostTaskSpace):
         self.collision_self_field = self.planning_task.get_collision_self_field()
         if self.collision_self_field is None:
             raise NoCostException
+        self.self_pair_chunk_size = None
 
     def compute_cost_grad_wrt_q(
         self,
@@ -1732,6 +1747,8 @@ class CostTaskSpaceCollisionSelf(CostTaskSpace):
         if kwargs.get("link_indices") is not None:
             field_kwargs["link_indices"] = kwargs["link_indices"]
             field_kwargs["self_pair_indices"] = kwargs.get("self_pair_indices")
+        if self.self_pair_chunk_size is not None:
+            field_kwargs["pair_chunk_size"] = self.self_pair_chunk_size
         cost, grad_cost_wrt_x = self.collision_self_field.compute_distance_field_cost_and_gradient(
             x_positions, **field_kwargs
         )

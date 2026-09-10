@@ -62,6 +62,106 @@ class SelfCollisionExplicitGradientTest(unittest.TestCase):
         torch.testing.assert_close(subset_cost, full_cost)
         torch.testing.assert_close(subset_gradient, full_gradient[:, sphere_indices])
 
+    def test_streaming_matches_full_for_multiple_chunk_sizes(self):
+        robot = SimpleNamespace(
+            link_collision_spheres_names=[f"s{index}" for index in range(7)]
+        )
+        pairs = [
+            (0, 1, 0.5, 0.4),
+            (0, 2, 0.2, 0.3),
+            (1, 3, 0.4, 0.4),
+            (2, 4, 0.3, 0.2),
+            (3, 5, 0.25, 0.25),
+            (4, 6, 0.2, 0.35),
+            (5, 6, 0.1, 0.1),
+        ]
+        field = CollisionSelfField(
+            robot=robot,
+            link_self_collision_tuples=pairs,
+            tensor_args={"device": "cpu", "dtype": torch.float64},
+        )
+        generator = torch.Generator().manual_seed(19)
+        positions = torch.randn(3, 5, 7, 3, generator=generator, dtype=torch.float64)
+        reference_cost, reference_gradient = (
+            field.compute_distance_field_cost_and_gradient(positions)
+        )
+        reference_minimum = field.compute_minimum_signed_distances(positions)
+        for chunk_size in (1, 2, 3, 7, 99):
+            cost, gradient = field.compute_distance_field_cost_and_gradient(
+                positions, pair_chunk_size=chunk_size
+            )
+            minimum = field.compute_minimum_signed_distances(
+                positions, pair_chunk_size=chunk_size
+            )
+            torch.testing.assert_close(cost, reference_cost)
+            torch.testing.assert_close(gradient, reference_gradient)
+            torch.testing.assert_close(minimum, reference_minimum)
+
+    def test_streaming_preserves_first_pair_for_positive_tie(self):
+        robot = SimpleNamespace(link_collision_spheres_names=["s0", "s1", "s2"])
+        field = CollisionSelfField(
+            robot=robot,
+            link_self_collision_tuples=[
+                (0, 1, 0.75, 0.75),
+                (0, 2, 0.75, 0.75),
+            ],
+            tensor_args={"device": "cpu", "dtype": torch.float64},
+        )
+        positions = torch.tensor(
+            [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], dtype=torch.float64
+        )
+        full_cost, full_gradient = field.compute_distance_field_cost_and_gradient(
+            positions
+        )
+        stream_cost, stream_gradient = field.compute_distance_field_cost_and_gradient(
+            positions, pair_chunk_size=1
+        )
+        torch.testing.assert_close(stream_cost, full_cost)
+        torch.testing.assert_close(stream_gradient, full_gradient)
+
+    def test_streaming_pair_subset_without_link_subset(self):
+        robot = SimpleNamespace(link_collision_spheres_names=["s0", "s1", "s2"])
+        field = CollisionSelfField(
+            robot=robot,
+            link_self_collision_tuples=[
+                (0, 1, 0.1, 0.1),
+                (1, 2, 0.7, 0.7),
+            ],
+            tensor_args={"device": "cpu", "dtype": torch.float64},
+        )
+        positions = torch.tensor(
+            [[[0.0, 0.0], [2.0, 0.0], [2.5, 0.0]]], dtype=torch.float64
+        )
+        subset = torch.tensor([1])
+        full_cost, full_gradient = field.compute_distance_field_cost_and_gradient(
+            positions, self_pair_indices=subset
+        )
+        stream_cost, stream_gradient = field.compute_distance_field_cost_and_gradient(
+            positions, self_pair_indices=subset, pair_chunk_size=1
+        )
+        self.assertAlmostEqual(full_cost.item(), 0.9)
+        torch.testing.assert_close(stream_cost, full_cost)
+        torch.testing.assert_close(stream_gradient, full_gradient)
+
+    def test_empty_pair_subset(self):
+        robot = SimpleNamespace(link_collision_spheres_names=["s0", "s1"])
+        field = CollisionSelfField(
+            robot=robot,
+            link_self_collision_tuples=[(0, 1, 0.5, 0.5)],
+            tensor_args={"device": "cpu", "dtype": torch.float64},
+        )
+        positions = torch.zeros(2, 3, 2, 3, dtype=torch.float64)
+        empty = torch.empty(0, dtype=torch.long)
+        cost, gradient = field.compute_distance_field_cost_and_gradient(
+            positions, self_pair_indices=empty, pair_chunk_size=1
+        )
+        minimum = field.compute_minimum_signed_distances(
+            positions, self_pair_indices=empty, pair_chunk_size=1
+        )
+        torch.testing.assert_close(cost, torch.zeros_like(cost))
+        torch.testing.assert_close(gradient, torch.zeros_like(gradient))
+        self.assertTrue(torch.isinf(minimum).all())
+
 
 if __name__ == "__main__":
     unittest.main()

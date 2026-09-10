@@ -168,73 +168,186 @@ class CollisionSelfField(EmbodimentDistanceFieldBase):
         any_self_collision = torch.any(distances_minus_radii < 0, dim=-1)
         return any_self_collision
 
+    def _resolve_pair_tensors(self, link_pos, link_indices=None, pair_indices=None):
+        """Resolve original fine-pair indices into the supplied sphere layout."""
+
+        device = link_pos.device
+        original_idx_1 = torch.as_tensor(self.link_idx_1, dtype=torch.long, device=device)
+        original_idx_2 = torch.as_tensor(self.link_idx_2, dtype=torch.long, device=device)
+        radii = (self.link_radii_1 + self.link_radii_2).to(
+            dtype=link_pos.dtype, device=device
+        )
+        if pair_indices is not None:
+            pair_indices = torch.as_tensor(pair_indices, dtype=torch.long, device=device)
+            original_idx_1 = original_idx_1.index_select(0, pair_indices)
+            original_idx_2 = original_idx_2.index_select(0, pair_indices)
+            radii = radii.index_select(0, pair_indices)
+
+        if link_indices is None:
+            return original_idx_1, original_idx_2, radii
+
+        link_indices = torch.as_tensor(link_indices, dtype=torch.long, device=device)
+        inverse = torch.full(
+            (len(self.robot.link_collision_spheres_names),),
+            -1,
+            dtype=torch.long,
+            device=device,
+        )
+        inverse[link_indices] = torch.arange(
+            link_indices.numel(), dtype=torch.long, device=device
+        )
+        local_idx_1 = inverse.index_select(0, original_idx_1)
+        local_idx_2 = inverse.index_select(0, original_idx_2)
+        if bool(((local_idx_1 < 0) | (local_idx_2 < 0)).any().item()):
+            raise ValueError("self_pair_indices reference spheres absent from link_indices")
+        return local_idx_1, local_idx_2, radii
+
+    @staticmethod
+    def _validated_pair_chunk_size(pair_chunk_size, pair_count):
+        if pair_chunk_size is None:
+            return None
+        pair_chunk_size = int(pair_chunk_size)
+        if pair_chunk_size < 1:
+            raise ValueError("pair_chunk_size must be a positive integer")
+        return min(pair_chunk_size, pair_count) if pair_count else pair_chunk_size
+
+    def compute_minimum_signed_distances(self, link_pos, **kwargs):
+        """Return the exact minimum pair clearance without retaining all pairs."""
+
+        local_idx_1, local_idx_2, radii = self._resolve_pair_tensors(
+            link_pos,
+            link_indices=kwargs.get("link_indices"),
+            pair_indices=kwargs.get("self_pair_indices"),
+        )
+        pair_count = int(local_idx_1.numel())
+        if pair_count == 0:
+            return torch.full(
+                link_pos.shape[:-2],
+                torch.inf,
+                dtype=link_pos.dtype,
+                device=link_pos.device,
+            )
+        pair_chunk_size = self._validated_pair_chunk_size(
+            kwargs.get("pair_chunk_size"), pair_count
+        )
+        if pair_chunk_size is None or pair_chunk_size >= pair_count:
+            difference = (
+                link_pos.index_select(-2, local_idx_1)
+                - link_pos.index_select(-2, local_idx_2)
+            )
+            return (torch.linalg.norm(difference, dim=-1) - radii).amin(dim=-1)
+
+        minimum = torch.full(
+            link_pos.shape[:-2],
+            torch.inf,
+            dtype=link_pos.dtype,
+            device=link_pos.device,
+        )
+        for start in range(0, pair_count, pair_chunk_size):
+            end = min(start + pair_chunk_size, pair_count)
+            idx_1 = local_idx_1[start:end]
+            idx_2 = local_idx_2[start:end]
+            difference = link_pos.index_select(-2, idx_1) - link_pos.index_select(
+                -2, idx_2
+            )
+            chunk_minimum = (
+                torch.linalg.norm(difference, dim=-1) - radii[start:end]
+            ).amin(dim=-1)
+            minimum = torch.minimum(minimum, chunk_minimum)
+        return minimum
+
     def compute_distance_field_cost_and_gradient(self, link_pos, **kwargs):
         # position link_pos tensor # batch x num_links x env_dim (2D or 3D)
         link_indices = kwargs.get("link_indices")
         pair_indices = kwargs.get("self_pair_indices")
-        if link_indices is None:
-            local_idx_1 = torch.as_tensor(
-                self.link_idx_1, dtype=torch.long, device=link_pos.device
+        local_idx_1, local_idx_2, radii = self._resolve_pair_tensors(
+            link_pos, link_indices=link_indices, pair_indices=pair_indices
+        )
+        pair_count = int(local_idx_1.numel())
+        if pair_count == 0:
+            return (
+                torch.zeros(
+                    link_pos.shape[:-2], dtype=link_pos.dtype, device=link_pos.device
+                ),
+                torch.zeros_like(link_pos),
             )
-            local_idx_2 = torch.as_tensor(
-                self.link_idx_2, dtype=torch.long, device=link_pos.device
+
+        pair_chunk_size = self._validated_pair_chunk_size(
+            kwargs.get("pair_chunk_size"), pair_count
+        )
+        if pair_chunk_size is None or pair_chunk_size >= pair_count:
+            difference = (
+                link_pos.index_select(-2, local_idx_1)
+                - link_pos.index_select(-2, local_idx_2)
             )
+            distance = torch.linalg.norm(difference, dim=-1)
+            penetration = torch.relu(radii - distance)
+            cost, active_pair = torch.max(penetration, dim=-1)
+            active_difference = torch.gather(
+                difference,
+                dim=-2,
+                index=active_pair[..., None, None].expand(
+                    *active_pair.shape, 1, link_pos.shape[-1]
+                ),
+            ).squeeze(-2)
+            active_distance = torch.gather(distance, -1, active_pair[..., None]).squeeze(-1)
+            pair_1 = local_idx_1[active_pair]
+            pair_2 = local_idx_2[active_pair]
         else:
-            link_indices = torch.as_tensor(
-                link_indices, dtype=torch.long, device=link_pos.device
-            )
-            if pair_indices is None:
-                pair_indices = torch.arange(
-                    len(self.link_idx_1), dtype=torch.long, device=link_pos.device
-                )
-            else:
-                pair_indices = torch.as_tensor(
-                    pair_indices, dtype=torch.long, device=link_pos.device
-                )
-            if pair_indices.numel() == 0:
-                return (
-                    torch.zeros(link_pos.shape[:-2], dtype=link_pos.dtype, device=link_pos.device),
-                    torch.zeros_like(link_pos),
-                )
-            original_idx_1 = torch.as_tensor(
-                self.link_idx_1, dtype=torch.long, device=link_pos.device
-            ).index_select(0, pair_indices)
-            original_idx_2 = torch.as_tensor(
-                self.link_idx_2, dtype=torch.long, device=link_pos.device
-            ).index_select(0, pair_indices)
-            inverse = torch.full(
-                (len(self.robot.link_collision_spheres_names),),
-                -1,
-                dtype=torch.long,
+            # Streaming exact reduction. Only the per-chunk winner survives;
+            # strict `>` preserves torch.max's first-index tie behaviour.
+            cost = torch.full(
+                link_pos.shape[:-2],
+                -torch.inf,
+                dtype=link_pos.dtype,
                 device=link_pos.device,
             )
-            inverse[link_indices] = torch.arange(
-                link_indices.numel(), dtype=torch.long, device=link_pos.device
+            active_difference = torch.zeros(
+                *link_pos.shape[:-2],
+                link_pos.shape[-1],
+                dtype=link_pos.dtype,
+                device=link_pos.device,
             )
-            local_idx_1 = inverse.index_select(0, original_idx_1)
-            local_idx_2 = inverse.index_select(0, original_idx_2)
-        link_pos_1 = link_pos[..., local_idx_1, :]
-        link_pos_2 = link_pos[..., local_idx_2, :]
-        difference = link_pos_1 - link_pos_2
-        distance = torch.linalg.norm(difference, dim=-1)
-        radii = self.link_radii_1 + self.link_radii_2
-        if pair_indices is not None:
-            radii = radii.index_select(0, pair_indices)
-        penetration = torch.relu(radii - distance)
-        cost, active_pair = torch.max(penetration, dim=-1)
+            active_distance = torch.zeros_like(cost)
+            pair_1 = torch.zeros(
+                link_pos.shape[:-2], dtype=torch.long, device=link_pos.device
+            )
+            pair_2 = torch.zeros_like(pair_1)
+            for start in range(0, pair_count, pair_chunk_size):
+                end = min(start + pair_chunk_size, pair_count)
+                idx_1 = local_idx_1[start:end]
+                idx_2 = local_idx_2[start:end]
+                difference = link_pos.index_select(-2, idx_1) - link_pos.index_select(
+                    -2, idx_2
+                )
+                distance = torch.linalg.norm(difference, dim=-1)
+                penetration = torch.relu(radii[start:end] - distance)
+                chunk_cost, chunk_pair = torch.max(penetration, dim=-1)
+                gather_index = chunk_pair[..., None, None].expand(
+                    *chunk_pair.shape, 1, link_pos.shape[-1]
+                )
+                chunk_difference = torch.gather(
+                    difference, dim=-2, index=gather_index
+                ).squeeze(-2)
+                chunk_distance = torch.gather(
+                    distance, -1, chunk_pair[..., None]
+                ).squeeze(-1)
+                update = chunk_cost > cost
+                cost = torch.where(update, chunk_cost, cost)
+                active_difference = torch.where(
+                    update[..., None], chunk_difference, active_difference
+                )
+                active_distance = torch.where(update, chunk_distance, active_distance)
+                pair_1 = torch.where(update, idx_1[chunk_pair], pair_1)
+                pair_2 = torch.where(update, idx_2[chunk_pair], pair_2)
 
         # Match torch.max/autograd semantics: one deepest pair contributes at
         # each batch/time point. A coincident pair has no unique direction, so
         # its stable subgradient is defined as zero.
-        direction = difference / distance.clamp_min(torch.finfo(link_pos.dtype).eps).unsqueeze(-1)
-        active_direction = torch.gather(
-            direction,
-            dim=-2,
-            index=active_pair[..., None, None].expand(*active_pair.shape, 1, link_pos.shape[-1]),
-        ).squeeze(-2)
+        active_direction = active_difference / active_distance.clamp_min(
+            torch.finfo(link_pos.dtype).eps
+        ).unsqueeze(-1)
         active_direction = torch.where((cost > 0)[..., None], active_direction, torch.zeros_like(active_direction))
-        pair_1 = local_idx_1[active_pair]
-        pair_2 = local_idx_2[active_pair]
         gradient = torch.zeros_like(link_pos)
         gradient.scatter_add_(
             -2,
