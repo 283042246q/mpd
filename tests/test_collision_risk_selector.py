@@ -253,6 +253,40 @@ class CollisionRiskSelectorTest(unittest.TestCase):
         self.assertEqual(spheres.tolist(), [[True, True, False, False], [False, False, True, True]])
         self.assertEqual(pairs.tolist(), [[False, False], [False, True]])
 
+    def test_parent_bound_mask_keeps_exact_active_parent_pairs(self):
+        robot = SimpleNamespace(
+            collision_sphere_parent_indices=torch.tensor([0, 1, 2]),
+            collision_sphere_unique_parent_links=["p0", "p1", "p2"],
+            collision_parent_self_pairs=torch.tensor([[0, 1], [0, 2], [1, 2]]),
+            collision_fine_self_pair_parent_pair_indices=torch.tensor([0, 1, 2]),
+            link_self_collision_tuples=[
+                (0, 1, 0.1, 0.1),
+                (0, 2, 0.1, 0.1),
+                (1, 2, 0.1, 0.1),
+            ],
+        )
+        selector = CollisionRiskSelector(
+            robot=robot,
+            config=self.config,
+            link_broad_phase_config={
+                "enabled": True,
+                "environment_margin": 0.2,
+                "self_margin": 0.1,
+            },
+        )
+        environment = torch.full((1, 4, 3), torch.inf)
+        parent_pairs = torch.full((1, 4, 3), 1.0)
+        parent_pairs[..., 0] = 0.05
+        parent_pairs[..., 1] = 0.05
+        parents, spheres, pairs = selector._link_broad_phase_masks_from_parent_bounds(
+            environment, parent_pairs
+        )
+        self.assertEqual(parents.tolist(), [[True, True, True]])
+        self.assertEqual(spheres.tolist(), [[True, True, True]])
+        # p1-p2 is not introduced merely because both parents are active via
+        # the p0-p1 and p0-p2 pairs.
+        self.assertEqual(pairs.tolist(), [[True, True, False]])
+
     def test_span_certificate_skips_safe_spans_and_refines_uncertain_spans(self):
         class Origin:
             xyz = [0.0, 0.0, 0.0]

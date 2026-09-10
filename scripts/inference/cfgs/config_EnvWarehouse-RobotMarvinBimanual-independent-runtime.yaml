@@ -66,7 +66,13 @@ gradient_pruning:
     parent_link_kinematics: true
     dense_parent_fast_path: true
     active_link_pruning: true
-    link_broad_phase: {enabled: false, reuse_scan_cache: false}
+    link_broad_phase:
+      enabled: false
+      full_scan: true
+      scan_geometry: parent_bounds
+      reuse_scan_cache: false
+      environment_margin: 0.20
+      self_margin: 0.10
     environment_link_broad_phase: false
     self_link_pair_broad_phase: false
   mapping:

@@ -11,6 +11,7 @@ from mpd.inference.cost_guides import (
 )
 
 from .costs import (
+    SELF_COLLISION_PAIR_CATEGORIES,
     dual_ee_goal_cost_gradient,
     partition_self_collision_pair_indices,
 )
@@ -25,6 +26,9 @@ class _CostTaskSpaceCollisionSelfSubset(common_costs.CostTaskSpaceCollisionSelf)
         super().__init__(planning_task, **kwargs)
         partitions = partition_self_collision_pair_indices(self.robot)
         self.pair_indices = partitions[self.pair_category]
+        self.pair_category_id = SELF_COLLISION_PAIR_CATEGORIES.index(
+            self.pair_category
+        )
         if not self.pair_indices:
             raise NoCostException
 
@@ -44,7 +48,12 @@ class _CostTaskSpaceCollisionSelfSubset(common_costs.CostTaskSpaceCollisionSelf)
         allowed = torch.as_tensor(self.pair_indices, dtype=torch.long, device=device)
         if requested is not None:
             requested = torch.as_tensor(requested, dtype=torch.long, device=device)
-            allowed = requested[torch.isin(requested, allowed)]
+            category_ids = self.robot._bimanual_self_collision_pair_category_ids.to(
+                device
+            )
+            allowed = requested[
+                category_ids.index_select(0, requested) == self.pair_category_id
+            ]
         link_indices = kwargs.get("link_indices")
         if link_indices is None:
             link_indices = torch.arange(

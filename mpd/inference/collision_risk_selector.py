@@ -66,6 +66,14 @@ class FineSphereScanCache:
 
 
 @dataclass
+class ParentBoundScanCache:
+    """Full-horizon physical-parent poses/Jacobians reused by precise guidance."""
+
+    parent_poses: torch.Tensor
+    parent_jacobians: torch.Tensor
+
+
+@dataclass
 class TemporalSelection:
     active_indices: list
     bucket_sizes: torch.Tensor
@@ -81,6 +89,7 @@ class TemporalSelection:
     self_pair_mask: torch.Tensor = None
     parent_group_keys: tuple = ()
     fine_sphere_scan_cache: FineSphereScanCache = None
+    parent_bound_scan_cache: ParentBoundScanCache = None
     span_certificate_statistics: dict = None
 
     def __post_init__(self):
@@ -430,13 +439,44 @@ class CollisionRiskSelector:
         q_dense,
         environment_field=None,
         self_field=None,
+        return_scan_cache=False,
     ):
         """Scan conservative physical-parent bounds without expanding fine spheres."""
 
         batch, horizon, _ = q_dense.shape
-        positions = self.robot.fk_collision_parent_bounds(
-            q_dense.reshape(batch * horizon, -1)
-        ).reshape(batch, horizon, -1, 3)
+        q_flat = q_dense.reshape(batch * horizon, -1)
+        scan_cache = None
+        if return_scan_cache:
+            parent_jacobians, parent_poses = (
+                self.robot.jfk_s_collision_sphere_parent_links(q_flat)
+            )
+            parent_jacobians = torch.stack(parent_jacobians).transpose(0, 1).reshape(
+                batch, horizon, -1, 6, q_dense.shape[-1]
+            )
+            parent_poses = torch.stack(parent_poses).transpose(0, 1).reshape(
+                batch, horizon, -1, 3, 4
+            )
+            bound_parents = self.robot.collision_parent_bound_parent_indices.to(
+                q_dense.device
+            )
+            bound_poses = parent_poses.index_select(-3, bound_parents)
+            rotations = bound_poses[..., :3, :3]
+            translations = bound_poses[..., :3, 3]
+            local_centers = self.robot.collision_parent_bound_local_centers.to(
+                dtype=q_dense.dtype, device=q_dense.device
+            )
+            positions = (
+                torch.einsum("...bij,bj->...bi", rotations, local_centers)
+                + translations
+            )
+            scan_cache = ParentBoundScanCache(
+                parent_poses=parent_poses,
+                parent_jacobians=parent_jacobians,
+            )
+        else:
+            positions = self.robot.fk_collision_parent_bounds(q_flat).reshape(
+                batch, horizon, -1, 3
+            )
         positions = positions[..., : self.robot.task_space_dim]
         if environment_field is None:
             environment_by_bound = torch.full(
@@ -523,7 +563,13 @@ class CollisionRiskSelector:
             if self_by_parent_pair.shape[-1]
             else torch.full_like(environment, torch.inf)
         )
-        return environment, self_clearance, environment_by_parent, self_by_parent_pair
+        result = (
+            environment,
+            self_clearance,
+            environment_by_parent,
+            self_by_parent_pair,
+        )
+        return (*result, scan_cache) if return_scan_cache else result
 
     def _expand_parent_link_mask(self, parent_link_mask):
         sphere_parent = self.robot.collision_sphere_parent_indices.to(
@@ -559,6 +605,11 @@ class CollisionRiskSelector:
         parent_link_mask = environment_by_parent.amin(dim=1) < float(
             self.link_broad_phase_config.get("environment_margin", 0.20)
         )
+        self_pair_mask = torch.zeros(
+            (parent_link_mask.shape[0], len(self.robot.link_self_collision_tuples)),
+            dtype=torch.bool,
+            device=parent_link_mask.device,
+        )
         if self_by_parent_pair.shape[-1]:
             active_pairs = self_by_parent_pair.amin(dim=1) < float(
                 self.link_broad_phase_config.get("self_margin", 0.10)
@@ -578,7 +629,17 @@ class CollisionRiskSelector:
                 active_pairs.to(torch.long),
             )
             parent_link_mask = counts > 0
-        return self._expand_parent_link_mask(parent_link_mask)
+            fine_pair_parent = (
+                self.robot.collision_fine_self_pair_parent_pair_indices.to(
+                    parent_link_mask.device
+                )
+            )
+            self_pair_mask = active_pairs.index_select(-1, fine_pair_parent)
+        sphere_parent = self.robot.collision_sphere_parent_indices.to(
+            parent_link_mask.device
+        )
+        sphere_mask = parent_link_mask[:, sphere_parent]
+        return parent_link_mask, sphere_mask, self_pair_mask
 
     def _link_broad_phase_masks(self, environment_by_sphere, self_by_pair):
         """Build candidate-level conservative parent-link and pair masks."""
@@ -653,6 +714,7 @@ class CollisionRiskSelector:
         environment_sphere_mask=None,
         self_pair_mask=None,
         fine_sphere_scan_cache=None,
+        parent_bound_scan_cache=None,
         risk_mask_override=None,
         temporal_enabled_override=None,
         safe_bucket_override=None,
@@ -780,6 +842,7 @@ class CollisionRiskSelector:
             environment_sphere_mask=environment_sphere_mask,
             self_pair_mask=self_pair_mask,
             fine_sphere_scan_cache=fine_sphere_scan_cache,
+            parent_bound_scan_cache=parent_bound_scan_cache,
             span_certificate_statistics=span_certificate_statistics,
         )
 
@@ -1090,6 +1153,7 @@ class CollisionRiskSelector:
         )
         environment_details = self_details = None
         fine_sphere_scan_cache = None
+        parent_bound_scan_cache = None
         if self.config.get("coarse_scan", True) and not broad_phase_full_scan:
             scan_indices = self._risk_scan_indices(horizon, q_dense.device)
             if use_parent_bounds:
@@ -1124,7 +1188,10 @@ class CollisionRiskSelector:
             # point before selecting an active Jacobian bucket.
             if use_parent_bounds:
                 dense_result = self.compute_parent_bound_clearances(
-                    q_dense, environment_field, self_field
+                    q_dense,
+                    environment_field,
+                    self_field,
+                    return_scan_cache=broad_phase_enabled,
                 )
             else:
                 dense_result = self.compute_clearances(
@@ -1138,7 +1205,10 @@ class CollisionRiskSelector:
             if broad_phase_enabled:
                 environment_details, self_details = dense_result[2:4]
             if len(dense_result) > 4:
-                fine_sphere_scan_cache = dense_result[4]
+                if use_parent_bounds:
+                    parent_bound_scan_cache = dense_result[4]
+                else:
+                    fine_sphere_scan_cache = dense_result[4]
         masks = (None, None, None)
         if broad_phase_enabled:
             if use_parent_bounds:
@@ -1157,4 +1227,5 @@ class CollisionRiskSelector:
             environment_sphere_mask=masks[1],
             self_pair_mask=masks[2],
             fine_sphere_scan_cache=fine_sphere_scan_cache,
+            parent_bound_scan_cache=parent_bound_scan_cache,
         )

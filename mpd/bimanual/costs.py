@@ -43,6 +43,7 @@ def partition_self_collision_pair_indices(robot) -> dict[str, tuple[int, ...]]:
         )
     )
     categories = {key: [] for key in SELF_COLLISION_PAIR_CATEGORIES}
+    category_ids = []
     for pair_index, pair in enumerate(robot.link_self_collision_tuples):
         left_index, right_index = int(pair[0]), int(pair[1])
         side_a = collision_link_side(sphere_names[left_index])
@@ -56,8 +57,12 @@ def partition_self_collision_pair_indices(robot) -> dict[str, tuple[int, ...]]:
         else:
             category = "shared_base"
         categories[category].append(pair_index)
+        category_ids.append(SELF_COLLISION_PAIR_CATEGORIES.index(category))
     result = {key: tuple(value) for key, value in categories.items()}
     robot._bimanual_self_collision_pair_partitions = result
+    robot._bimanual_self_collision_pair_category_ids = torch.as_tensor(
+        category_ids, dtype=torch.long
+    )
     return result
 
 

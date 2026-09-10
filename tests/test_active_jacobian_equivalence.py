@@ -76,6 +76,42 @@ class ActiveJacobianEquivalenceTest(unittest.TestCase):
         )
         torch.testing.assert_close(sparse, dense, rtol=1e-12, atol=1e-12)
 
+    def test_link_broad_phase_consumes_precomputed_pair_mask(self):
+        robot = SimpleNamespace(
+            collision_sphere_unique_parent_links=["p0", "p1", "p2"],
+            collision_sphere_parent_indices=torch.tensor([0, 1, 2]),
+            link_self_collision_tuples=[
+                (0, 1, 0.1, 0.1),
+                (0, 2, 0.1, 0.1),
+                (1, 2, 0.1, 0.1),
+            ],
+        )
+        selection = TemporalSelection(
+            active_indices=[torch.arange(4), torch.arange(4)],
+            bucket_sizes=torch.tensor([4, 4]),
+            risk_mask=torch.ones(2, 4, dtype=torch.bool),
+            environment_clearance=torch.zeros(2, 4),
+            self_clearance=torch.zeros(2, 4),
+            parent_link_mask=torch.ones(2, 3, dtype=torch.bool),
+            environment_sphere_mask=torch.ones(2, 3, dtype=torch.bool),
+            self_pair_mask=torch.tensor(
+                [[True, False, False], [False, True, False]]
+            ),
+        )
+        computer = ActiveJacobianComputer(robot, use_parent_link_kinematics=True)
+
+        def evaluate(q, parent_indices, sphere_indices):
+            jacobians = torch.zeros(q.shape[0], len(sphere_indices), 6, 2)
+            poses = torch.zeros(q.shape[0], len(sphere_indices), 3, 4)
+            return jacobians, poses
+
+        with mock.patch.object(computer, "_evaluate_parent_subset", side_effect=evaluate):
+            buckets = computer.compute_selection_link_broad_phase(
+                torch.zeros(2, 4, 2), selection
+            )
+        self.assertEqual(len(buckets), 1)
+        self.assertEqual(buckets[0].self_pair_indices.tolist(), [0, 1])
+
 
 class FakeCollisionField:
     collision_margins = torch.tensor([0.0], dtype=torch.float64)

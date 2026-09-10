@@ -53,6 +53,20 @@ class ParentCollisionBoundsTest(unittest.TestCase):
         )
         self.assertEqual(len(robot.link_collision_spheres_radii), 56)
 
+    def test_every_fine_pair_maps_back_to_its_exact_parent_pair(self):
+        robot = self.robot
+        fine_pairs = torch.tensor(
+            [[pair[0], pair[1]] for pair in robot.link_self_collision_tuples],
+            dtype=torch.long,
+        )
+        fine_parent_pairs = torch.sort(
+            robot.collision_sphere_parent_indices[fine_pairs], dim=-1
+        ).values
+        mapped = robot.collision_parent_self_pairs.index_select(
+            0, robot.collision_fine_self_pair_parent_pair_indices
+        )
+        torch.testing.assert_close(mapped, fine_parent_pairs)
+
     def test_parent_environment_clearance_is_a_lower_bound_of_fine_spheres(self):
         robot = self.robot
         selector = CollisionRiskSelector(

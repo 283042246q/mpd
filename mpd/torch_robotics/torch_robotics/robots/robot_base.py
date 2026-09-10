@@ -370,9 +370,28 @@ class RobotBase(ABC):
             parent_self_pairs = self.collision_sphere_parent_indices[fine_self_pairs]
             parent_self_pairs = torch.sort(parent_self_pairs, dim=-1).values
             self.collision_parent_self_pairs = torch.unique(parent_self_pairs, dim=0)
+            n_parents = len(self.collision_sphere_unique_parent_links)
+            fine_pair_keys = parent_self_pairs[:, 0] * n_parents + parent_self_pairs[:, 1]
+            parent_pair_keys = (
+                self.collision_parent_self_pairs[:, 0] * n_parents
+                + self.collision_parent_self_pairs[:, 1]
+            )
+            sorted_keys, sorted_indices = torch.sort(parent_pair_keys)
+            locations = torch.searchsorted(sorted_keys, fine_pair_keys)
+            self.collision_fine_self_pair_parent_pair_indices = sorted_indices[
+                locations
+            ]
+            resolved = self.collision_parent_self_pairs.index_select(
+                0, self.collision_fine_self_pair_parent_pair_indices
+            )
+            if not torch.equal(resolved, parent_self_pairs):
+                raise ValueError("Failed to map fine self pairs to physical parent pairs")
         else:
             self.collision_parent_self_pairs = torch.empty(
                 (0, 2), dtype=torch.long, device=tensor_args["device"]
+            )
+            self.collision_fine_self_pair_parent_pair_indices = torch.empty(
+                0, dtype=torch.long, device=tensor_args["device"]
             )
 
         bound_self_pairs = []

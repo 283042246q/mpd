@@ -11,6 +11,7 @@ from torch_robotics.robots import RobotPanda
 from mpd.inference.active_jacobian import ActiveJacobianComputer
 from mpd.inference.collision_risk_selector import TemporalSelection
 from mpd.inference.collision_risk_selector import FineSphereScanCache
+from mpd.inference.collision_risk_selector import CollisionRiskSelector
 
 
 class ParentLinkSphereKinematicsTest(unittest.TestCase):
@@ -144,6 +145,50 @@ class ParentLinkSphereKinematicsTest(unittest.TestCase):
         self.assertEqual(len(cached_buckets), len(reference_buckets))
         for cached, reference in zip(cached_buckets, reference_buckets):
             torch.testing.assert_close(cached.poses, reference.poses, rtol=1e-9, atol=1e-10)
+            torch.testing.assert_close(
+                cached.jacobians, reference.jacobians, rtol=1e-9, atol=1e-10
+            )
+
+    def test_parent_bound_jfk_cache_matches_subset_jfk(self):
+        robot = RobotPanda(tensor_args={"device": "cpu", "dtype": torch.float64})
+        q = torch.randn(2, 3, 7, dtype=torch.float64) * 0.1
+        selector = CollisionRiskSelector(
+            robot,
+            config={"coarse_points": 3},
+            use_parent_link_kinematics=True,
+            link_broad_phase_config={"enabled": True},
+        )
+        *_, parent_cache = selector.compute_parent_bound_clearances(
+            q, None, robot.df_collision_self, return_scan_cache=True
+        )
+        n_parents = len(robot.collision_sphere_unique_parent_links)
+        parent_mask = torch.zeros(2, n_parents, dtype=torch.bool)
+        parent_mask[0, [0, 2]] = True
+        parent_mask[1, [1, min(3, n_parents - 1)]] = True
+        phase = torch.arange(3).expand(2, -1)
+        selection = TemporalSelection(
+            active_indices=None,
+            bucket_sizes=torch.full((2,), 3, dtype=torch.long),
+            risk_mask=torch.ones(2, 3, dtype=torch.bool),
+            environment_clearance=torch.zeros(2, 3, dtype=torch.float64),
+            self_clearance=torch.zeros(2, 3, dtype=torch.float64),
+            active_index_matrix=phase,
+            bucket_options=(3,),
+            parent_link_mask=parent_mask,
+            parent_bound_scan_cache=parent_cache,
+        )
+        computer = ActiveJacobianComputer(robot, use_parent_link_kinematics=True)
+        cached_buckets = computer.compute_selection_link_broad_phase(
+            q, selection, reuse_scan_cache=True
+        )
+        reference_buckets = computer.compute_selection_link_broad_phase(
+            q, selection, reuse_scan_cache=False
+        )
+        self.assertEqual(len(cached_buckets), len(reference_buckets))
+        for cached, reference in zip(cached_buckets, reference_buckets):
+            torch.testing.assert_close(
+                cached.poses, reference.poses, rtol=1e-9, atol=1e-10
+            )
             torch.testing.assert_close(
                 cached.jacobians, reference.jacobians, rtol=1e-9, atol=1e-10
             )

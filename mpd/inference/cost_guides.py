@@ -644,7 +644,10 @@ class CostGuideManagerParametricTrajectory:
             if self.use_link_broad_phase and selection is not None:
                 reuse_scan_cache = (
                     not temporal_selection_cache_hit
-                    and selection.fine_sphere_scan_cache is not None
+                    and (
+                        selection.fine_sphere_scan_cache is not None
+                        or selection.parent_bound_scan_cache is not None
+                    )
                 )
                 active_buckets = self.active_jacobian_computer.compute_selection_link_broad_phase(
                     q_dense,
@@ -660,6 +663,7 @@ class CostGuideManagerParametricTrajectory:
                     # Jacobians. Drop the dense cache immediately; later guide
                     # iterations keep the masks but must not see stale geometry.
                     selection.fine_sphere_scan_cache = None
+                    selection.parent_bound_scan_cache = None
             elif use_dense_full_parent_fast:
                 cached_poses = (
                     None

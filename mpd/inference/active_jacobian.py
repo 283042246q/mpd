@@ -164,6 +164,69 @@ class ActiveJacobianComputer:
         )
         return sphere_jacobians, sphere_poses
 
+    def _evaluate_parent_subset_from_parent_cache(
+        self,
+        scan_cache,
+        candidate_indices,
+        phase_indices,
+        parent_indices,
+        sphere_indices,
+    ):
+        """Gather selected fine-sphere geometry from one full parent J-FK pass."""
+
+        parent_tensor = torch.as_tensor(
+            parent_indices, dtype=torch.long, device=candidate_indices.device
+        )
+        selected_parent_poses = scan_cache.parent_poses[
+            candidate_indices[:, None], phase_indices
+        ].reshape(-1, scan_cache.parent_poses.shape[-3], 3, 4)
+        selected_parent_jacobians = scan_cache.parent_jacobians[
+            candidate_indices[:, None], phase_indices
+        ].reshape(
+            -1,
+            scan_cache.parent_jacobians.shape[-3],
+            6,
+            scan_cache.parent_jacobians.shape[-1],
+        )
+        selected_parent_poses = selected_parent_poses.index_select(1, parent_tensor)
+        selected_parent_jacobians = selected_parent_jacobians.index_select(
+            1, parent_tensor
+        )
+        parent_lookup = torch.full(
+            (len(self.robot.collision_sphere_unique_parent_links),),
+            -1,
+            dtype=torch.long,
+            device=candidate_indices.device,
+        )
+        parent_lookup[parent_tensor] = torch.arange(
+            parent_tensor.numel(), dtype=torch.long, device=candidate_indices.device
+        )
+        sphere_indices = sphere_indices.to(candidate_indices.device)
+        sphere_parents = self.robot.collision_sphere_parent_indices.to(
+            candidate_indices.device
+        ).index_select(0, sphere_indices)
+        local_parent_indices = parent_lookup.index_select(0, sphere_parents)
+        sphere_parent_poses = selected_parent_poses.index_select(
+            1, local_parent_indices
+        )
+        local_positions = self.robot.collision_sphere_local_positions.to(
+            dtype=sphere_parent_poses.dtype, device=sphere_parent_poses.device
+        ).index_select(0, sphere_indices)
+        sphere_positions = (
+            torch.einsum(
+                "...sij,sj->...si",
+                sphere_parent_poses[..., :3, :3],
+                local_positions,
+            )
+            + sphere_parent_poses[..., :3, 3]
+        )
+        sphere_poses = sphere_parent_poses.clone()
+        sphere_poses[..., :3, 3] = sphere_positions
+        sphere_jacobians = selected_parent_jacobians.index_select(
+            1, local_parent_indices
+        )
+        return sphere_jacobians, sphere_poses
+
     def compute_dense(self, q_dense, candidate_indices=None):
         """Evaluate a regular dense batch without temporal gather/scatter."""
 
@@ -289,6 +352,9 @@ class ActiveJacobianComputer:
         scan_cache = (
             selection.fine_sphere_scan_cache if reuse_scan_cache else None
         )
+        parent_scan_cache = (
+            selection.parent_bound_scan_cache if reuse_scan_cache else None
+        )
 
         buckets = []
         for bucket_size in selection.bucket_options or (horizon,):
@@ -312,19 +378,39 @@ class ActiveJacobianComputer:
                 sphere_indices = torch.nonzero(
                     torch.isin(sphere_parent_indices, parent_tensor), as_tuple=False
                 ).flatten()
-                self_pair_indices = (
-                    torch.nonzero(
-                        torch.isin(pair_1, sphere_indices) & torch.isin(pair_2, sphere_indices),
-                        as_tuple=False,
+                if selection.self_pair_mask is not None:
+                    # Candidates in a bucket share kinematics parents. Their
+                    # conservative pair-mask union avoids rescanning every fine
+                    # pair with torch.isin at each guide call.
+                    pair_mask = selection.self_pair_mask.index_select(
+                        0, candidate_indices
+                    ).any(dim=0)
+                    self_pair_indices = torch.nonzero(
+                        pair_mask, as_tuple=False
                     ).flatten()
-                    if pair_1.numel()
-                    else torch.empty(0, dtype=torch.long, device=q_dense.device)
-                )
+                else:
+                    self_pair_indices = (
+                        torch.nonzero(
+                            torch.isin(pair_1, sphere_indices)
+                            & torch.isin(pair_2, sphere_indices),
+                            as_tuple=False,
+                        ).flatten()
+                        if pair_1.numel()
+                        else torch.empty(0, dtype=torch.long, device=q_dense.device)
+                    )
                 phase_indices = selection.active_index_matrix.index_select(
                     0, candidate_indices
                 )[:, :bucket_size]
                 q_active = q_dense[candidate_indices[:, None], phase_indices]
-                if scan_cache is not None:
+                if parent_scan_cache is not None:
+                    jacobians, poses = self._evaluate_parent_subset_from_parent_cache(
+                        parent_scan_cache,
+                        candidate_indices,
+                        phase_indices,
+                        parent_indices,
+                        sphere_indices,
+                    )
+                elif scan_cache is not None:
                     jacobians, poses = self._evaluate_parent_subset_from_pose_cache(
                         scan_cache,
                         candidate_indices,
