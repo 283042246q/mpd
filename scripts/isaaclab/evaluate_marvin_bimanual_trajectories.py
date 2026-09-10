@@ -14,6 +14,7 @@ from isaaclab.app import AppLauncher
 
 from marvin_bimanual_asset import (
     CANONICAL_JOINT_NAMES,
+    MARVIN_CONTACT_BODY_PATHS,
     classify_contact_forces,
     load_inference_artifact,
     validate_marvin_urdf,
@@ -31,16 +32,38 @@ def parse_args():
     )
     parser.add_argument("--robot-usd", type=Path, default=None)
     parser.add_argument("--force-usd-conversion", action="store_true")
-    parser.add_argument("--action-repeat", type=int, default=4)
+    parser.add_argument(
+        "--action-repeat",
+        type=int,
+        default=0,
+        help="Physics steps per waypoint; 0 follows artifact time_from_start.",
+    )
     parser.add_argument("--contact-force-threshold", type=float, default=1.0)
     parser.add_argument("--physics-dt", type=float, default=0.005)
     parser.add_argument("--fk-position-tolerance", type=float, default=1.0e-4)
     parser.add_argument("--fk-orientation-tolerance", type=float, default=1.0e-3)
     parser.add_argument("--graceful-shutdown", action="store_true")
+    native_self = parser.add_mutually_exclusive_group()
+    native_self.add_argument(
+        "--enable-native-self-collisions",
+        dest="native_self_collisions",
+        action="store_true",
+        help=(
+            "Diagnostic only: enable unfiltered PhysX articulation self collisions; "
+            "the imported Marvin collision meshes contain unsupported adjacent pairs."
+        ),
+    )
+    native_self.add_argument(
+        "--disable-native-self-collisions",
+        dest="native_self_collisions",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(native_self_collisions=False)
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     if (
-        args.action_repeat < 1
+        args.action_repeat < 0
         or args.physics_dt <= 0.0
         or args.contact_force_threshold < 0.0
         or args.fk_position_tolerance <= 0.0
@@ -59,12 +82,14 @@ simulation_app = app_launcher.app
 
 import numpy as np
 import torch
+import warp as wp
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
+from isaaclab.app.settings_manager import get_settings_manager
+from isaaclab_physx.physics import PhysxManager
 
 from marvin_bimanual_asset import (
     build_marvin_articulation_cfg,
@@ -73,6 +98,7 @@ from marvin_bimanual_asset import (
     resolve_tcp_body_ids,
     spawn_scene_obstacles,
     tcp_poses_from_body_state,
+    trajectory_physics_step_schedule,
     validate_marvin_usd,
 )
 
@@ -134,7 +160,13 @@ def _asset_metadata():
 
 def run_evaluation():
     asset = _asset_metadata()
-    robot_cfg = build_marvin_articulation_cfg(asset["usd_path"])
+    # ContactSensor assumes all selected bodies are siblings.  Marvin's URDF
+    # converter preserves a nested link tree, so use exact PhysX views instead.
+    get_settings_manager().set_bool("/physics/disableContactProcessing", False)
+    robot_cfg = build_marvin_articulation_cfg(
+        asset["usd_path"],
+        enabled_self_collisions=args_cli.native_self_collisions,
+    )
 
     @configclass
     class MarvinEvaluationSceneCfg(InteractiveSceneCfg):
@@ -143,12 +175,6 @@ def run_evaluation():
             spawn=sim_utils.DomeLightCfg(intensity=1800.0),
         )
         robot = robot_cfg
-        contacts = ContactSensorCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/.*",
-            update_period=0.0,
-            history_length=1,
-            debug_vis=False,
-        )
 
     top_k = artifact.top_k_positions
     count, horizon, dof = top_k.shape
@@ -158,14 +184,43 @@ def run_evaluation():
         sim_utils.SimulationCfg(dt=args_cli.physics_dt, device=args_cli.device)
     )
     sim.set_camera_view([2.2, -2.2, 1.7], [0.3, 0.0, 0.5])
-    scene = InteractiveScene(MarvinEvaluationSceneCfg(num_envs=count, env_spacing=3.0))
+    scene = InteractiveScene(
+        MarvinEvaluationSceneCfg(num_envs=count, env_spacing=3.0)
+    )
     obstacle_summary = spawn_scene_obstacles(sim_utils, artifact.scene)
+    # ``activate_contact_sensors`` stops walking below its first rigid body.
+    # That only activates Marvin's root base because the imported articulation
+    # keeps rigid links nested.  Apply the reporter to every exact link before
+    # PhysX creates its tensor views.
+    for env_index in range(count):
+        for _, body_path in MARVIN_CONTACT_BODY_PATHS:
+            sim_utils.activate_contact_sensors(
+                f"/World/envs/env_{env_index}/Robot{body_path}"
+            )
     sim.reset()
     robot = scene["robot"]
-    sensor = scene["contacts"]
     joint_ids = resolve_canonical_joint_ids(robot)
     tcp_ids = resolve_tcp_body_ids(robot)
     sim_dt = sim.get_physics_dt()
+    body_path_by_name = dict(MARVIN_CONTACT_BODY_PATHS)
+    missing_contact_paths = [
+        name for name in robot.body_names if name not in body_path_by_name
+    ]
+    if missing_contact_paths:
+        raise RuntimeError(
+            f"Marvin rigid bodies missing contact-view paths: {missing_contact_paths}"
+        )
+    # PhysX may merge fixed bodies into their parent articulation link.  Build
+    # views for the actual articulation bodies rather than assuming all URDF
+    # fixed links remain independently addressable.
+    contact_body_names = list(robot.body_names)
+    physics_view = PhysxManager.get_physics_sim_view()
+    contact_views = [
+        physics_view.create_rigid_contact_view(
+            "/World/envs/env_*/Robot" + body_path_by_name[name]
+        )
+        for name in contact_body_names
+    ]
     trajectories = torch.as_tensor(top_k, dtype=torch.float32, device=sim.device)
 
     initial = robot.data.default_joint_pos.clone()
@@ -173,13 +228,15 @@ def run_evaluation():
     robot.write_joint_state_to_sim(initial, torch.zeros_like(initial))
     robot.set_joint_position_target(initial)
     scene.reset()
-    sensor.reset()
     scene.write_data_to_sim()
     sim.forward()
     scene.update(0.0)
     isaac_tcp_pose_start = _tcp_poses_numpy(robot, tcp_ids, scene.env_origins)
     sim.step(render=not args_cli.headless)
     scene.update(sim_dt)
+    step_schedule = trajectory_physics_step_schedule(
+        artifact.time_from_start, sim_dt, args_cli.action_repeat
+    )
 
     category_history = {
         key: []
@@ -193,6 +250,9 @@ def run_evaluation():
     }
     max_tracking_error = torch.zeros(count, device=sim.device)
     max_contact_force = np.zeros(count, dtype=np.float64)
+    max_contact_force_by_body = np.zeros(
+        (count, len(contact_body_names)), dtype=np.float64
+    )
     actual_joint_violation = np.zeros(count, dtype=bool)
     lower = np.asarray([urdf_gate["joint_limits"][name][0] for name in CANONICAL_JOINT_NAMES])
     upper = np.asarray([urdf_gate["joint_limits"][name][1] for name in CANONICAL_JOINT_NAMES])
@@ -201,7 +261,7 @@ def run_evaluation():
         target[:, joint_ids] = trajectories[:, waypoint]
         robot.set_joint_position_target(target)
         scene.write_data_to_sim()
-        for _ in range(args_cli.action_repeat):
+        for _ in range(int(step_schedule[waypoint])):
             sim.step(render=not args_cli.headless)
             scene.update(sim_dt)
         measured = _torch(robot.data.joint_pos)[:, joint_ids]
@@ -209,12 +269,30 @@ def run_evaluation():
             max_tracking_error,
             torch.amax(torch.abs(measured - trajectories[:, waypoint]), dim=-1),
         )
-        forces = _torch(sensor.data.net_forces_w).detach().cpu().numpy()
+        forces = np.concatenate(
+            [
+                wp.to_torch(
+                    view.get_net_contact_forces(dt=sim_dt).reshape((count, 1, 3))
+                )
+                .detach()
+                .cpu()
+                .numpy()
+                for view in contact_views
+            ],
+            axis=1,
+        )
         measured_cpu = measured.detach().cpu().numpy()
         actual_joint_violation |= ((measured_cpu < lower) | (measured_cpu > upper)).any(axis=1)
-        max_contact_force = np.maximum(max_contact_force, np.linalg.norm(forces, axis=-1).max(axis=-1))
+        force_norms = np.linalg.norm(forces, axis=-1)
+        max_contact_force = np.maximum(max_contact_force, force_norms.max(axis=-1))
+        max_contact_force_by_body = np.maximum(
+            max_contact_force_by_body, force_norms
+        )
         classified = classify_contact_forces(
-            sensor.body_names, forces, args_cli.contact_force_threshold
+            contact_body_names,
+            forces,
+            args_cli.contact_force_threshold,
+            infer_interarm=args_cli.native_self_collisions,
         )
         total = np.linalg.norm(forces, axis=-1).max(axis=-1) > args_cli.contact_force_threshold
         category_history["contact"].append(total)
@@ -270,6 +348,7 @@ def run_evaluation():
     }
     trajectories_output = []
     for index in range(count):
+        max_body_index = int(np.argmax(max_contact_force_by_body[index]))
         trajectories_output.append(
             {
                 "top_k_index": index,
@@ -284,6 +363,10 @@ def run_evaluation():
                 "actual_joint_limit_violation": bool(actual_joint_violation[index]),
                 "max_tracking_error_rad": float(max_tracking_error[index].item()),
                 "max_contact_force_n": float(max_contact_force[index]),
+                "max_contact_body": contact_body_names[max_body_index],
+                "max_contact_body_force_n": float(
+                    max_contact_force_by_body[index, max_body_index]
+                ),
                 "left_tcp_position_error_m": float(tcp_position_error[index, 0]),
                 "right_tcp_position_error_m": float(tcp_position_error[index, 1]),
                 "left_tcp_orientation_error_rad": float(tcp_orientation_error[index, 0]),
@@ -331,8 +414,10 @@ def run_evaluation():
             "tcp_calibrated": asset["tcp_calibrated"],
         },
         "artifact_hashes": artifact.hashes,
-        "contact_classification": "body-side net force with balanced-pair interarm heuristic",
-        "contact_classification_is_safety_authority": False,
+        "contact_classification": "exact per-rigid-body net force; native self collisions disabled by default",
+        "contact_detection_scope": "robot-versus-world",
+        "self_collision_authority": "MPD production validator intraarm/interarm pairs",
+        "contact_classification_is_safety_authority": not args_cli.native_self_collisions,
         "trajectories": trajectories_output,
         "mpd_vs_isaac_collision_confusion": confusion,
         "safety_false_negative": bool(
@@ -347,7 +432,11 @@ def run_evaluation():
         "kinematic_mismatch": bool(fk_available and not fk_within_tolerance),
         "physics_dt": args_cli.physics_dt,
         "action_repeat": args_cli.action_repeat,
+        "timing_mode": "fixed_repeat" if args_cli.action_repeat > 0 else "artifact_timestamps",
+        "physics_step_schedule": step_schedule.tolist(),
         "contact_force_threshold": args_cli.contact_force_threshold,
+        "native_self_collisions_enabled": args_cli.native_self_collisions,
+        "contact_body_names": contact_body_names,
         **obstacle_summary,
     }
 

@@ -691,7 +691,12 @@ def _build_parser():
     )
     parser.add_argument("--isaaclab-conda-env", default="env_isaaclab")
     parser.add_argument("--isaaclab-device", default="cuda:0")
-    parser.add_argument("--isaaclab-action-repeat", type=int, default=4)
+    parser.add_argument(
+        "--isaaclab-action-repeat",
+        type=int,
+        default=0,
+        help="Physics steps per waypoint; 0 follows artifact time_from_start (recommended).",
+    )
     parser.add_argument("--isaaclab-timeout-s", type=int, default=900)
     parser.add_argument("--isaaclab-trajectory-index", type=int, default=0)
     parser.add_argument("--isaaclab-video-fps", type=float, default=24.0)
@@ -737,13 +742,15 @@ def main(argv=None):
     if args.sample_index < -1:
         raise SystemExit("--sample-index must be -1 or non-negative")
     if (
-        args.isaaclab_action_repeat < 1
+        args.isaaclab_action_repeat < 0
         or args.isaaclab_timeout_s < 1
         or args.isaaclab_video_fps <= 0.0
         or args.isaaclab_width < 1
         or args.isaaclab_height < 1
     ):
-        raise SystemExit("Isaac Lab repeat, timeout, fps, width, and height must be positive")
+        raise SystemExit(
+            "Isaac Lab repeat must be non-negative; timeout, fps, width, and height must be positive"
+        )
     if args.isaaclab_trajectory_index < 0:
         raise SystemExit("--isaaclab-trajectory-index must be non-negative")
     if args.output is not None:

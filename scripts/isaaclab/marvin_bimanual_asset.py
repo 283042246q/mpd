@@ -29,6 +29,41 @@ TCP_OFFSETS_XYZ = ((0.0, 0.0, 0.21), (0.0, 0.0, 0.21))
 TCP_OFFSETS_RPY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
 
 
+def _arm_contact_body_paths(side: str) -> tuple[tuple[str, str], ...]:
+    """Return rigid-body paths for one nested URDF-imported Marvin arm."""
+    suffix = side.upper()
+    prefix = f"/Geometry/world/base_link/Base_{suffix}"
+    bodies = [(f"Base_{suffix}", prefix)]
+    for index in range(1, 8):
+        prefix += f"/Link{index}_{suffix}"
+        bodies.append((f"Link{index}_{suffix}", prefix))
+    flange = prefix + f"/flange_{suffix}"
+    arm = "left" if suffix == "L" else "right"
+    adaptor = flange + f"/{arm}_pika_adaptor_link"
+    gripper = adaptor + f"/{arm}_gripper_base_link"
+    bodies.extend(
+        (
+            (f"{arm}_pika_adaptor_link", adaptor),
+            (f"{arm}_gripper_base_link", gripper),
+            (f"{arm}_gripper_left_link", gripper + f"/{arm}_gripper_left_link"),
+            (f"{arm}_gripper_right_link", gripper + f"/{arm}_gripper_right_link"),
+        )
+    )
+    return tuple(bodies)
+
+
+# Isaac Lab's PhysX ContactSensor groups matches by a common direct parent.  The
+# converted Marvin articulation is a nested link tree, so a single
+# ``Robot/.*`` sensor incorrectly collapses it to the root base_link.  Keep one
+# exact PhysX contact view per rigid body and aggregate their forces.
+MARVIN_CONTACT_BODY_PATHS = (
+    ("base_link", "/Geometry/world/base_link"),
+    ("column_link", "/Geometry/world/base_link/column_link"),
+    *_arm_contact_body_paths("L"),
+    *_arm_contact_body_paths("R"),
+)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -507,7 +542,9 @@ def validate_marvin_usd(path: Path) -> dict:
     }
 
 
-def build_marvin_articulation_cfg(usd_path: Path):
+def build_marvin_articulation_cfg(
+    usd_path: Path, *, enabled_self_collisions: bool = False
+):
     from isaaclab.actuators import ImplicitActuatorCfg
     from isaaclab.assets import ArticulationCfg
     import isaaclab.sim as sim_utils
@@ -519,7 +556,7 @@ def build_marvin_articulation_cfg(usd_path: Path):
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
+                enabled_self_collisions=bool(enabled_self_collisions),
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
             ),
@@ -533,6 +570,35 @@ def build_marvin_articulation_cfg(usd_path: Path):
             )
         },
     )
+
+
+def trajectory_physics_step_schedule(
+    time_from_start, physics_dt: float, action_repeat: int = 0
+) -> np.ndarray:
+    """Map artifact timestamps to physics steps; a positive repeat is a legacy override."""
+    times = np.asarray(time_from_start, dtype=np.float64)
+    if times.ndim != 1 or times.size < 2:
+        raise ValueError("time_from_start must be a 1-D array with at least two entries")
+    if not np.isfinite(times).all() or times[0] != 0.0 or np.any(np.diff(times) <= 0.0):
+        raise ValueError("time_from_start must start at zero and increase strictly")
+    if not np.isfinite(physics_dt) or physics_dt <= 0.0:
+        raise ValueError("physics_dt must be positive and finite")
+    if action_repeat < 0:
+        raise ValueError("action_repeat must be zero (timestamp mode) or positive")
+    if action_repeat > 0:
+        return np.full(times.shape, int(action_repeat), dtype=np.int64)
+
+    cumulative_steps = np.rint(times / float(physics_dt)).astype(np.int64)
+    schedule = np.empty(times.shape, dtype=np.int64)
+    # The caller performs one initialization step before waypoint zero.
+    schedule[0] = 0
+    schedule[1:] = np.diff(cumulative_steps)
+    if np.any(schedule[1:] < 1):
+        raise ValueError(
+            "trajectory waypoint spacing is smaller than the physics timestep; "
+            "use a smaller --physics-dt"
+        )
+    return schedule
 
 
 def resolve_canonical_joint_ids(robot) -> list[int]:
@@ -575,8 +641,10 @@ def tcp_poses_from_body_state(body_positions, body_quaternions_xyzw):
     return tcp_positions, rotations
 
 
-def classify_contact_forces(body_names, net_forces, threshold: float) -> dict:
-    """Classify arm contacts; balanced simultaneous arm forces indicate inter-arm contact."""
+def classify_contact_forces(
+    body_names, net_forces, threshold: float, *, infer_interarm: bool = True
+) -> dict:
+    """Classify contacts, optionally inferring inter-arm contact from balanced forces."""
     forces = np.asarray(net_forces, dtype=np.float64)
     if forces.ndim != 3 or forces.shape[1] != len(body_names) or forces.shape[2] != 3:
         raise ValueError("net_forces must have shape [N,B,3]")
@@ -600,7 +668,11 @@ def classify_contact_forces(body_names, net_forces, threshold: float) -> dict:
         np.linalg.norm(left_sum, axis=-1) + np.linalg.norm(right_sum, axis=-1),
         1e-12,
     )
-    interarm = active["left"] & active["right"] & (balance < 0.25)
+    interarm = (
+        active["left"] & active["right"] & (balance < 0.25)
+        if infer_interarm
+        else np.zeros(forces.shape[0], dtype=bool)
+    )
     return {
         "left_contact": active["left"],
         "right_contact": active["right"],
@@ -609,7 +681,11 @@ def classify_contact_forces(body_names, net_forces, threshold: float) -> dict:
         "left_world_contact": active["left"] & ~interarm,
         "right_world_contact": active["right"] & ~interarm,
         "interarm_balance_ratio": balance,
-        "classification_method": "body-side net force with balanced-pair interarm test",
+        "classification_method": (
+            "body-side net force with balanced-pair interarm test"
+            if infer_interarm
+            else "body-side external contact (interarm inference disabled)"
+        ),
     }
 
 

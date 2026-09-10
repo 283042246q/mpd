@@ -10,6 +10,7 @@ from scripts.inference import inference_marvin_bimanual as inference
 from scripts.isaaclab import marvin_bimanual_subprocess as subprocess_bridge
 from scripts.isaaclab.marvin_bimanual_asset import (
     CANONICAL_JOINT_NAMES,
+    MARVIN_CONTACT_BODY_PATHS,
     TCP_BODY_NAMES,
     TCP_FRAME_NAMES,
     classify_contact_forces,
@@ -19,6 +20,7 @@ from scripts.isaaclab.marvin_bimanual_asset import (
     sha256_file,
     sha256_tree,
     tcp_poses_from_body_state,
+    trajectory_physics_step_schedule,
     validate_marvin_urdf,
     validate_marvin_usd,
     validate_scene_payload,
@@ -143,6 +145,37 @@ def test_contact_categories_do_not_hide_total_contact():
     assert categories["interarm_contact"].tolist() == [True, False, False]
     assert categories["left_world_contact"].tolist() == [False, True, True]
     assert categories["right_world_contact"].tolist() == [False, True, False]
+    external = classify_contact_forces(
+        names, forces, threshold=1.0, infer_interarm=False
+    )
+    assert external["interarm_contact"].tolist() == [False, False, False]
+    assert external["left_world_contact"].tolist() == [True, True, True]
+    assert external["right_world_contact"].tolist() == [True, True, False]
+
+
+def test_nested_marvin_contact_sensor_paths_cover_unique_rigid_bodies():
+    names = [name for name, _ in MARVIN_CONTACT_BODY_PATHS]
+    paths = [path for _, path in MARVIN_CONTACT_BODY_PATHS]
+    assert len(names) == len(paths) == 26
+    assert len(set(names)) == len(names)
+    assert len(set(paths)) == len(paths)
+    assert names[:2] == ["base_link", "column_link"]
+    assert "Link7_L" in names and "Link7_R" in names
+    assert "left_gripper_base_link" in names
+    assert "right_gripper_base_link" in names
+
+
+def test_timestamp_schedule_preserves_trajectory_duration_and_legacy_override():
+    times = np.linspace(0.0, 10.0, 128)
+    schedule = trajectory_physics_step_schedule(times, physics_dt=0.005)
+    assert schedule[0] == 0
+    assert schedule[1:].min() == 15
+    assert schedule[1:].max() == 16
+    assert schedule.sum() == 2000
+    np.testing.assert_array_equal(
+        trajectory_physics_step_schedule(times, 0.005, action_repeat=4),
+        np.full(128, 4),
+    )
 
 
 def test_warehouse_scene_gate_rejects_frame_and_primitive_drift():

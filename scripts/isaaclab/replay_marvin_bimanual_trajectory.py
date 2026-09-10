@@ -30,7 +30,12 @@ def parse_args():
     )
     parser.add_argument("--robot-usd", type=Path, default=None)
     parser.add_argument("--force-usd-conversion", action="store_true")
-    parser.add_argument("--action-repeat", type=int, default=4)
+    parser.add_argument(
+        "--action-repeat",
+        type=int,
+        default=0,
+        help="Physics steps per waypoint; 0 follows artifact time_from_start.",
+    )
     parser.add_argument("--video-fps", type=float, default=24.0)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
@@ -39,8 +44,10 @@ def parse_args():
     parser.add_argument("--graceful-shutdown", action="store_true")
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
-    if args.action_repeat < 1 or args.video_fps <= 0.0 or args.width < 1 or args.height < 1:
-        parser.error("action repeat, video fps, width, and height must be positive")
+    if args.action_repeat < 0 or args.video_fps <= 0.0 or args.width < 1 or args.height < 1:
+        parser.error(
+            "action repeat must be non-negative; video fps, width, and height must be positive"
+        )
     args.enable_cameras = args.output_video is not None or args.screenshot is not None
     return args
 
@@ -72,6 +79,7 @@ from marvin_bimanual_asset import (
     sha256_file,
     spawn_scene_obstacles,
     tcp_poses_from_body_state,
+    trajectory_physics_step_schedule,
     validate_marvin_usd,
 )
 
@@ -209,7 +217,9 @@ def run_replay():
         else -1
     )
     asset = _asset_metadata()
-    robot_cfg = build_marvin_articulation_cfg(asset["usd_path"])
+    robot_cfg = build_marvin_articulation_cfg(
+        asset["usd_path"], enabled_self_collisions=False
+    )
 
     @configclass
     class MarvinReplaySceneCfg(InteractiveSceneCfg):
@@ -245,6 +255,9 @@ def run_replay():
     tcp_ids = resolve_tcp_body_ids(robot)
     trajectory = torch.as_tensor(trajectory_cpu, dtype=torch.float32, device=sim.device)
     sim_dt = sim.get_physics_dt()
+    step_schedule = trajectory_physics_step_schedule(
+        artifact.time_from_start, sim_dt, args_cli.action_repeat
+    )
 
     if camera is not None:
         camera.set_world_poses_from_view(
@@ -289,7 +302,7 @@ def run_replay():
         target[:, joint_ids] = waypoint[None]
         robot.set_joint_position_target(target)
         scene.write_data_to_sim()
-        for _ in range(args_cli.action_repeat):
+        for _ in range(int(step_schedule[waypoint_index])):
             sim.step(render=args_cli.enable_cameras)
             scene.update(sim_dt)
         if waypoint_index == collision_waypoint:
@@ -324,6 +337,11 @@ def run_replay():
         "trajectory_index": index,
         "candidate_index": int(artifact.top_k_candidate_indices[index]),
         "horizon": int(trajectory.shape[0]),
+        "native_self_collisions_enabled": False,
+        "timing_mode": "fixed_repeat" if args_cli.action_repeat > 0 else "artifact_timestamps",
+        "physics_dt": sim_dt,
+        "action_repeat": args_cli.action_repeat,
+        "physics_step_schedule": step_schedule.tolist(),
         "capture_enabled": bool(args_cli.enable_cameras),
         "joint_names": list(urdf_gate["joint_names"]),
         "isaac_native_joint_names": list(robot.joint_names),

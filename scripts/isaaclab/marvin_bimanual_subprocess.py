@@ -139,7 +139,7 @@ def run_marvin_isaaclab_evaluator(
     conda_env: str = "env_isaaclab",
     device: str = "cuda:0",
     headless: bool = True,
-    action_repeat: int = 4,
+    action_repeat: int = 0,
     timeout_s: int = 900,
     asset_cache: Path | None = None,
 ) -> dict:
@@ -177,7 +177,7 @@ def run_marvin_isaaclab_replay(
     conda_env: str = "env_isaaclab",
     device: str = "cuda:0",
     headless: bool = True,
-    action_repeat: int = 4,
+    action_repeat: int = 0,
     timeout_s: int = 900,
     video_fps: float = 24.0,
     width: int = 960,
