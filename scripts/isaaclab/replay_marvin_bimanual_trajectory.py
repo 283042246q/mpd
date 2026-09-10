@@ -39,8 +39,20 @@ def parse_args():
     parser.add_argument("--video-fps", type=float, default=24.0)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
-    parser.add_argument("--camera-eye", nargs=3, type=float, default=(2.2, -2.2, 1.7))
-    parser.add_argument("--camera-target", nargs=3, type=float, default=(0.3, 0.0, 0.5))
+    parser.add_argument(
+        "--camera-eye",
+        nargs=3,
+        type=float,
+        default=(2.2, 0.0, 1.35),
+        help="Camera position; default is centered in the aisle between the shelves.",
+    )
+    parser.add_argument(
+        "--camera-target",
+        nargs=3,
+        type=float,
+        default=(0.25, 0.0, 0.4),
+        help="Camera look-at target in the bimanual workspace.",
+    )
     parser.add_argument("--graceful-shutdown", action="store_true")
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -342,6 +354,8 @@ def run_replay():
         "physics_dt": sim_dt,
         "action_repeat": args_cli.action_repeat,
         "physics_step_schedule": step_schedule.tolist(),
+        "camera_eye": list(args_cli.camera_eye),
+        "camera_target": list(args_cli.camera_target),
         "capture_enabled": bool(args_cli.enable_cameras),
         "joint_names": list(urdf_gate["joint_names"]),
         "isaac_native_joint_names": list(robot.joint_names),
