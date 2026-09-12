@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -95,6 +96,67 @@ def test_regions_template_and_runtime_config_paths_are_valid():
     assert start_goal_sources.resolve_source_path(CONFIG, runtime["start_goal_regions_path"]) == REGIONS
     region_config = yaml.safe_load(REGIONS.read_text())
     assert validate_config(region_config)["task_mode"] == "dual_independent"
+
+
+def test_regions_sampling_uses_system_entropy_and_ignores_seed_and_index(
+    tmp_path, monkeypatch
+):
+    import scripts.generate_data.generate_marvin_warehouse_bimanual as generation
+
+    constructor_seeds = []
+
+    class FakeGenerator:
+        def __init__(self, config, seed, progress_label=None):
+            constructor_seeds.append(seed)
+            self.rng = np.random.default_rng(123)
+            self.deadline = float("inf")
+
+        def _random_valid_state(self):
+            return np.zeros(14)
+
+        def _target_state(self, q_start, arm, region_name):
+            return np.asarray(q_start)
+
+        def valid(self, q):
+            return True
+
+        def _sample_endpoint(self, q_start, mode, regions):
+            return np.ones(14)
+
+        def _pose(self, q, arm):
+            return SimpleNamespace(
+                rotation=np.eye(3),
+                translation=np.asarray([0.4, 0.3 if arm == "left" else -0.3, 0.2]),
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(generation, "MarvinWarehouseGenerator", FakeGenerator)
+    region_file = tmp_path / "regions.yaml"
+    region_file.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "marvin_bimanual_regions/v1",
+                "inference_selection": {
+                    "start": {"left": "random", "right": "random"},
+                    "goal": {"left": "left_table", "right": "right_table"},
+                },
+            }
+        )
+    )
+
+    first = start_goal_sources.request_from_regions(
+        region_file, request_id="regions-a", seed=7, sample_index=3
+    )
+    second = start_goal_sources.request_from_regions(
+        region_file, request_id="regions-b", seed=99, sample_index=88
+    )
+
+    assert constructor_seeds == [None, None]
+    assert first["seed"] == 7 and second["seed"] == 99
+    assert first["scene"]["start_goal_source"]["sampling"] == "system_entropy"
+    assert second["scene"]["start_goal_source"]["sampling"] == "system_entropy"
 
 
 def test_phase3_one_shot_still_requires_explicit_request():

@@ -410,7 +410,6 @@ conda run --no-capture-output -n mpd-splines-public \
   --config scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml \
   --start-goal-source regions \
   --start-goal-file scripts/inference/cfgs/start_goal_regions/EnvWarehouse-RobotMarvinBimanual-regions.yaml \
-  --seed 12345 --sample-index 0 \
   --output-dir /tmp/marvin-phase1-regions --device cuda:0
 ```
 
@@ -428,7 +427,9 @@ conda run --no-capture-output -n mpd-splines-public \
 ```
 
 `--sample-index -1` 表示让 `dataset/states_file` 按 `--seed` 做确定性选择；
-`regions` 用 `seed + sample-index` 形成可复现的采样流。旧的
+`regions` 每次调用都使用系统熵重新采样起终点，与 `--seed`、
+`--sample-index` 无关。`--seed` 仍保留在生成的 request 中，控制后续 MPD
+扩散采样。旧的
 `--request /path/request.json` 调用仍受支持。Phase 3 的
 `scripts/runtime/infer_once_marvin_bimanual.py` 以及 Phase 4/5 的 socket/ROS
 请求契约保持不变，仍要求调用方显式提供 request。

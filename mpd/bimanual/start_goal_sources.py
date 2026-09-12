@@ -173,8 +173,10 @@ def request_from_regions(
         raise ValueError("inference_selection.start must define left and right selections")
     if not isinstance(goal_selection, dict):
         raise ValueError("inference_selection.goal must define left and right regions")
-    effective_seed = int(seed) + max(0, int(sample_index))
-    generator = MarvinWarehouseGenerator(config, effective_seed, progress_label="inference-regions")
+    # Region endpoints are intentionally fresh samples on every invocation.
+    # ``seed`` remains part of the runtime request for MPD's diffusion sampler,
+    # while ``sample_index`` only addresses dataset/states-file entries.
+    generator = MarvinWarehouseGenerator(config, None, progress_label="inference-regions")
     generator.deadline = time.perf_counter() + float(config.get("sampling_timeout_seconds", 60.0))
     try:
         attempts = int(config.get("max_sampling_attempts", 100))
@@ -218,6 +220,7 @@ def request_from_regions(
                 source={
                     "type": "regions",
                     "path": str(Path(path).resolve()),
+                    "sampling": "system_entropy",
                     "attempt": attempt + 1,
                     "start": start_regions,
                     "goal": goal_regions,

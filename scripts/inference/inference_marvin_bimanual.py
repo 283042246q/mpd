@@ -663,7 +663,10 @@ def _build_parser():
         "--sample-index",
         type=int,
         default=0,
-        help="eligible dataset/state index; -1 selects deterministically from --seed",
+        help=(
+            "eligible dataset/state index; -1 selects deterministically from --seed; "
+            "ignored for regions"
+        ),
     )
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument(

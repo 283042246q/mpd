@@ -16,8 +16,21 @@ planner_range: 0.35
 state_validity_resolution: 0.002
 interpolate_num: 128
 min_distance_robot_env: 0.02
-random_to_placement_fraction: 0.5
-max_attempts_per_trajectory: 30
+# Direction mix is counted exactly over every 100 accepted trajectories.  The
+# weights use 0.05 increments because every direction owns a five-task 3:1:1
+# block (dual_independent:left_only:right_only).
+trajectory_direction_weights:
+  placement_to_placement: 0.45
+  random_to_placement: 0.35
+  placement_to_random: 0.10
+  random_to_random: 0.10
+# Regions below are already small atomic cells.  Same-cell motions are useful
+# and remain non-trivial through min_active_joint_delta.
+placement_goal_must_differ_from_source_region: false
+# Hard per-task budget.  A task keeps the same mode/direction/source/goal
+# regions across retries; exhausting this budget terminates its shard instead
+# of changing the categorical task or consuming another task's allowance.
+max_attempts_per_task: 30
 task_timeout_seconds: 300
 state_sample_tries: 2000
 ik_tries: 30
@@ -53,35 +66,125 @@ bspline_degree: 5
 workers: 3
 tasks_per_shard: 500
 # OMPL/PbOMPL native objects have shown heap corruption in long-lived workers.
-# Exit after one balanced 10-trajectory block; the launcher retries only the
+# Exit after two mode-balanced five-task blocks; the launcher retries only the
 # lost block if a worker aborts, while already completed blocks remain resumable.
 worker_lifetime_trajectories: 10
 max_worker_restarts_per_shard: 3
 # Retain existing mesh exception; the sphere model STILL checks this pair.
 disabled_self_collision_pairs:
   - [Link5_R, Link7_R]
-# Broad random TCP workspace, with unrestricted orientation. Sample joint
-# angles then FK-filter in this volume; never substitute the home pose.
+# Random endpoints deliberately cover a large, clearly reachable free-space
+# volume above and around the table.  Left/right supports are separated at the
+# centerline and stop before the shelf frontage (|y| >= 0.62).  Joint sampling
+# retains unrestricted TCP orientation and still requires full collision
+# validity; home is never returned as a fallback.
 random_regions:
-  left: {x: [[0.15, 0.85]], y: [[0.25, 0.95]], z: [[0.05, 0.55]]}
-  right: {x: [[0.15, 0.85]], y: [[-0.95, -0.25]], z: [[0.05, 0.55]]}
+  left: {x: [[0.20, 0.85]], y: [[0.02, 0.60]], z: [[-0.05, 0.60]]}
+  right: {x: [[0.20, 0.85]], y: [[-0.60, -0.02]], z: [[-0.05, 0.60]]}
+
+# Placement proposals are proportional to each atomic cell's Cartesian volume,
+# multiplied by a small [1.0, 1.5] difficulty boost.  This keeps broad regions
+# dominant without starving narrow shelf/cross-boundary cells.
+placement_region_weighting: volume
+arm_placement_regions:
+  left:
+    - left_table
+    - left_table_cross_y
+    - left_table_cross_x
+    - left_cabinet
+    - left_cabinet_lower_xedge
+    - left_cabinet_lower_yedge
+    - left_cabinet_upper
+  right:
+    - right_table
+    - right_table_cross_y
+    - right_table_cross_x
+    - right_cabinet
+    - right_cabinet_lower_xedge
+    - right_cabinet_lower_yedge
+    - right_cabinet_upper
+placement_region_difficulty_boosts:
+  left:
+    left_table_cross_y: 1.10
+    left_table_cross_x: 1.25
+    left_cabinet: 1.15
+    left_cabinet_lower_xedge: 1.20
+    left_cabinet_lower_yedge: 1.20
+    left_cabinet_upper: 1.30
+  right:
+    right_table_cross_y: 1.20
+    right_table_cross_x: 1.25
+    right_cabinet: 1.15
+    right_cabinet_lower_xedge: 1.20
+    right_cabinet_lower_yedge: 1.20
+    right_cabinet_upper: 1.30
+
 placement_regions:
   left_table:
-    translation: {x: [[0.54, 0.66]], y: [[0.35, 0.45]], z: [[0.18, 0.28]]}
+    translation: {x: [[0.50, 0.79]], y: [[0.03, 0.48]], z: [[-0.015, 0.09]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_table_cross_y:
+    translation: {x: [[0.46, 0.72]], y: [[-0.27, -0.145]], z: [[-0.01, 0.09]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_table_cross_x:
+    translation: {x: [[0.745, 0.83]], y: [[-0.17, -0.005]], z: [[-0.005, 0.09]]}
     rotation:
       base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
       x: [[-15, 15]]
       y: [[-15, 15]]
       z: [[-15, 15]]
   right_table:
-    translation: {x: [[0.54, 0.66]], y: [[-0.45, -0.35]], z: [[0.18, 0.28]]}
+    translation: {x: [[0.42, 0.79]], y: [[-0.49, -0.04]], z: [[-0.015, 0.09]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  right_table_cross_y:
+    translation: {x: [[0.55, 0.79]], y: [[0.15, 0.195]], z: [[0.03, 0.09]]}
+    rotation:
+      base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  right_table_cross_x:
+    translation: {x: [[0.75, 0.83]], y: [[0.007, 0.17]], z: [[-0.005, 0.09]]}
     rotation:
       base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
       x: [[-15, 15]]
       y: [[-15, 15]]
       z: [[-15, 15]]
   left_cabinet:
-    translation: {x: [[0.36, 0.48]], y: [[0.66, 0.72]], z: [[0.14, 0.24]]}
+    translation: {x: [[0.36, 0.48]], y: [[0.66, 0.72]], z: [[0.17, 0.24]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_cabinet_lower_xedge:
+    translation: {x: [[0.505, 0.60]], y: [[0.645, 0.76]], z: [[0.17, 0.29]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_cabinet_lower_yedge:
+    translation: {x: [[0.31, 0.49]], y: [[0.765, 0.85]], z: [[0.185, 0.29]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
+      x: [[-15, 15]]
+      y: [[-15, 15]]
+      z: [[-15, 15]]
+  left_cabinet_upper:
+    translation: {x: [[0.365, 0.425]], y: [[0.625, 0.675]], z: [[0.48, 0.55]]}
     rotation:
       base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
       x: [[-15, 15]]
@@ -90,6 +193,27 @@ placement_regions:
   right_cabinet:
     # Right wrist/self-collision geometry is not a mirror of the left arm.
     translation: {x: [[0.34, 0.40]], y: [[-0.73, -0.68]], z: [[0.18, 0.24]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+      x: [[-15, 15]]
+      y: [[0, 15]]
+      z: [[-15, 15]]
+  right_cabinet_lower_xedge:
+    translation: {x: [[0.47, 0.54]], y: [[-0.77, -0.66]], z: [[0.17, 0.29]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+      x: [[-15, 15]]
+      y: [[0, 15]]
+      z: [[-15, 15]]
+  right_cabinet_lower_yedge:
+    translation: {x: [[0.34, 0.47]], y: [[-0.86, -0.775]], z: [[0.185, 0.285]]}
+    rotation:
+      base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
+      x: [[-15, 15]]
+      y: [[0, 15]]
+      z: [[-15, 15]]
+  right_cabinet_upper:
+    translation: {x: [[0.365, 0.445]], y: [[-0.75, -0.645]], z: [[0.495, 0.545]]}
     rotation:
       base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
       x: [[-15, 15]]

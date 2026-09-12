@@ -37,6 +37,12 @@ JOINT_NAMES = tuple([f"Joint{i}_L" for i in range(1, 8)] + [f"Joint{i}_R" for i 
 ARM_SLICES = {"left": slice(0, 7), "right": slice(7, 14)}
 MODE_SCHEDULE = ("dual_independent",) * 3 + ("left_only", "right_only")
 ARM_REGIONS = {"left": ("left_table", "left_cabinet"), "right": ("right_table", "right_cabinet")}
+DIRECTIONS = (
+    "placement_to_placement",
+    "random_to_placement",
+    "placement_to_random",
+    "random_to_random",
+)
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[2] / "data_generation_cfgs/EnvWarehouse-RobotMarvinBimanual-independent.yaml"
 )
@@ -45,19 +51,170 @@ EE_GOAL_SCHEMA = "marvin_dual_pika_tcp/v1"
 EE_GOAL_LINKS = ("left_pika_gripper_tcp", "right_pika_gripper_tcp")
 
 
+class TaskSamplingBudgetExhausted(RuntimeError):
+    """A fixed task/region contract could not be solved within its hard budget."""
+
+
+def _axis_intervals(value, *, field):
+    """Return one or more finite ``[low, high]`` intervals for one axis."""
+    bounds = np.asarray(value, dtype=float)
+    if (
+        bounds.ndim != 2
+        or bounds.shape[0] < 1
+        or bounds.shape[1] != 2
+        or not np.isfinite(bounds).all()
+        or np.any(bounds[:, 0] > bounds[:, 1])
+    ):
+        raise ValueError(f"{field} must be a non-empty list of [low, high] intervals")
+    return bounds
+
+
+def _value_in_intervals(value, intervals, *, tolerance=0.0):
+    bounds = np.asarray(intervals, dtype=float)
+    return bool(
+        np.any(
+            (bounds[:, 0] - tolerance <= value)
+            & (value <= bounds[:, 1] + tolerance)
+        )
+    )
+
+
+def _sample_from_intervals(rng, intervals):
+    """Choose an interval uniformly, then sample uniformly inside it."""
+    bounds = np.asarray(intervals, dtype=float)
+    selected = bounds[int(rng.integers(bounds.shape[0]))]
+    return float(rng.uniform(selected[0], selected[1]))
+
+
+def _workspace_boxes(value, *, field):
+    """Normalize one legacy XYZ box or an explicit union of atomic boxes."""
+    boxes = [value] if isinstance(value, dict) else value
+    if not isinstance(boxes, (list, tuple)) or not boxes:
+        raise ValueError(f"{field} must be an XYZ mapping or non-empty list of XYZ mappings")
+    for index, box in enumerate(boxes):
+        if not isinstance(box, dict):
+            raise ValueError(f"{field}[{index}] must be an XYZ mapping")
+        for axis in "xyz":
+            _axis_intervals(box.get(axis, []), field=f"{field}[{index}].{axis}")
+    return tuple(boxes)
+
+
+def _position_in_workspace(position, region):
+    boxes = (region,) if isinstance(region, dict) else region
+    return any(
+        all(_value_in_intervals(position[i], box[axis]) for i, axis in enumerate("xyz"))
+        for box in boxes
+    )
+
+
 def _load_regions(config):
     regions = config.get("placement_regions", {})
-    for name in sum(ARM_REGIONS.values(), ()):
+    required = {
+        name
+        for arm in ARM_SLICES
+        for name in config.get("arm_placement_regions", {}).get(arm, ARM_REGIONS[arm])
+    }
+    for name in required:
         region = regions.get(name, {})
         for component in ("translation", "rotation"):
             for axis in "xyz":
-                bounds = np.asarray(region.get(component, {}).get(axis, []), dtype=float)
-                if bounds.shape != (1, 2) or not np.isfinite(bounds).all() or bounds[0, 0] > bounds[0, 1]:
-                    raise ValueError(f"{name}.{component}.{axis} must be [[low, high]]")
+                _axis_intervals(
+                    region.get(component, {}).get(axis, []),
+                    field=f"{name}.{component}.{axis}",
+                )
         base = np.asarray(region["rotation"].get("base"), dtype=float)
         if base.shape != (3, 3) or not np.allclose(base.T @ base, np.eye(3)) or not np.isclose(np.linalg.det(base), 1):
             raise ValueError(f"{name}.rotation.base must be a rotation matrix")
+    for arm in ARM_SLICES:
+        region = config.get("random_regions", {}).get(arm)
+        if region is None:
+            continue
+        _workspace_boxes(region, field=f"random_regions.{arm}")
     return regions
+
+
+def _placement_distributions(config):
+    configured = config.get("arm_placement_regions")
+    weighting = config.get("placement_region_weighting", "explicit_or_uniform")
+    if weighting not in {"explicit_or_uniform", "volume"}:
+        raise ValueError("placement_region_weighting must be explicit_or_uniform or volume")
+    configured_boosts = config.get("placement_region_difficulty_boosts", {})
+    result = {}
+    for arm in ARM_SLICES:
+        values = (configured or {}).get(arm, ARM_REGIONS[arm])
+        if isinstance(values, dict):
+            names = list(values)
+        else:
+            names = list(values)
+        if not names or len(set(names)) != len(names):
+            raise ValueError(f"arm_placement_regions.{arm} must contain unique region names")
+        missing = set(names) - set(config.get("placement_regions", {}))
+        if missing:
+            raise ValueError(f"arm_placement_regions.{arm} contains missing regions: {sorted(missing)}")
+        if isinstance(values, dict):
+            weights = np.asarray(list(values.values()), dtype=float)
+        else:
+            if weighting == "volume":
+                weights = np.asarray(
+                    [
+                        np.prod(
+                            [
+                                np.diff(
+                                    _axis_intervals(
+                                        config["placement_regions"][name]["translation"][axis],
+                                        field=f"{name}.translation.{axis}",
+                                    ),
+                                    axis=1,
+                                ).sum()
+                                for axis in "xyz"
+                            ]
+                        )
+                        for name in names
+                    ],
+                    dtype=float,
+                )
+            else:
+                weights = np.ones(len(values), dtype=float)
+        boosts = configured_boosts.get(arm, {})
+        unknown_boosts = set(boosts) - set(names)
+        if unknown_boosts:
+            raise ValueError(
+                f"placement_region_difficulty_boosts.{arm} contains unused regions: {sorted(unknown_boosts)}"
+            )
+        factors = np.asarray([float(boosts.get(name, 1.0)) for name in names])
+        if not np.isfinite(factors).all() or np.any(factors < 1.0) or np.any(factors > 1.5):
+            raise ValueError(
+                f"placement_region_difficulty_boosts.{arm} values must lie in [1.0, 1.5]"
+            )
+        weights *= factors
+        if weights.shape != (len(names),) or not np.isfinite(weights).all() or np.any(weights <= 0):
+            raise ValueError(f"arm_placement_regions.{arm} weights must be finite and positive")
+        result[arm] = (tuple(names), weights / weights.sum())
+    return result
+
+
+def _direction_schedule(direction_weights=None):
+    if direction_weights is None:
+        direction_weights = {"random_to_placement": 0.5, "placement_to_placement": 0.5}
+    if set(direction_weights) - set(DIRECTIONS):
+        raise ValueError(f"trajectory_direction_weights supports only {DIRECTIONS}")
+    weights = np.asarray([float(direction_weights.get(name, 0.0)) for name in DIRECTIONS])
+    if not np.isfinite(weights).all() or np.any(weights < 0) or not np.isclose(weights.sum(), 1.0):
+        raise ValueError("trajectory_direction_weights must be nonnegative and sum to 1")
+    blocks = np.rint(weights * 20).astype(int)
+    if not np.allclose(blocks / 20.0, weights):
+        raise ValueError("trajectory_direction_weights must use 0.05 increments")
+    # Smooth weighted round-robin avoids long runs of one direction while each
+    # five-task block retains the 3:1:1 mode quota.
+    remaining = blocks.copy()
+    schedule = []
+    for step in range(20):
+        deficits = weights * (step + 1) - np.asarray([schedule.count(name) for name in DIRECTIONS])
+        deficits[remaining == 0] = -np.inf
+        index = int(np.argmax(deficits))
+        schedule.append(DIRECTIONS[index])
+        remaining[index] -= 1
+    return tuple(schedule)
 
 
 def validate_config(config):
@@ -67,8 +224,19 @@ def validate_config(config):
         raise ValueError("only independent motion is implemented here")
     if config.get("sampler", "region_ik") not in {"region_ik", "joint_fk"}:
         raise ValueError("sampler must be region_ik or joint_fk")
-    if config.get("random_to_placement_fraction", 0.5) != 0.5:
-        raise ValueError("this dataset requires the 50:50 direction schedule")
+    max_attempts = config.get(
+        "max_attempts_per_task",
+        config.get("max_attempts_per_trajectory", 30),
+    )
+    if int(max_attempts) != max_attempts or int(max_attempts) < 1:
+        raise ValueError("max_attempts_per_task must be a positive integer")
+    direction_weights = config.get("trajectory_direction_weights")
+    if direction_weights is None and config.get("random_to_placement_fraction", 0.5) != 0.5:
+        raise ValueError(
+            "random_to_placement_fraction only supports the legacy 0.5 mix; "
+            "use trajectory_direction_weights for four-way sampling"
+        )
+    _direction_schedule(direction_weights)
     if config.get("planner", "RRTConnect") != "RRTConnect":
         raise ValueError("this entrypoint uses RRTConnect")
     if not 0 < float(config.get("state_validity_resolution", 0.002)) <= 1:
@@ -94,12 +262,14 @@ def validate_config(config):
     if not 0 <= config.get("ik_reference_seed_fraction", 0.5) <= 1:
         raise ValueError("ik_reference_seed_fraction must lie in [0, 1]")
     _load_regions(config)
+    _placement_distributions(config)
     return config
 
 
-def task_spec(task_id):
-    # Ten-task blocks balance directions AND modes, also across shard boundaries.
-    return MODE_SCHEDULE[task_id % 5], ("random_to_placement" if task_id % 10 < 5 else "placement_to_placement")
+def task_spec(task_id, direction_weights=None):
+    # A 100-task period preserves the exact configurable direction quota; every
+    # direction count is a five-task block with the 3:1:1 mode schedule.
+    return MODE_SCHEDULE[task_id % 5], _direction_schedule(direction_weights)[(task_id // 5) % 20]
 
 
 def active_arms(mode):
@@ -125,6 +295,7 @@ class MarvinWarehouseGenerator:
         self.progress_label = progress_label
         self.stats = Counter()
         self.regions = _load_regions(config)
+        self.placement_distributions = _placement_distributions(config)
         self.worker = GenerateDataOMPL(
             env_id=config["env_id"],
             robot_id=config["robot_id"],
@@ -425,9 +596,7 @@ class MarvinWarehouseGenerator:
                     self.robot.joint_bounds_low_np[sl], self.robot.joint_bounds_high_np[sl]
                 )
                 position = self._pose(candidate, arm).translation
-                if region is not None and not all(
-                    region[a][0][0] <= position[i] <= region[a][0][1] for i, a in enumerate("xyz")
-                ):
+                if region is not None and not _position_in_workspace(position, region):
                     continue
                 if self.valid(candidate):
                     q = candidate
@@ -446,7 +615,7 @@ class MarvinWarehouseGenerator:
         pose = self._pose(q, arm)
         region = self.regions[name]
         if not all(
-            region["translation"][a][0][0] <= pose.translation[i] <= region["translation"][a][0][1]
+            _value_in_intervals(pose.translation[i], region["translation"][a])
             for i, a in enumerate("xyz")
         ):
             return False
@@ -454,14 +623,18 @@ class MarvinWarehouseGenerator:
             "xyz", degrees=True
         )
         return all(
-            region["rotation"][a][0][0] - 1e-6 <= angles[i] <= region["rotation"][a][0][1] + 1e-6
+            _value_in_intervals(angles[i], region["rotation"][a], tolerance=1e-6)
             for i, a in enumerate("xyz")
         )
 
     def _sample_pose(self, name):
         region = self.regions[name]
-        pos = np.array([self.rng.uniform(*region["translation"][a][0]) for a in "xyz"])
-        angles = [self.rng.uniform(*region["rotation"][a][0]) for a in "xyz"]
+        pos = np.array(
+            [_sample_from_intervals(self.rng, region["translation"][a]) for a in "xyz"]
+        )
+        angles = [
+            _sample_from_intervals(self.rng, region["rotation"][a]) for a in "xyz"
+        ]
         rot = np.asarray(region["rotation"]["base"]) @ Rotation.from_euler("xyz", angles, degrees=True).as_matrix()
         return pos, rot
 
@@ -516,8 +689,38 @@ class MarvinWarehouseGenerator:
         finally:
             self.stats["target_seconds"] += time.perf_counter() - started
 
-    def _arm_region(self, arm):
-        return ARM_REGIONS[arm][int(self.rng.integers(2))]
+    def _arm_region(self, arm, exclude=None):
+        names, weights = self.placement_distributions[arm]
+        if exclude is not None and len(names) > 1:
+            keep = np.asarray([name != exclude for name in names])
+            names = tuple(name for name, selected in zip(names, keep) if selected)
+            weights = weights[keep] / weights[keep].sum()
+        return str(self.rng.choice(names, p=weights))
+
+    def _sample_random_endpoint(self, q_reference, mode):
+        """Resample active arm joints inside random workspace; freeze inactive arms."""
+        q = np.asarray(q_reference, dtype=float).copy()
+        budget = int(self.config.get("state_sample_tries", 2000))
+        for arm in self.rng.permutation(active_arms(mode)):
+            sl = ARM_SLICES[arm]
+            region = self.config.get("random_regions", {}).get(arm)
+            found = False
+            while budget > 0 and time.perf_counter() < self.deadline:
+                budget -= 1
+                self.stats["random_candidates"] += 1
+                candidate = q.copy()
+                candidate[sl] = self.rng.uniform(
+                    self.robot.joint_bounds_low_np[sl], self.robot.joint_bounds_high_np[sl]
+                )
+                position = self._pose(candidate, arm).translation
+                if region is not None and not _position_in_workspace(position, region):
+                    continue
+                if self.valid(candidate):
+                    q, found = candidate, True
+                    break
+            if not found:
+                return None
+        return q
 
     def _sample_endpoint(self, q_reference, mode, regions):
         q = np.array(q_reference).copy()
@@ -527,22 +730,47 @@ class MarvinWarehouseGenerator:
                 return None
         return q if self.valid(q) else None
 
-    def _sample_task(self, mode, direction):
+    def _task_regions(self, mode, direction):
+        """Choose the categorical task once; retries must keep this contract."""
+        arms = active_arms(mode)
+        source = {arm: "inactive" for arm in ARM_SLICES}
+        goal = {arm: "inactive" for arm in ARM_SLICES}
+        if direction in {"placement_to_placement", "placement_to_random"}:
+            source.update({arm: self._arm_region(arm) for arm in arms})
+        else:
+            source.update({arm: "random" for arm in arms})
+        if direction in {"random_to_placement", "placement_to_placement"}:
+            differ = bool(self.config.get("placement_goal_must_differ_from_source_region", True))
+            goal.update(
+                {
+                    arm: self._arm_region(
+                        arm,
+                        source[arm] if differ and source[arm] != "random" else None,
+                    )
+                    for arm in arms
+                }
+            )
+        else:
+            goal.update({arm: "random" for arm in arms})
+        return source, goal
+
+    def _sample_task(self, mode, direction, source=None, goal=None):
+        if source is None or goal is None:
+            source, goal = self._task_regions(mode, direction)
         q_start = self._random_valid_state()
         if q_start is None:
             return None
         arms = active_arms(mode)
-        source = {arm: "inactive" for arm in ARM_SLICES}
-        if direction == "placement_to_placement":
-            source.update({arm: self._arm_region(arm) for arm in arms})
+        if direction in {"placement_to_placement", "placement_to_random"}:
             q_start = self._sample_endpoint(q_start, mode, source)
             if q_start is None:
                 return None
-            goal = {arm: next(name for name in ARM_REGIONS[arm] if name != source[arm]) for arm in arms}
+        if direction in {"random_to_placement", "placement_to_placement"}:
+            q_goal = self._sample_endpoint(q_start, mode, goal)
+        elif direction in {"placement_to_random", "random_to_random"}:
+            q_goal = self._sample_random_endpoint(q_start, mode)
         else:
-            source.update({arm: "random" for arm in arms})
-            goal = {arm: self._arm_region(arm) for arm in arms}
-        q_goal = self._sample_endpoint(q_start, mode, goal)
+            raise ValueError(f"unsupported trajectory direction: {direction}")
         if q_goal is None or any(
             np.linalg.norm(q_goal[ARM_SLICES[a]] - q_start[ARM_SLICES[a]])
             < self.config.get("min_active_joint_delta", 0.08)
@@ -657,16 +885,35 @@ class MarvinWarehouseGenerator:
 
     def generate(self, num_trajectories, start_task_id=0):
         paths, metadata = [], []
-        attempts = 0
+        pending_task_id = None
+        pending_spec = None
+        task_attempts = 0
+        max_attempts = int(
+            self.config.get(
+                "max_attempts_per_task",
+                self.config.get("max_attempts_per_trajectory", 30),
+            )
+        )
         while len(paths) < num_trajectories:
-            attempts += 1
-            if attempts > int(self.config.get("max_attempts_per_trajectory", 30)) * num_trajectories:
-                raise RuntimeError(f"sampling budget exhausted: {len(paths)}/{num_trajectories}; {dict(self.stats)}")
             task_id = start_task_id + len(paths)
-            mode, direction = task_spec(task_id)
+            if pending_task_id != task_id:
+                mode, direction = task_spec(task_id, self.config.get("trajectory_direction_weights"))
+                source, goal = self._task_regions(mode, direction)
+                pending_task_id = task_id
+                pending_spec = (mode, direction, source, goal)
+                task_attempts = 0
+            mode, direction, source, goal = pending_spec
+            if task_attempts >= max_attempts:
+                raise TaskSamplingBudgetExhausted(
+                    f"task {task_id} exhausted {max_attempts} attempts; "
+                    f"completed={len(paths)}/{num_trajectories}, mode={mode}, "
+                    f"direction={direction}, source={source}, goal={goal}, stats={dict(self.stats)}"
+                )
+            task_attempts += 1
+            self.stats["task_attempts"] += 1
             self.deadline = time.perf_counter() + float(self.config.get("task_timeout_seconds", 300))
             sampling_started = time.perf_counter()
-            sampled = self._sample_task(mode, direction)
+            sampled = self._sample_task(mode, direction, source, goal)
             self.stats["endpoint_sampling_seconds"] += time.perf_counter() - sampling_started
             self.stats["task_samples"] += 1
             if sampled is None:
@@ -810,10 +1057,14 @@ def main(argv=None):
     validate_config(config)
     n = args.num_trajectories if args.num_trajectories is not None else int(config.get("num_trajectories", 1000))
     if n < 1 or n % 10 or args.start_task_id < 0 or args.start_task_id % 10:
-        raise ValueError("count/start-task-id must be multiples of 10 to preserve exact direction and mode ratios")
+        raise ValueError(
+            "count/start-task-id must be multiples of 10 to retain mode-balanced worker blocks; "
+            "the configured direction mix is exact over complete 100-task periods"
+        )
     seed = args.seed if args.seed is not None else int(config.get("seed", 0))
     output = args.output_dir or Path(config["output_dir"])
     if args.dry_run:
+        placement_distributions = _placement_distributions(config)
         print(
             yaml.safe_dump(
                 dict(
@@ -822,6 +1073,17 @@ def main(argv=None):
                     seed=seed,
                     sampler=config.get("sampler"),
                     pre_rrt_filter=config.get("pre_rrt_filter", "none"),
+                    direction_counts_per_100=dict(
+                        Counter(
+                            task_spec(i, config.get("trajectory_direction_weights"))[1]
+                            for i in range(100)
+                        )
+                    ),
+                    random_regions=config.get("random_regions", {}),
+                    placement_region_probabilities={
+                        arm: {name: float(weight) for name, weight in zip(names, weights)}
+                        for arm, (names, weights) in placement_distributions.items()
+                    },
                     regions=_load_regions(config),
                 )
             )

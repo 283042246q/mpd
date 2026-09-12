@@ -4,12 +4,18 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 import torch
 import yaml
 
 from scripts.generate_data.generate_marvin_warehouse_bimanual import (
     DEFAULT_CONFIG,
     MarvinWarehouseGenerator,
+    TaskSamplingBudgetExhausted,
+    _direction_schedule,
+    _placement_distributions,
+    _position_in_workspace,
+    _value_in_intervals,
     task_spec,
     validate_config,
 )
@@ -28,6 +34,119 @@ def test_shard_schedule_preserves_both_ratios():
             }
 
 
+def test_configured_four_way_schedule_preserves_exact_direction_and_mode_quotas():
+    weights = {
+        "placement_to_placement": 0.45,
+        "random_to_placement": 0.35,
+        "placement_to_random": 0.10,
+        "random_to_random": 0.10,
+    }
+    assert Counter(_direction_schedule(weights)) == {
+        "placement_to_placement": 9,
+        "random_to_placement": 7,
+        "placement_to_random": 2,
+        "random_to_random": 2,
+    }
+    specs = [task_spec(i, weights) for i in range(100)]
+    assert Counter(direction for _, direction in specs) == {
+        "placement_to_placement": 45,
+        "random_to_placement": 35,
+        "placement_to_random": 10,
+        "random_to_random": 10,
+    }
+    for direction, count in Counter(direction for _, direction in specs).items():
+        assert Counter(mode for mode, item_direction in specs if item_direction == direction) == {
+            "dual_independent": 3 * count // 5,
+            "left_only": count // 5,
+            "right_only": count // 5,
+        }
+
+
+def test_four_way_direction_weights_require_five_percent_blocks():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["trajectory_direction_weights"] = {
+        "placement_to_placement": 0.44,
+        "random_to_placement": 0.36,
+        "placement_to_random": 0.10,
+        "random_to_random": 0.10,
+    }
+    with pytest.raises(ValueError, match="0.05 increments"):
+        validate_config(config)
+
+
+def test_default_config_atomic_region_weights_are_normalized_and_complete():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    distributions = _placement_distributions(config)
+    assert len(config["placement_regions"]) == 14
+    for arm, (names, weights) in distributions.items():
+        assert len(names) == 7
+        assert np.isclose(weights.sum(), 1.0)
+        assert all(name.startswith(arm) for name in names)
+
+    names, weights = distributions["left"]
+    probabilities = dict(zip(names, weights))
+
+    def volume(name):
+        translation = config["placement_regions"][name]["translation"]
+        return np.prod([sum(high - low for low, high in translation[axis]) for axis in "xyz"])
+
+    expected_ratio = (
+        volume("left_table_cross_x")
+        * config["placement_region_difficulty_boosts"]["left"]["left_table_cross_x"]
+        / volume("left_table")
+    )
+    assert probabilities["left_table_cross_x"] / probabilities["left_table"] == pytest.approx(
+        expected_ratio
+    )
+
+
+def test_placement_difficulty_boost_cannot_dominate_volume_weighting():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["placement_region_difficulty_boosts"]["left"]["left_cabinet_upper"] = 2.0
+    with pytest.raises(ValueError, match=r"\[1.0, 1.5\]"):
+        validate_config(config)
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected_start", "expected_goal", "source_kind", "goal_kind"),
+    [
+        ("placement_to_placement", 1.0, 2.0, "placement", "placement"),
+        ("random_to_placement", 0.0, 1.0, "random", "placement"),
+        ("placement_to_random", 1.0, 3.0, "placement", "random"),
+        ("random_to_random", 0.0, 2.0, "random", "random"),
+    ],
+)
+def test_sample_task_implements_all_four_endpoint_directions(
+    direction, expected_start, expected_goal, source_kind, goal_kind
+):
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator.config = {
+        "min_active_joint_delta": 0.08,
+        "placement_goal_must_differ_from_source_region": False,
+    }
+    generator._random_valid_state = lambda: np.zeros(14)
+    generator._arm_region = lambda arm, exclude=None: f"{arm}_placement"
+
+    def placement_endpoint(q, mode, regions):
+        result = q.copy()
+        result[:7] += 1.0
+        return result
+
+    def random_endpoint(q, mode):
+        result = q.copy()
+        result[:7] += 2.0
+        return result
+
+    generator._sample_endpoint = placement_endpoint
+    generator._sample_random_endpoint = random_endpoint
+    q_start, q_goal, source, goal = generator._sample_task("left_only", direction)
+    assert np.all(q_start[:7] == expected_start)
+    assert np.all(q_goal[:7] == expected_goal)
+    assert np.all(q_start[7:] == 0.0) and np.all(q_goal[7:] == 0.0)
+    assert (source["left"] == "random") == (source_kind == "random")
+    assert (goal["left"] == "random") == (goal_kind == "random")
+
+
 def test_region_schema_rejects_missing_orientation_and_invalid_bounds():
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
     validate_config(config)
@@ -39,6 +158,77 @@ def test_region_schema_rejects_missing_orientation_and_invalid_bounds():
     broken["placement_regions"]["right_cabinet"]["translation"]["z"] = [[0.4, 0.1]]
     with pytest.raises(ValueError):
         validate_config(broken)
+
+
+def test_region_schema_and_pose_sampling_support_disjoint_axis_intervals():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["placement_regions"]["left_cabinet"]["translation"]["z"] = [
+        [0.10, 0.30],
+        [0.45, 0.60],
+    ]
+    config["placement_regions"]["left_cabinet"]["rotation"]["x"] = [
+        [-15.0, -10.0],
+        [10.0, 15.0],
+    ]
+    validate_config(config)
+
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator.rng = np.random.default_rng(7)
+    generator.regions = config["placement_regions"]
+    positions = []
+    relative_x_angles = []
+    region = generator.regions["left_cabinet"]
+    base = np.asarray(region["rotation"]["base"])
+    for _ in range(256):
+        position, rotation = generator._sample_pose("left_cabinet")
+        positions.append(position)
+        relative_x_angles.append(
+            Rotation.from_matrix(base.T @ rotation).as_euler("xyz", degrees=True)[0]
+        )
+
+    z_values = np.asarray(positions)[:, 2]
+    assert np.all([_value_in_intervals(value, [[0.10, 0.30], [0.45, 0.60]]) for value in z_values])
+    assert np.any(z_values <= 0.30) and np.any(z_values >= 0.45)
+    assert not np.any((0.30 < z_values) & (z_values < 0.45))
+    assert np.all(
+        [_value_in_intervals(value, [[-15.0, -10.0], [10.0, 15.0]], tolerance=1e-6) for value in relative_x_angles]
+    )
+    assert np.any(np.asarray(relative_x_angles) < 0.0)
+    assert np.any(np.asarray(relative_x_angles) > 0.0)
+
+
+def test_random_workspace_atomic_boxes_do_not_create_cartesian_cross_products():
+    region = [
+        {"x": [[0.0, 1.0]], "y": [[0.0, 1.0]], "z": [[0.0, 0.1]]},
+        {"x": [[0.0, 1.0]], "y": [[2.0, 3.0]], "z": [[0.9, 1.0]]},
+    ]
+    assert _position_in_workspace(np.array([0.5, 0.5, 0.05]), region)
+    assert _position_in_workspace(np.array([0.5, 2.5, 0.95]), region)
+    assert not _position_in_workspace(np.array([0.5, 0.5, 0.95]), region)
+    assert not _position_in_workspace(np.array([0.5, 2.5, 0.05]), region)
+
+
+def test_pose_filter_accepts_any_interval_and_rejects_gaps():
+    from types import SimpleNamespace
+
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["placement_regions"]["left_cabinet"]["translation"]["z"] = [
+        [0.10, 0.30],
+        [0.45, 0.60],
+    ]
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator.regions = config["placement_regions"]
+    region = generator.regions["left_cabinet"]
+    position = np.array(
+        [np.mean(region["translation"][axis][0]) for axis in "xyz"], dtype=float
+    )
+    position[2] = 0.50
+    generator._pose = lambda q, arm: SimpleNamespace(
+        translation=position.copy(), rotation=np.asarray(region["rotation"]["base"])
+    )
+    assert generator.pose_in_region(np.zeros(14), "left", "left_cabinet")
+    position[2] = 0.375
+    assert not generator.pose_in_region(np.zeros(14), "left", "left_cabinet")
 
 
 def test_production_planner_defaults_use_benchmark_winner_without_simplifier():
@@ -131,21 +321,30 @@ def test_dense_path_filter_checks_between_waypoints():
     assert not generator.path_valid(np.stack([np.zeros(14), np.ones(14)]))
 
 
-def test_failed_rrt_discards_pair_and_samples_new_endpoints():
+def test_failed_sampling_and_rrt_keep_regions_but_resample_endpoints():
     generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
     generator.config = {"max_attempts_per_trajectory": 3}
     generator.stats = Counter()
-    sampled, planned = [], []
+    sampled, planned, selected_specs = [], [], []
+    fixed_source = {"left": "left_table", "right": "right_table"}
+    fixed_goal = {"left": "left_cabinet", "right": "right_cabinet"}
 
-    def sample(mode, direction):
+    def select_regions(mode, direction):
+        selected_specs.append((mode, direction))
+        return fixed_source, fixed_goal
+
+    def sample(mode, direction, source, goal):
         start = np.full(14, len(sampled), dtype=float)
-        sampled.append(start)
-        return start, start + 1, {}, {}
+        sampled.append((start, source.copy(), goal.copy()))
+        if len(sampled) == 1:
+            return None
+        return start, start + 1, source, goal
 
     def plan(start, goal, mode):
         planned.append(start.copy())
         return None if len(planned) == 1 else np.stack([start, goal])
 
+    generator._task_regions = select_regions
     generator._sample_task = sample
     generator.plan_once = plan
     generator.validated_spline = lambda path: (np.zeros(28), np.zeros((14, 22)), 5)
@@ -156,6 +355,34 @@ def test_failed_rrt_discards_pair_and_samples_new_endpoints():
     paths, metadata = generator.generate(1)
     assert len(paths) == 1 and len(planned) == 2
     assert not np.array_equal(planned[0], planned[1])
+    assert selected_specs == [("dual_independent", "placement_to_placement")]
+    assert len(sampled) == 3
+    assert all(source == fixed_source and goal == fixed_goal for _, source, goal in sampled)
+
+
+def test_one_task_exhausts_its_own_hard_attempt_budget():
+    generator = MarvinWarehouseGenerator.__new__(MarvinWarehouseGenerator)
+    generator.config = {"max_attempts_per_task": 2, "task_timeout_seconds": 1}
+    generator.stats = Counter()
+    selected, sampled = [], []
+
+    def select_regions(mode, direction):
+        selected.append((mode, direction))
+        return (
+            {"left": "left_table", "right": "right_table"},
+            {"left": "left_cabinet", "right": "right_cabinet"},
+        )
+
+    generator._task_regions = select_regions
+    generator._sample_task = lambda mode, direction, source, goal: sampled.append(
+        (mode, direction, source.copy(), goal.copy())
+    )
+
+    with pytest.raises(TaskSamplingBudgetExhausted, match=r"task 0 exhausted 2 attempts"):
+        generator.generate(10)
+    assert selected == [("dual_independent", "placement_to_placement")]
+    assert len(sampled) == 2
+    assert generator.stats["task_attempts"] == 2
 
 
 def test_plan_once_reuses_cached_mode_setup(monkeypatch):
@@ -709,3 +936,38 @@ def test_shard_scheduler_rolls_a_fresh_process_without_waiting_for_other_slots(t
         ("new_executor", None)
     ] * len(shards)
     assert paths == [str(tmp_path / "shards" / f"{start:09d}") for start, _ in shards]
+
+
+def test_shard_scheduler_does_not_retry_terminal_task_budget_exhaustion(tmp_path):
+    from scripts.generate_data.launch_generate_marvin_warehouse_bimanual import run_shards_resilient
+
+    submissions = []
+
+    class FailedFuture:
+        def result(self):
+            raise TaskSamplingBudgetExhausted("task 0 exhausted 30 attempts")
+
+    class FakeExecutor:
+        def __init__(self, max_workers, mp_context):
+            pass
+
+        def submit(self, function, config, root, start, count):
+            submissions.append(start)
+            return FailedFuture()
+
+        def shutdown(self, wait):
+            pass
+
+    with pytest.raises(RuntimeError, match="terminated without retry"):
+        run_shards_resilient(
+            {"max_attempts_per_task": 30},
+            tmp_path,
+            [(0, 10)],
+            workers=1,
+            max_restarts=3,
+            _executor_factory=FakeExecutor,
+            _wait=lambda futures, return_when: ({next(iter(futures))}, set()),
+            _shard_complete=lambda path, config, start, count: False,
+            _run_shard=lambda *args: None,
+        )
+    assert submissions == [0]

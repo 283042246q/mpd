@@ -22,6 +22,7 @@ from scripts.generate_data.generate_marvin_warehouse_bimanual import (
     EE_GOAL_SCHEMA,
     MarvinWarehouseGenerator,
     PRE_RRT_FILTERS,
+    TaskSamplingBudgetExhausted,
     _write_dataset,
     file_sha256,
     validate_config,
@@ -176,8 +177,15 @@ def run_shards_resilient(
             done, _ = _wait(tuple(in_flight), return_when=FIRST_COMPLETED)
             for future in done:
                 pool, start, count = in_flight.pop(future)
+                terminal_error = None
                 try:
                     future.result()
+                except TaskSamplingBudgetExhausted as error:
+                    terminal_error = error
+                    print(
+                        f"[shard {start:09d}] terminal task budget exhaustion: {error}",
+                        flush=True,
+                    )
                 except BrokenProcessPool as error:
                     # This executor belongs only to this shard, so native
                     # failure does not invalidate the other rolling slots.
@@ -192,6 +200,11 @@ def run_shards_resilient(
                     completed[start] = str(path)
                 else:
                     completed.pop(start, None)
+                    if terminal_error is not None:
+                        raise RuntimeError(
+                            f"shard {start:09d} terminated without retry after a fixed task "
+                            f"exhausted its {config.get('max_attempts_per_task', 30)}-attempt budget"
+                        ) from terminal_error
                     failures[start] += 1
                     if failures[start] > max_restarts:
                         raise RuntimeError(
@@ -220,9 +233,10 @@ def run_shards_resilient(
 def build_shards(num_trajectories, max_shard_size, workers):
     """Build quota-safe shards while keeping available workers occupied.
 
-    Every shard is a multiple of ten so each independently generated shard
-    retains the 5:5 direction and 3:1:1 mode schedule. ``max_shard_size`` is
-    an upper bound, not a request to leave workers idle.
+    Every shard is a multiple of ten and global task IDs select directions, so
+    splitting cannot alter the merged schedule. Each five-task direction block
+    retains its 3:1:1 mode quota. ``max_shard_size`` is an upper bound, not a
+    request to leave workers idle.
     """
     natural_count = (num_trajectories + max_shard_size - 1) // max_shard_size
     shard_count = max(natural_count, min(workers, num_trajectories // 10))

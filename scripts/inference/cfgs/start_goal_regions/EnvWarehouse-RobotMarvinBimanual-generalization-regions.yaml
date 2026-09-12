@@ -1,3 +1,5 @@
+# Dedicated out-of-training-workspace benchmark regions. These are deliberately
+# broader than the v3 training regions and must not replace production defaults.
 schema: marvin_bimanual_regions/v1
 env_id: EnvWarehouseMarvinBimanual
 robot_id: RobotMarvinBimanual
@@ -6,7 +8,6 @@ task_mode: dual_independent
 sampler: region_ik
 planner: RRTConnect
 random_to_placement_fraction: 0.5
-seed: 12345
 state_validity_resolution: 0.002
 planner_range: 0.35
 min_distance_robot_env: 0.02
@@ -16,46 +17,50 @@ ik_iterations: 100
 ik_reference_seed_fraction: 0.5
 ik_position_tolerance: 0.003
 ik_orientation_tolerance_deg: 2.0
+min_active_joint_delta: 0.08
 max_sampling_attempts: 100
 sampling_timeout_seconds: 60.0
+collision_max_joint_step: 0.025
+interpolate_num: 128
+spline_validation_points: 512
+bspline_num_control_points: 22
+bspline_degree: 5
+simplify_path: false
 disabled_self_collision_pairs:
   - [Link5_R, Link7_R]
 
-# Each arm can use "random", one placement-region name, or a list of names.
-inference_selection:
-  start: {left: left_table, right: right_table}
-  goal:
-    left: [left_table]
-    right: [right_cabinet]
-
+# Broad collision-free references used only as IK seeds for the benchmark.
 random_regions:
   left: {x: [[0.15, 0.85]], y: [[0.00, 0.58]], z: [[0.05, 0.55]]}
   right: {x: [[0.15, 0.85]], y: [[-0.58, 0.00]], z: [[0.05, 0.55]]}
 
+# Table top is z=-0.16 m. These TCP centers are 6--26 cm above it.
+# Cabinet shelf tops are z=0.015 and z=0.415 m. The two disjoint z intervals
+# exercise the lower-middle and upper-middle compartments independently.
 placement_regions:
   left_table:
-    translation: {x: [[0.54, 0.66]], y: [[0.15, 0.45]], z: [[0.12, 0.28]]}
+    translation: {x: [[0.30, 0.80]], y: [[0.00, 0.50]], z: [[-0.10, 0.10]]}
     rotation:
       base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
       x: [[-15, 15]]
       y: [[-15, 15]]
       z: [[-15, 15]]
   right_table:
-    translation: {x: [[0.54, 0.66]], y: [[-0.45, -0.35]], z: [[0.18, 0.28]]}
+    translation: {x: [[0.30, 0.80]], y: [[-0.50, 0.00]], z: [[-0.10, 0.10]]}
     rotation:
       base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
       x: [[-15, 15]]
       y: [[-15, 15]]
       z: [[-15, 15]]
   left_cabinet:
-    translation: {x: [[0.36, 0.48]], y: [[0.66, 0.72]], z: [[0.14, 0.24]]}
+    translation: {x: [[0.25, 0.75]], y: [[0.62, 0.90]], z: [[0.10, 0.30], [0.45, 0.60]]}
     rotation:
       base: [[1, 0, 0], [0, 0, 1], [0, -1, 0]]
       x: [[-15, 15]]
       y: [[-15, 15]]
       z: [[-15, 15]]
   right_cabinet:
-    translation: {x: [[0.34, 0.40]], y: [[-0.73, -0.68]], z: [[0.18, 0.24]]}
+    translation: {x: [[0.25, 0.75]], y: [[-0.90, -0.62]], z: [[0.10, 0.30], [0.45, 0.60]]}
     rotation:
       base: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]
       x: [[-15, 15]]
