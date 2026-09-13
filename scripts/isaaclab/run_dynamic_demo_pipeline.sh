@@ -15,6 +15,10 @@ PROFILE="to_drawer"
 PHASE="phase5"
 TIMING_MODE="phase5_joint"
 TIMING_MODE_EXPLICIT=false
+FACTORIZED_METHOD="f1"
+FACTORIZED_METHOD_EXPLICIT=false
+FACTORIZED_TIMING_CHECKPOINT=""
+FACTORIZED_ADAPT_SPATIAL_BASIS=false
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=1.0
@@ -50,8 +54,11 @@ usage() {
   printf '%s\n' \
     "Usage: $0 [options]" \
     "  --profile NAME          Environment profile (currently: to_drawer)" \
-    "  --phase NAME            Planner phase: phase4, phase4_aligned, or phase5 (default: phase5)" \
+    "  --phase NAME            Planner phase: phase4, phase4_aligned, phase5, or factorized (default: phase5)" \
     "  --timing-mode MODE      Phase-5 mode (default: phase5_joint)" \
+    "  --factorized-method M   Factorized method: f1, f2, or f3 (default: f1)" \
+    "  --factorized-timing-checkpoint P  Learned c or tau_r checkpoint" \
+    "  --factorized-adapt-spatial-basis  Explicitly adapt 29-point timing conditioning to the runtime basis" \
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
@@ -88,6 +95,9 @@ while (($#)); do
     --profile) PROFILE="$2"; shift 2 ;;
     --phase) PHASE="$2"; shift 2 ;;
     --timing-mode) TIMING_MODE="$2"; TIMING_MODE_EXPLICIT=true; shift 2 ;;
+    --factorized-method) FACTORIZED_METHOD="$2"; FACTORIZED_METHOD_EXPLICIT=true; shift 2 ;;
+    --factorized-timing-checkpoint) FACTORIZED_TIMING_CHECKPOINT="$2"; shift 2 ;;
+    --factorized-adapt-spatial-basis) FACTORIZED_ADAPT_SPATIAL_BASIS=true; shift ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
@@ -150,8 +160,9 @@ case "$PHASE" in
   4|phase4) PHASE="phase4" ;;
   phase4aligned|phase4-aligned|phase4_aligned) PHASE="phase4_aligned" ;;
   5|phase5) PHASE="phase5" ;;
+  factorized|factorised) PHASE="factorized" ;;
   *)
-    printf 'Unsupported phase: %s (supported: phase4, phase4_aligned, phase5)\n' "$PHASE" >&2
+    printf 'Unsupported phase: %s (supported: phase4, phase4_aligned, phase5, factorized)\n' "$PHASE" >&2
     exit 2
     ;;
 esac
@@ -162,16 +173,42 @@ case "$TIMING_MODE" in
     exit 2
     ;;
 esac
+case "$FACTORIZED_METHOD" in
+  f1|f2|f3) ;;
+  *)
+    printf 'Unsupported factorized method: %s (expected f1, f2, or f3)\n' "$FACTORIZED_METHOD" >&2
+    exit 2
+    ;;
+esac
 if [[ "$PHASE" != "phase5" && "$TIMING_MODE_EXPLICIT" == true ]]; then
   printf '%s\n' '--timing-mode is only valid with --phase phase5' >&2
+  exit 2
+fi
+if [[ "$PHASE" != "factorized" && "$FACTORIZED_METHOD_EXPLICIT" == true ]]; then
+  printf '%s\n' '--factorized-method is only valid with --phase factorized' >&2
+  exit 2
+fi
+if [[ "$PHASE" == "factorized" ]]; then
+  if [[ -z "$FACTORIZED_TIMING_CHECKPOINT" ]]; then
+    printf '%s\n' '--factorized-timing-checkpoint is required with --phase factorized' >&2
+    exit 2
+  fi
+  if [[ ! -f "$FACTORIZED_TIMING_CHECKPOINT" ]]; then
+    printf 'Factorized timing checkpoint is not a regular file: %s\n' \
+      "$FACTORIZED_TIMING_CHECKPOINT" >&2
+    exit 2
+  fi
+  FACTORIZED_TIMING_CHECKPOINT="$(realpath -e "$FACTORIZED_TIMING_CHECKPOINT")"
+elif [[ -n "$FACTORIZED_TIMING_CHECKPOINT" || "$FACTORIZED_ADAPT_SPATIAL_BASIS" == true ]]; then
+  printf '%s\n' '--factorized-* options are only valid with --phase factorized' >&2
   exit 2
 fi
 if [[ "$PHASE" != "phase4_aligned" && "$ALIGNED_ABLATION_EXPLICIT" == true ]]; then
   printf '%s\n' '--aligned-* switches are only valid with --phase phase4_aligned' >&2
   exit 2
 fi
-if [[ "$PHASE" != "phase5" && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
-  printf '%s\n' '--phase5-* switches are only valid with --phase phase5' >&2
+if [[ "$PHASE" != "phase5" && "$PHASE" != "factorized" && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
+  printf '%s\n' '--phase5-* switches are only valid with --phase phase5 or factorized' >&2
   exit 2
 fi
 for value in \
@@ -268,6 +305,26 @@ case "$PHASE" in
     fi
     ROS_EXTRA_ARGS+=("timing_mode:=${TIMING_MODE}")
     ;;
+  factorized)
+    SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_factorized_server.py"
+    ROS_LAUNCH="replan_space_time_fake_hardware.launch.py"
+    SOCKET_BASENAME="mpd-factorized-${FACTORIZED_METHOD}-runtime.sock"
+    TIMING_LABEL="$FACTORIZED_METHOD"
+    HEALTH_TIMEOUT_S=10
+    SERVER_EXTRA_ARGS+=(--method "$FACTORIZED_METHOD")
+    SERVER_EXTRA_ARGS+=(--timing-checkpoint "$FACTORIZED_TIMING_CHECKPOINT")
+    SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")
+    if [[ "$FACTORIZED_ADAPT_SPATIAL_BASIS" == true ]]; then
+      SERVER_EXTRA_ARGS+=(--adapt-spatial-basis)
+    fi
+    if [[ "$PHASE5_MPD_GUIDANCE" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-dynamic-guidance)
+    fi
+    if [[ "$PHASE5_MPD_SELECTION" == "off" ]]; then
+      SERVER_EXTRA_ARGS+=(--no-dynamic-selection)
+    fi
+    ROS_EXTRA_ARGS+=("timing_mode:=${FACTORIZED_METHOD}")
+    ;;
 esac
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -275,13 +332,15 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}"
   elif [[ "$PHASE" == "phase4_aligned" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}-phase4-aligned"
-  else
+  elif [[ "$PHASE" == "phase5" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}-phase5"
+  else
+    LOG_GROUP="dynamic-replay-${PROFILE}-factorized-${FACTORIZED_METHOD}"
   fi
   OUTPUT_DIR="${MPD_ROOT}/scripts/inference/logs/${LOG_GROUP}/$(date +%Y%m%d-%H%M%S)"
 fi
 
-if [[ "$PHASE" == "phase5" && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
+if [[ ( "$PHASE" == "phase5" || "$PHASE" == "factorized" ) && "$PHASE5_ABLATION_EXPLICIT" == true ]]; then
   PHASE5_CONFIG="${OUTPUT_DIR}/phase5-ablation-config.yaml"
   env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
     "${MPD_ROOT}/scripts/isaaclab/materialize_phase5_ablation_config.py" \

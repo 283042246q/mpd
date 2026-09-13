@@ -48,6 +48,28 @@ def test_pipeline_rejects_phase5_timing_mode_for_phase4():
     assert "--timing-mode is only valid with --phase phase5" in result.stderr
 
 
+def test_pipeline_exposes_factorized_phase_and_requires_a_checkpoint():
+    help_result = _run("--help")
+    assert "--factorized-method M" in help_result.stdout
+    assert "--factorized-timing-checkpoint P" in help_result.stdout
+    assert "--factorized-adapt-spatial-basis" in help_result.stdout
+
+    missing = _run("--phase", "factorized", "--factorized-method", "f2")
+    assert missing.returncode == 2
+    assert "--factorized-timing-checkpoint is required" in missing.stderr
+
+    invalid = _run(
+        "--phase",
+        "factorized",
+        "--factorized-method",
+        "f4",
+        "--factorized-timing-checkpoint",
+        "/not/a/checkpoint.pt",
+    )
+    assert invalid.returncode == 2
+    assert "Unsupported factorized method" in invalid.stderr
+
+
 def test_pipeline_rejects_aligned_switches_for_plain_phase4():
     result = _run("--phase", "phase4", "--aligned-deviation", "off")
 
