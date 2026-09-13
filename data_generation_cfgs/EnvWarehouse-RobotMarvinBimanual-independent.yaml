@@ -82,10 +82,9 @@ random_regions:
   left: {x: [[0.20, 0.85]], y: [[0.02, 0.60]], z: [[-0.05, 0.60]]}
   right: {x: [[0.20, 0.85]], y: [[-0.60, -0.02]], z: [[-0.05, 0.60]]}
 
-# Placement proposals are proportional to each atomic cell's Cartesian volume,
-# multiplied by a small [1.0, 1.5] difficulty boost.  This keeps broad regions
-# dominant without starving narrow shelf/cross-boundary cells.
-placement_region_weighting: volume
+# Endpoint marginals: 55% estimated effective volume, 30% uniform, 15% hard pool.
+# P->P uses balanced pair matrices with these same source/goal marginals.
+placement_region_weighting: mixture
 arm_placement_regions:
   left:
     - left_table
@@ -103,21 +102,44 @@ arm_placement_regions:
     - right_cabinet_lower_xedge
     - right_cabinet_lower_yedge
     - right_cabinet_upper
-placement_region_difficulty_boosts:
-  left:
-    left_table_cross_y: 1.10
-    left_table_cross_x: 1.25
-    left_cabinet: 1.15
-    left_cabinet_lower_xedge: 1.20
-    left_cabinet_lower_yedge: 1.20
-    left_cabinet_upper: 1.30
-  right:
-    right_table_cross_y: 1.20
-    right_table_cross_x: 1.25
-    right_cabinet: 1.15
-    right_cabinet_lower_xedge: 1.20
-    right_cabinet_lower_yedge: 1.20
-    right_cabinet_upper: 1.30
+placement_mixture:
+  effective_volume: 0.55
+  uniform: 0.30
+  hard: 0.15
+  # Historical proxy rates, NOT calibrated measurements of these cropped cells.
+  # T/S: workspace-dense-v3; cross/edges/U: workspace-edges-2400 (U=xedge).
+  collision_valid_rates:
+    left:
+      left_table: 0.31
+      left_table_cross_y: 0.21
+      left_table_cross_x: 0.53
+      left_cabinet: 0.31
+      left_cabinet_lower_xedge: 0.415
+      left_cabinet_lower_yedge: 0.545
+      left_cabinet_upper: 0.115
+    right:
+      right_table: 0.17
+      right_table_cross_y: 0.03
+      right_table_cross_x: 0.415
+      right_cabinet: 0.03
+      right_cabinet_lower_xedge: 0.27
+      right_cabinet_lower_yedge: 0.385
+      right_cabinet_upper: 0.125
+  hard_regions:
+    left: [left_table_cross_y, left_table_cross_x, left_cabinet, left_cabinet_lower_xedge, left_cabinet_lower_yedge, left_cabinet_upper]
+    right: [right_table_cross_y, right_table_cross_x, right_cabinet, right_cabinet_lower_xedge, right_cabinet_lower_yedge, right_cabinet_upper]
+placement_pair_sampling:
+  same_cell_fraction: 0.12
+  preferences:
+    table_other: 1.0
+    cross_cross: 0.5
+    cross_shelf: 0.15
+    lower_upper: 0.3
+    lower_lower: 0.7
+  dual_preferences:
+    both_cross: 0.2
+    both_upper: 0.3
+    cross_upper: 0.3
 
 placement_regions:
   left_table:

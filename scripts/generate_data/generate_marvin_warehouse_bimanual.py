@@ -30,6 +30,7 @@ import yaml
 
 from pb_ompl.pb_ompl import PbOMPLRobot, fit_bspline_to_path, ob, og
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL
+from scripts.generate_data.marvin_pair_sampling import mixture_distribution, pair_distributions, pair_report
 from torch_robotics.environments.env_warehouse_marvin_bimanual import EnvWarehouseMarvinBimanual
 from torch_robotics.torch_planning_objectives.fields.distance_fields import CollisionObjectDistanceField
 
@@ -136,8 +137,8 @@ def _load_regions(config):
 def _placement_distributions(config):
     configured = config.get("arm_placement_regions")
     weighting = config.get("placement_region_weighting", "explicit_or_uniform")
-    if weighting not in {"explicit_or_uniform", "volume"}:
-        raise ValueError("placement_region_weighting must be explicit_or_uniform or volume")
+    if weighting not in {"explicit_or_uniform", "volume", "mixture"}:
+        raise ValueError("placement_region_weighting must be explicit_or_uniform, volume or mixture")
     configured_boosts = config.get("placement_region_difficulty_boosts", {})
     result = {}
     for arm in ARM_SLICES:
@@ -152,9 +153,11 @@ def _placement_distributions(config):
         if missing:
             raise ValueError(f"arm_placement_regions.{arm} contains missing regions: {sorted(missing)}")
         if isinstance(values, dict):
+            if weighting == "mixture":
+                raise ValueError("mixture requires a region list, not explicit weights")
             weights = np.asarray(list(values.values()), dtype=float)
         else:
-            if weighting == "volume":
+            if weighting in {"volume", "mixture"}:
                 weights = np.asarray(
                     [
                         np.prod(
@@ -176,6 +179,10 @@ def _placement_distributions(config):
             else:
                 weights = np.ones(len(values), dtype=float)
         boosts = configured_boosts.get(arm, {})
+        if weighting == "mixture":
+            if boosts:
+                raise ValueError("mixture replaces placement_region_difficulty_boosts")
+            weights = mixture_distribution(config, arm, names, weights)
         unknown_boosts = set(boosts) - set(names)
         if unknown_boosts:
             raise ValueError(
@@ -262,7 +269,7 @@ def validate_config(config):
     if not 0 <= config.get("ik_reference_seed_fraction", 0.5) <= 1:
         raise ValueError("ik_reference_seed_fraction must lie in [0, 1]")
     _load_regions(config)
-    _placement_distributions(config)
+    pair_distributions(config, _placement_distributions(config))
     return config
 
 
@@ -296,6 +303,7 @@ class MarvinWarehouseGenerator:
         self.stats = Counter()
         self.regions = _load_regions(config)
         self.placement_distributions = _placement_distributions(config)
+        self.placement_pairs = pair_distributions(config, self.placement_distributions)
         self.worker = GenerateDataOMPL(
             env_id=config["env_id"],
             robot_id=config["robot_id"],
@@ -735,6 +743,19 @@ class MarvinWarehouseGenerator:
         arms = active_arms(mode)
         source = {arm: "inactive" for arm in ARM_SLICES}
         goal = {arm: "inactive" for arm in ARM_SLICES}
+        pairs = getattr(self, "placement_pairs", None)
+        if direction == "placement_to_placement" and pairs is not None:
+            if mode == "dual_independent":
+                index = self.rng.choice(pairs["dual"].size, p=pairs["dual"].ravel())
+                selected = dict(zip(("left", "right"), np.unravel_index(index, pairs["dual"].shape)))
+            else:
+                arm = arms[0]
+                selected = {arm: self.rng.choice(pairs[arm].size, p=pairs[arm].ravel())}
+            for arm, index in selected.items():
+                names = self.placement_distributions[arm][0]
+                i, j = np.unravel_index(index, pairs[arm].shape)
+                source[arm], goal[arm] = names[i], names[j]
+            return source, goal
         if direction in {"placement_to_placement", "placement_to_random"}:
             source.update({arm: self._arm_region(arm) for arm in arms})
         else:
@@ -902,6 +923,8 @@ class MarvinWarehouseGenerator:
                 pending_task_id = task_id
                 pending_spec = (mode, direction, source, goal)
                 task_attempts = 0
+                for arm in active_arms(mode):
+                    self.stats[f"pair_selected/{mode}/{direction}/{arm}/{source[arm]}->{goal[arm]}"] += 1
             mode, direction, source, goal = pending_spec
             if task_attempts >= max_attempts:
                 raise TaskSamplingBudgetExhausted(
@@ -911,6 +934,8 @@ class MarvinWarehouseGenerator:
                 )
             task_attempts += 1
             self.stats["task_attempts"] += 1
+            for arm in active_arms(mode):
+                self.stats[f"pair_attempts/{mode}/{direction}/{arm}/{source[arm]}->{goal[arm]}"] += 1
             self.deadline = time.perf_counter() + float(self.config.get("task_timeout_seconds", 300))
             sampling_started = time.perf_counter()
             sampled = self._sample_task(mode, direction, source, goal)
@@ -951,6 +976,8 @@ class MarvinWarehouseGenerator:
                 item[f"source_region_{arm}"] = source.get(arm, "inactive")
                 item[f"goal_region_{arm}"] = goal.get(arm, "inactive")
             metadata.append(item)
+            for arm in active_arms(mode):
+                self.stats[f"pair_accepted/{mode}/{direction}/{arm}/{source[arm]}->{goal[arm]}"] += 1
             progress_label = getattr(self, "progress_label", None)
             prefix = f"[{progress_label}] " if progress_label else ""
             print(f"{prefix}generated {len(paths)}/{num_trajectories}: {mode}, {direction}", flush=True)
@@ -1018,6 +1045,12 @@ def _write_dataset(output, config, paths, metadata, seed, stats=None):
         joint_names=list(JOINT_NAMES),
         task_counts=dict(Counter(m["task_mode"] for m in metadata)),
         direction_counts=dict(Counter(m["direction"] for m in metadata)),
+        accepted_pair_counts={
+            arm: dict(Counter(
+                f"{m['task_mode']}/{m['direction']}/{m[f'source_region_{arm}']}->{m[f'goal_region_{arm}']}"
+                for m in metadata if arm in active_arms(m["task_mode"])
+            )) for arm in ARM_SLICES
+        },
         region_counts={
             key: dict(Counter(m[key] for m in metadata))
             for key in (
@@ -1033,6 +1066,7 @@ def _write_dataset(output, config, paths, metadata, seed, stats=None):
     robot_dir = Path(__file__).resolve().parents[2] / "mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin"
     manifest["model_sha256"] = file_sha256(robot_dir / "marvin_pika_bimanual_mpd.urdf")
     manifest["asset_sha256"] = yaml.safe_load((robot_dir / "pika_assets.lock.yaml").read_text())["asset_sha256"]
+    manifest["placement_sampling"] = pair_report(config, _placement_distributions(config))
     (output / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
     (output / "generation_config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     (output / "generation_summary.json").write_text(json.dumps(manifest, indent=2))
@@ -1080,6 +1114,7 @@ def main(argv=None):
                         )
                     ),
                     random_regions=config.get("random_regions", {}),
+                    placement_pair_sampling=pair_report(config, placement_distributions),
                     placement_region_probabilities={
                         arm: {name: float(weight) for name, weight in zip(names, weights)}
                         for arm, (names, weights) in placement_distributions.items()

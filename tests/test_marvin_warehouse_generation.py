@@ -21,6 +21,72 @@ from scripts.generate_data.generate_marvin_warehouse_bimanual import (
     validate_config,
 )
 from scripts.train.train_marvin_bimanual import validate_config as validate_train
+from scripts.generate_data.marvin_pair_sampling import pair_distributions
+
+
+def test_pair_matrices_preserve_mixture_marginals_and_published_cells():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    distributions = _placement_distributions(config)
+    matrices = pair_distributions(config, distributions)
+    for arm in ("left", "right"):
+        p = distributions[arm][1]
+        w = matrices[arm]
+        np.testing.assert_allclose(w.sum(0), p, atol=1e-10)
+        np.testing.assert_allclose(w.sum(1), p, atol=1e-10)
+        np.testing.assert_allclose(w, w.T, atol=1e-10)
+        assert np.trace(w) == pytest.approx(.12)
+        assert np.all(w > 0)
+    assert matrices["left"][0, 1] == pytest.approx(.0669, abs=.00005)
+    assert matrices["right"][0, 2] == pytest.approx(.0978, abs=.00005)
+    np.testing.assert_allclose(matrices["dual"].sum(1), matrices["left"].ravel(), atol=1e-10)
+    np.testing.assert_allclose(matrices["dual"].sum(0), matrices["right"].ravel(), atol=1e-10)
+    # Cross involvement is negatively associated, while both marginals survive.
+    mask = np.zeros((7, 7), dtype=bool)
+    mask[1:3, :] = True
+    mask[:, 1:3] = True
+    selected = mask.ravel()
+    actual = matrices["dual"][np.ix_(selected, selected)].sum()
+    independent = matrices["left"][mask].sum() * matrices["right"][mask].sum()
+    assert actual < independent
+
+
+def test_task_region_draws_follow_matrices_and_keep_random_endpoints():
+    generator = object.__new__(MarvinWarehouseGenerator)
+    generator.config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    generator.rng = np.random.default_rng(17)
+    generator.placement_distributions = _placement_distributions(generator.config)
+    generator.placement_pairs = pair_distributions(generator.config, generator.placement_distributions)
+    for mode in ("left_only", "right_only", "dual_independent"):
+        counts = {arm: np.zeros((7, 7)) for arm in ("left", "right")}
+        for _ in range(12000):
+            source, goal = generator._task_regions(mode, "placement_to_placement")
+            for arm in counts:
+                if source[arm] == "inactive":
+                    assert goal[arm] == "inactive"
+                    continue
+                names = generator.placement_distributions[arm][0]
+                counts[arm][names.index(source[arm]), names.index(goal[arm])] += 1
+        for arm, count in counts.items():
+            if count.sum():
+                np.testing.assert_allclose(count / count.sum(), generator.placement_pairs[arm], atol=.008)
+    for direction in ("random_to_placement", "placement_to_random", "random_to_random"):
+        source, goal = generator._task_regions("dual_independent", direction)
+        for arm in ("left", "right"):
+            assert (source[arm] == "random") == direction.startswith("random_")
+            assert (goal[arm] == "random") == direction.endswith("_random")
+
+
+def test_mixture_rejects_conflicting_boosts_and_impossible_pair_marginals():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["placement_region_difficulty_boosts"] = {"left": {"left_table": 1.1}}
+    with pytest.raises(ValueError, match="replaces"):
+        validate_config(config)
+    config.pop("placement_region_difficulty_boosts")
+    distributions = _placement_distributions(config)
+    names, _ = distributions["left"]
+    distributions["left"] = names, np.array([.7] + [.05]*6)
+    with pytest.raises(ValueError, match="max endpoint"):
+        pair_distributions(config, distributions)
 
 
 def test_shard_schedule_preserves_both_ratios():
@@ -91,19 +157,20 @@ def test_default_config_atomic_region_weights_are_normalized_and_complete():
         translation = config["placement_regions"][name]["translation"]
         return np.prod([sum(high - low for low, high in translation[axis]) for axis in "xyz"])
 
-    expected_ratio = (
-        volume("left_table_cross_x")
-        * config["placement_region_difficulty_boosts"]["left"]["left_table_cross_x"]
-        / volume("left_table")
-    )
-    assert probabilities["left_table_cross_x"] / probabilities["left_table"] == pytest.approx(
-        expected_ratio
-    )
+    rates = config["placement_mixture"]["collision_valid_rates"]["left"]
+    effective = sum(volume(n) * rates[n] for n in names)
+    for name in names:
+        expected = .55 * volume(name) * rates[name] / effective + .30 / 7
+        if name != "left_table":
+            expected += .15 / 6
+        assert probabilities[name] == pytest.approx(expected)
 
 
 def test_placement_difficulty_boost_cannot_dominate_volume_weighting():
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
-    config["placement_region_difficulty_boosts"]["left"]["left_cabinet_upper"] = 2.0
+    config["placement_region_weighting"] = "volume"
+    config.pop("placement_pair_sampling")
+    config["placement_region_difficulty_boosts"] = {"left": {"left_cabinet_upper": 2.0}}
     with pytest.raises(ValueError, match=r"\[1.0, 1.5\]"):
         validate_config(config)
 
