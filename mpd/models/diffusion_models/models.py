@@ -191,7 +191,10 @@ class TemporalUnet(nn.Module):
 
         # swap horizon and channels (state_dim)
         x = einops.rearrange(x, "b h c -> b c h")  # batch, horizon, channels (state_dim)
-        pad_right = (-horizon) % self.horizon_multiple
+        # Full-object checkpoints predate horizon padding. Their module tree
+        # already determines the stride, even when the new attribute is absent.
+        horizon_multiple = getattr(self, "horizon_multiple", 2 ** max(0, len(self.downs) - 1))
+        pad_right = (-horizon) % horizon_multiple
         if pad_right:
             x = F.pad(x, (0, pad_right))
 
