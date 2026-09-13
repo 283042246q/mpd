@@ -69,3 +69,42 @@ def test_f1_eta_zero_is_seed_reproducible():
     second = s.sample((2, 8, 2), {}, {}, device="cpu")
     for a, b in zip(first, second):
         torch.testing.assert_close(a, b, rtol=0, atol=0)
+
+
+def test_f2_partial_blocks_freeze_other_state_and_begin_at_forward_noise_level():
+    s = sampler("f2", refinement_steps=0, alternating_rounds=2)
+    s.sample((2, 8, 2), {}, {}, device="cpu")
+    for iteration in range(2):
+        pr = [r for r in s.statistics if r["stage"] == f"f2_space_{iteration}"]
+        tr = [r for r in s.statistics if r["stage"] == f"f2_timing_{iteration}"]
+        assert pr[0]["timestep"] == tr[0]["timestep"] == 5
+        assert pr[-1]["timestep"] == tr[-1]["timestep"] == 0
+        assert all(r["guided"] for r in pr + tr)
+    full_space_calls = sum(r["guided"] for r in s.statistics if r["stage"] == "space")
+    full_timing_calls = sum(r["guided"] for r in s.statistics if r["stage"] == "timing")
+    calls = s.guide.calls[full_space_calls + full_timing_calls:]
+    for start in (0, 5):
+        a, b = calls[start:start + 2]
+        assert a[0] == b[0] == "space" and not a[1] and not b[1]
+        torch.testing.assert_close(a[3], b[3])
+        timing_calls = calls[start + 2:start + 5]
+        assert all(c[0] == "timing" for c in timing_calls)
+        assert all(torch.equal(c[2], timing_calls[0][2]) for c in timing_calls)
+
+
+@pytest.mark.parametrize("ratio", [1, 2])
+def test_f3_alternates_unique_low_steps_and_conditions_on_updated_clean_path(ratio):
+    s = sampler("f3", refinement_steps=0, timing_steps_per_space_step=ratio)
+    s.sample((2, 8, 2), {}, {}, device="cpu")
+    low = [r for r in s.statistics if r["stage"].endswith("_low")]
+    assert [r["branch"] for r in low] == (["space"] + ["timing"] * ratio) * 2
+    for branch in ("space", "timing"):
+        steps = [r["timestep"] for r in s.statistics if r["branch"] == branch]
+        assert steps == sorted(set(steps), reverse=True)
+    # First low space uses nominal timing; all following space steps use the
+    # low-noise timing estimate updated by the preceding timing block.
+    space_calls = [c for c in s.guide.calls if c[0] == "space"]
+    assert [c[1] for c in space_calls] == [True, False]
+    assert not torch.equal(s.guide.conditions[-1], s.guide.conditions[0])
+    for r in low:
+        assert r["timestep"] <= 5

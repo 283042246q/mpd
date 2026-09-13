@@ -121,6 +121,72 @@ class FactorizedSampler:
             z, _ = self._timing_step(z, pair, p, guided=pair[0] <= self.t_gate)
         return p, z
 
+    def _partial_alternating(self, p, z, context, ps, ts):
+        """F2: preserve the other clean block during each partial reverse."""
+        cfg = self.settings
+        pn, tn = len(self.space_model.alphas_cumprod), len(self.timing_model.alphas_cumprod)
+        psteps = sum(pair[0] <= self.p_gate for pair in ps)
+        tsteps = sum(pair[0] <= self.t_gate for pair in ts)
+        partial_p = schedule(pn, psteps, start=self.p_gate)
+        partial_t = schedule(tn, tsteps, start=self.t_gate)
+        for iteration in range(cfg.alternating_rounds):
+            p = forward_noise(p, self.space_model.alphas_cumprod[self.p_gate], torch.randn_like(p))
+            for index, value in self.hard_conds.items():
+                p[:, index, :] = value
+            for pair in partial_p:
+                p, _ = self._space_step(p, pair, context, z=z, guided=True,
+                                         stage=f"f2_space_{iteration}")
+            z = forward_noise(z, self.timing_model.alphas_cumprod[self.t_gate], torch.randn_like(z))
+            for pair in partial_t:
+                z, _ = self._timing_step(z, pair, p, guided=True, stage=f"f2_timing_{iteration}")
+        return p, z
+
+    def _fine_alternating(self, p, context, ps, ts):
+        """F3: independently warm both chains, then cross-guide clean estimates.
+
+        The low timing schedule is explicitly aligned to the spatial schedule;
+        it uses distinct training timesteps, never repeats a reverse edge.
+        """
+        low_p = [pair for pair in ps if pair[0] <= self.p_gate]
+        high_p = [pair for pair in ps if pair[0] > self.p_gate]
+        ratio = self.settings.timing_steps_per_space_step
+        low_t_count = len(low_p) * ratio
+        tn = len(self.timing_model.alphas_cumprod)
+        if low_t_count > self.t_gate + 1:
+            raise ValueError("F3 timing low-noise levels cannot accommodate the requested step ratio; reduce space steps or increase timing guide fraction")
+        low_t = schedule(tn, low_t_count, start=self.t_gate)
+        # Split a COMPLETE timing chain at its low-noise boundary. Rebuild the
+        # high->low bridge so z really has the level used by the first low step.
+        high_levels = [pair[0] for pair in ts if pair[0] > self.t_gate]
+        high_t = list(zip(high_levels, high_levels[1:] + [self.t_gate]))
+        p_clean = None
+        for pair in high_p:
+            p, p_clean = self._space_step(p, pair, context, stage="f3_space_high")
+        # rho=1 leaves no high steps: obtain a conditioning clean estimate, but
+        # do not advance the spatial noisy state before its first scheduled edge.
+        if p_clean is None:
+            t = torch.full((len(p),), low_p[0][0], dtype=torch.long, device=p.device)
+            p_clean = self._project(self.space_model.predict_x_recon(p, t, context))
+            self._record("space", low_p[0][0], "f3_condition_bootstrap", False)
+        z = p.new_empty((len(p), 6)).normal_()
+        z_clean = None
+        for pair in high_t:
+            z, z_clean = self._timing_step(z, pair, p_clean, stage="f3_timing_high")
+        if z_clean is None:
+            t = torch.full((len(z),), self.t_gate, dtype=torch.long, device=z.device)
+            eps = self.timing_model.denoiser(z, t, self.guide.condition(p_clean))
+            z_clean = self.timing_model.predict_clean_from_noise(z, t, eps)
+            self._record("timing", self.t_gate, "f3_condition_bootstrap", False)
+        for index, pair in enumerate(low_p):
+            # Each clean condition was estimated at a *high* level until the
+            # first low update. Do not cross-guide space with that timing yet.
+            p, p_clean = self._space_step(p, pair, context, z=z_clean,
+                guided=True, weak=index == 0, stage="f3_space_low")
+            for timing_pair in low_t[index * ratio:(index + 1) * ratio]:
+                z, z_clean = self._timing_step(z, timing_pair, p_clean,
+                    guided=True, stage="f3_timing_low")
+        return p, z
+
     @torch.no_grad()
     def sample(self, shape, context, hard_conds, *, device, dtype=torch.float32):
         self.statistics = []
@@ -133,9 +199,12 @@ class FactorizedSampler:
         p = torch.randn(shape, device=device, dtype=dtype)
         for index, value in hard_conds.items():
             p[:, index, :] = value
-        if cfg.method != "f1":
-            raise NotImplementedError("alternating sampler not installed")
-        p, z = self._full_separated(p, context, ps, ts)
+        if cfg.method == "f3":
+            p, z = self._fine_alternating(p, context, ps, ts)
+        else:
+            p, z = self._full_separated(p, context, ps, ts)
+            if cfg.method == "f2":
+                p, z = self._partial_alternating(p, z, context, ps, ts)
         for _ in range(cfg.refinement_steps):
             p, z = self.guide.refine(p, z, active="joint")
             p = self._project(p)
