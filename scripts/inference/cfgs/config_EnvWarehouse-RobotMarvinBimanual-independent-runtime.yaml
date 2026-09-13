@@ -42,10 +42,10 @@ project_gradient_hierarchy: false
 
 collision_optimization:
   pair_streaming:
-    enabled: false
+    enabled: true
     pair_chunk_size: 1024
   reduced_guide_geometry:
-    enabled: false
+    enabled: true
     profile: foam_pika_100
 
 gradient_pruning:
@@ -67,7 +67,7 @@ gradient_pruning:
     dense_parent_fast_path: true
     active_link_pruning: true
     link_broad_phase:
-      enabled: false
+      enabled: true
       full_scan: true
       scan_geometry: parent_bounds
       reuse_scan_cache: false
@@ -94,7 +94,7 @@ dense_validation:
   check_joint_acceleration: true
   reject_invalid: true
   chunking:
-    enabled: false
+    enabled: true
     candidate_chunk_size: 8
     time_chunk_size: 32
     self_pair_chunk_size: 1024

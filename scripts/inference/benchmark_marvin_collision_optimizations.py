@@ -138,6 +138,12 @@ def execute_case(config_path, artifact_dir, args):
         "--sim-backend",
         "none",
     ]
+    if getattr(args, "request", None) is not None:
+        command = [
+            sys.executable, str(INFERENCE), "--config", str(config_path),
+            "--request", str(args.request), "--output-dir", str(artifact_dir),
+            "--device", args.device, "--sim-backend", "none",
+        ]
     device_index = int(args.device.split(":", 1)[1]) if ":" in args.device else 0
     samples = []
     stop = threading.Event()
@@ -196,6 +202,7 @@ def execute_case(config_path, artifact_dir, args):
         "result_status": payload.get("status"),
         "result_error": payload.get("error"),
         "timing": payload.get("timing"),
+        "cuda_memory": payload.get("cuda_memory"),
         "collision_geometry": payload.get("collision_geometry"),
         "validation": payload.get("validation"),
         "candidates": payload.get("candidates"),

@@ -104,7 +104,9 @@ placement cell 的配置权重是任务规格的提议概率。由于失败后�
 下一个 `task_id`。`max_attempts_per_task: 30` 是每个 task 独立的硬上限：完成 30 次仍
 失败会抛出包含 task ID、mode、direction、source/goal region 和累计统计的
 `TaskSamplingBudgetExhausted`。launcher 将它视为确定性 shard 失败，立即终止该 shard，
-不会执行通常用于 native worker crash 的自动重试。
+不会执行通常用于 native worker crash 的自动重试。其他 pending/in-flight shard 会继续
+完成；全部结束后 launcher 写出 `shard_failures.json`，跳过不完整数据集的 merge，并以
+非零状态退出。
 
 ## 3. 时间反转扩充
 

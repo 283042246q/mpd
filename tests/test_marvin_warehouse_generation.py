@@ -1,5 +1,6 @@
 from collections import Counter
 from copy import deepcopy
+import json
 from pathlib import Path
 
 import numpy as np
@@ -941,11 +942,16 @@ def test_shard_scheduler_rolls_a_fresh_process_without_waiting_for_other_slots(t
 def test_shard_scheduler_does_not_retry_terminal_task_budget_exhaustion(tmp_path):
     from scripts.generate_data.launch_generate_marvin_warehouse_bimanual import run_shards_resilient
 
-    submissions = []
+    submissions, completed = [], set()
 
     class FailedFuture:
+        def __init__(self, start):
+            self.start = start
+
         def result(self):
-            raise TaskSamplingBudgetExhausted("task 0 exhausted 30 attempts")
+            if self.start == 0:
+                raise TaskSamplingBudgetExhausted("task 0 exhausted 30 attempts")
+            completed.add(self.start)
 
     class FakeExecutor:
         def __init__(self, max_workers, mp_context):
@@ -953,21 +959,26 @@ def test_shard_scheduler_does_not_retry_terminal_task_budget_exhaustion(tmp_path
 
         def submit(self, function, config, root, start, count):
             submissions.append(start)
-            return FailedFuture()
+            return FailedFuture(start)
 
         def shutdown(self, wait):
             pass
 
-    with pytest.raises(RuntimeError, match="terminated without retry"):
+    with pytest.raises(RuntimeError, match="all other shards were allowed to finish"):
         run_shards_resilient(
             {"max_attempts_per_task": 30},
             tmp_path,
-            [(0, 10)],
+            [(0, 10), (10, 10)],
             workers=1,
             max_restarts=3,
             _executor_factory=FakeExecutor,
             _wait=lambda futures, return_when: ({next(iter(futures))}, set()),
-            _shard_complete=lambda path, config, start, count: False,
+            _shard_complete=lambda path, config, start, count: start in completed,
             _run_shard=lambda *args: None,
         )
-    assert submissions == [0]
+    assert submissions == [0, 10]
+    assert completed == {10}
+    report = json.loads((tmp_path / "shard_failures.json").read_text())
+    assert report["completed_shards"] == [10]
+    assert report["terminal_failures"][0]["start_task_id"] == 0
+    assert report["merge_skipped"] is True

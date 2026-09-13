@@ -5,6 +5,7 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from collections import Counter
 from collections import deque
+import json
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -153,6 +154,7 @@ def run_shards_resilient(
     if completed:
         print(f"resume: reusing {len(completed)}/{len(shards)} complete shards", flush=True)
     failures = Counter()
+    terminal_failures = {}
     context = mp.get_context("spawn")
     in_flight = {}
 
@@ -201,22 +203,25 @@ def run_shards_resilient(
                 else:
                     completed.pop(start, None)
                     if terminal_error is not None:
-                        raise RuntimeError(
-                            f"shard {start:09d} terminated without retry after a fixed task "
-                            f"exhausted its {config.get('max_attempts_per_task', 30)}-attempt budget"
-                        ) from terminal_error
-                    failures[start] += 1
-                    if failures[start] > max_restarts:
-                        raise RuntimeError(
-                            f"shard {start:09d} failed after {max_restarts} restarts; "
-                            f"staging directories were retained under {Path(root) / 'shards'}"
+                        terminal_failures[start] = {
+                            "start_task_id": start,
+                            "trajectory_count": count,
+                            "error_type": type(terminal_error).__name__,
+                            "message": str(terminal_error),
+                        }
+                    else:
+                        failures[start] += 1
+                        if failures[start] > max_restarts:
+                            raise RuntimeError(
+                                f"shard {start:09d} failed after {max_restarts} restarts; "
+                                f"staging directories were retained under {Path(root) / 'shards'}"
+                            )
+                        print(
+                            f"[shard {start:09d}] incomplete after worker exit; "
+                            f"retry {failures[start]}/{max_restarts}",
+                            flush=True,
                         )
-                    print(
-                        f"[shard {start:09d}] incomplete after worker exit; "
-                        f"retry {failures[start]}/{max_restarts}",
-                        flush=True,
-                    )
-                    pending.append((start, count))
+                        pending.append((start, count))
 
                 # Refill this slot immediately.  Other in-flight shards keep
                 # running and do not form a synchronization barrier.
@@ -227,6 +232,21 @@ def run_shards_resilient(
         # processes or their native PyBullet/OMPL resources.
         for pool, _, _ in in_flight.values():
             pool.shutdown(wait=True)
+    if terminal_failures:
+        report_path = Path(root) / "shard_failures.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "schema": "marvin_bimanual_shard_failures/v1",
+            "completed_shards": sorted(completed),
+            "terminal_failures": [terminal_failures[start] for start in sorted(terminal_failures)],
+            "merge_skipped": True,
+        }
+        report_path.write_text(json.dumps(report, indent=2))
+        failed_ids = ", ".join(f"{start:09d}" for start in sorted(terminal_failures))
+        raise RuntimeError(
+            f"terminal task budget exhausted in shard(s) {failed_ids}; all other shards were allowed "
+            f"to finish, merge was skipped, report={report_path}"
+        )
     return [completed[start] for start, _ in shards]
 
 
