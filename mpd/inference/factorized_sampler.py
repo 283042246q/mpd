@@ -82,13 +82,20 @@ class FactorizedSampler:
     def _record(self, branch, step, stage, guided):
         self.statistics.append(dict(branch=branch, timestep=int(step), stage=stage, guided=bool(guided)))
 
+    def _refine(self, p, z, **kwargs):
+        from torch_robotics.torch_utils.torch_timer import TimerCUDA
+        with TimerCUDA(sync_cuda=p.is_cuda) as timer:
+            result = self.guide.refine(p, z, **kwargs)
+        self.guide_elapsed += timer.elapsed
+        return result
+
     def _space_step(self, x, pair, context, *, z=None, guided=False, stage="space", weak=False):
         step, following = pair
         t = torch.full((len(x),), step, dtype=torch.long, device=x.device)
         clean = self._project(self.space_model.predict_x_recon(x, t, context))
         if guided:
             current_z = self.guide.nominal(clean) if weak else z
-            clean, _ = self.guide.refine(clean, current_z, active="space", weak=weak)
+            clean, _ = self._refine(clean, current_z, active="space", weak=weak)
             clean = self._project(clean)
         alpha = self.space_model.alphas_cumprod[step]
         next_alpha = x.new_tensor(1.) if following < 0 else self.space_model.alphas_cumprod[following]
@@ -106,7 +113,7 @@ class FactorizedSampler:
         eps = self.timing_model.denoiser(z, t, path)
         clean = self.timing_model.predict_clean_from_noise(z, t, eps).detach()
         if guided:
-            _, clean = self.guide.refine(p.detach(), clean, active="timing")
+            _, clean = self._refine(p.detach(), clean, active="timing")
         alpha = self.timing_model.alphas_cumprod[step]
         next_alpha = z.new_tensor(1.) if following < 0 else self.timing_model.alphas_cumprod[following]
         out = ddim_update(z, clean, alpha, next_alpha, eta=self.settings.eta)
@@ -190,6 +197,7 @@ class FactorizedSampler:
     @torch.no_grad()
     def sample(self, shape, context, hard_conds, *, device, dtype=torch.float32):
         self.statistics = []
+        self.guide_elapsed = 0.
         self.hard_conds = hard_conds
         cfg = self.settings
         pn, tn = len(self.space_model.alphas_cumprod), len(self.timing_model.alphas_cumprod)
@@ -206,7 +214,7 @@ class FactorizedSampler:
             if cfg.method == "f2":
                 p, z = self._partial_alternating(p, z, context, ps, ts)
         for _ in range(cfg.refinement_steps):
-            p, z = self.guide.refine(p, z, active="joint")
+            p, z = self._refine(p, z, active="joint")
             p = self._project(p)
         if not torch.isfinite(p).all() or not torch.isfinite(z).all():
             raise ValueError("factorized sampler produced nonfinite states")
@@ -234,6 +242,8 @@ class FactorizedModelAdapter:
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         if results_ns is not None:
-            results_ns.t_generator += time.perf_counter() - started
+            elapsed = time.perf_counter() - started
+            results_ns.t_generator += max(0., elapsed - self.sampler.guide_elapsed)
+            results_ns.t_guide += self.sampler.guide_elapsed
         self.sampler.guide.timing_control_points = z
         return p.unsqueeze(0) if return_chain else p

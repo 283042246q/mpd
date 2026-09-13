@@ -1,6 +1,4 @@
 """Stateless physical cost evaluation; only the sampler applies updates."""
-from dataclasses import replace
-
 import torch
 
 from mpd.inference.space_time_guidance import (
@@ -39,7 +37,7 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
     def nominal(self, p):
         return torch.zeros((len(p), 6), device=p.device, dtype=p.dtype)
 
-    def state(self, p, z, *, weak=False):
+    def state(self, p, z, *, weak=False, collision_kinematics=True):
         full = self.full_path(p)
         bspline = self.planning_task.parametric_trajectory.bspline
         q, qs, qss = [torch.einsum("hk,bkd->bhd", basis.squeeze(0), full)
@@ -49,8 +47,9 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
             timing = self.timing_spline.evaluate(c, q=q, q_s=qs, q_ss=qss)
         else:
             timing, _ = self.codec.evaluate(z, q, qs, qss)
-        return self._attach_collision_kinematics(SpaceTimeTrajectoryState(q, qs, qss, timing),
-                                                include_spatial_jacobians=False)
+        state = SpaceTimeTrajectoryState(q, qs, qss, timing)
+        return (self._attach_collision_kinematics(state, include_spatial_jacobians=False)
+                if collision_kinematics else state)
 
     def evaluate_control_points(self, p, timing_control_points=None, *, return_state=False, **kwargs):
         z = self.timing_control_points if timing_control_points is None else timing_control_points
@@ -107,7 +106,7 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
                 # Preserve already feasible bounds. Invalid initial predictions
                 # may improve their violation instead of being permanently frozen.
                 def violation(pp, zz):
-                    t = self.state(pp, zz).timing.duration
+                    t = self.state(pp, zz, collision_kinematics=False).timing.duration
                     return torch.relu(t - self.settings.duration_max) + torch.relu(self.settings.duration_min - t)
                 baseline = violation(p, z)
                 for _ in range(8):

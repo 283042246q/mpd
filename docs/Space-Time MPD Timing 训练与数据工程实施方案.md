@@ -8,7 +8,7 @@
 
 ## 1. 结论与推荐路线
 
-当前仓库已经实现了 candidate-specific 的时空代价、单调 TimingSpline、动态障碍评价、runtime timing contract，以及独立的 Factorized TimingDiffusion 训练链路；尚未把 learned timing sampler 接入 F1 runtime，也没有任何 joint-trained space-time diffusion。当前 `phase5_joint` 的含义仍是：
+当前仓库已经实现了 candidate-specific 的时空代价、单调 TimingSpline、动态障碍评价、runtime timing contract、独立的 Factorized TimingDiffusion 训练链路，以及独立入口的 F1/F2/F3 learned timing 推理（见第 14 节）。F3 sampler 可复用现有 checkpoint，但 rollout/repaired 微调与质量收益仍待实验验证。目前没有 joint-trained space-time diffusion。原入口中 `phase5_joint` 的含义仍是：
 
 ```text
 Spatial MPD 只扩散空间控制点 P
@@ -235,7 +235,7 @@ TimingDiffusion 在固定 P 上完整采样 c
 固定更新后的 P，重新执行 Timing 最后 rho_c
 ```
 
-F2 与 F1 使用相同训练模型和基础 clean 数据。区别主要在 sampler。当前 sampler 尚未提供 arbitrary (x_t) initialization，需要新增 partial-noise/partial-reverse API。
+F2 与 F1 使用相同训练模型和基础 clean 数据。区别主要在 sampler。独立 `factorized_sampler.py` 已实现显式 forward-noise 和 partial DDIM reverse；旧空间模型公共 sampler 接口不变。
 
 ### F3：低噪声区细粒度交替
 
@@ -774,7 +774,7 @@ c[6]: 独立逐维 mean/std
 
 ### 8.2 F1/F2 TimingDiffusion
 
-**训练与独立 sampler 已实现；F1 runtime 接入待实现。** Space checkpoint 保持不变。timing denoiser 为：
+**训练、独立 sampler 与 F1/F2/F3 独立 runtime 入口已实现。** Space checkpoint 保持不变。timing denoiser 为：
 
 \[
 \hat\epsilon_c=f_\phi(c_t,t,\operatorname{Enc}_P(P),x).
@@ -795,7 +795,7 @@ noisy timing latent[6] + sinusoidal diffusion time[128] + path embedding
   → predicted epsilon[6]
 ```
 
-默认约 356 万参数。`c` 表示由 full `c[8]` 编码为 `[c0,c2,c3,c4,c5,c7]`；`tau_r` 表示为 `[tau,r1..r5]`，并过滤 `quality/duration_bounds_valid=false`。两种表示分别训练 checkpoint，不在同一模型中混合 representation token。
+默认约 356 万参数。`c` 表示由 full `c[8]` 编码为 `[c0,c2,c3,c4,c5,c7]`；`tau_r` 表示为 `[tau,r1..r5]`。有 mode 数组时按 `quality/tau_r_mode_valid` 展开；只有旧 scalar tau 数据才过滤 `quality/duration_bounds_valid=false`。两种表示分别训练 checkpoint，不在同一模型中混合 representation token。
 
 训练损失：
 
@@ -1064,13 +1064,13 @@ sampler 决定应用哪个梯度，CostGuide 不再拥有隐式 optimizer state�
 | PR3 | `fit_timing_reference()` + timing variants + dense validator | 已实现 | monotonic、fit RMSE、v/a reconstruction |
 | PR4 | canonical `TimingDatasetView` + TimingNormalizer | 已实现；Spatial/Joint view 随 JointDual 增加 | batch shapes、normalizer roundtrip、split fallback |
 | PR5a | P-conditioned TimingDiffusion + 独立训练/采样/checkpoint | 已实现 | c/tau_r loss、sampling shape、真实 shard smoke、resume |
-| PR5b | TimingDiffusion 接入 F1 runtime sampler | 待实现 | candidate-specific timing、dense validation |
-| PR6 | stateless SpaceTimeCostGuide + F1 short joint refinement | 从现有 guide 提取 | grad P/c、mode parity |
-| PR7 | arbitrary partial-noise sampler + F2 | 待实现 | forward/reverse level、deterministic DDIM |
+| PR5b | TimingDiffusion 接入 F1 runtime sampler | 已实现，独立入口 | candidate-specific timing、dense validation |
+| PR6 | stateless SpaceTimeCostGuide + F1 short joint refinement | 已实现，旧 wrapper 保留 | grad P/c、mode parity |
+| PR7 | arbitrary partial-noise sampler + F2 | 已实现，复用 checkpoint | forward/reverse level、deterministic DDIM |
 | PR8 | rollout collector + retime repair + F3 fine-tune | 依赖 F1/F2 | parent split、repaired feasibility |
-| PR9 | F3 structured alternating sampler | 依赖 PR8 | gate、step ratio、noise-level contract |
+| PR9 | F3 structured alternating sampler | sampler 已实现；PR8 微调仍待做 | gate、step ratio、noise-level contract |
 | PR10 | JointDual model/loss/checkpoint transplant | 依赖统一数据 | branch loss、zero adapter、sync sampler |
-| PR11 | runtime learned timing integration | 依赖 F1 或 JointDual | artifact v3、fallback、dense validation |
+| PR11 | runtime learned timing integration | 独立 F1/F2/F3 CLI 已实现；旧 server 不切换 | artifact v3、失败关闭、dense validation |
 
 必须优先保留/补充的数学测试：
 
@@ -1183,3 +1183,150 @@ source-group leakage；全量数据重新生成后再固化基准数值。
 2. 在不重训模型时，交替 sampler 是否有效；
 3. 中间路径数据增强是否使细粒度交替稳定；
 4. 联合训练的 dual-branch 是否真正学习到超出 CostGuide 的空间—时间相关性。
+
+---
+
+## 14. 已实现的独立 F1/F2/F3 推理入口
+
+入口：`scripts/inference/infer_factorized.py`；独立配置：
+`scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-factorized.yaml`。
+原 `inference.py`、`infer_space_time.py` 与 Phase-4/5 server 参数/模式不变。
+共享 `TemporalUnet.forward` 仅补旧 pickle checkpoint 缺失 `horizon_multiple`
+属性的兼容回退，由已有 downsample 层数恢复 stride，新模型行为不变。
+
+### 14.1 显式 basis 适配
+
+当前默认空间模型为 full `P[21,7]`（16 learnable + 5 fixed）；两个 warehouse v2
+timing checkpoint 的条件输入为 `P[29,7]`，两者 spatial degree 都是 5。
+29 指空间条件，不是 timing spline 的控制点数。
+
+默认严格检查 robot fingerprint、degree、DOF、control-point count。
+指定 `--adapt-spatial-basis` 后仅允许数量不同：重建 Timing encoder 的
+`basis/basis_d1/basis_d2`，在相同 64 个 phase 位置精确计算实际 spline 的
+`q/q_s/q_ss`。CNN、FiLM、denoiser 权重、checkpoint 文件和空间路径均不改变；
+不执行 21→29 拟合。Tmin 与代价也始终基于实际 P。结果记录训练/runtime 数量及
+`spatial_basis_adapted`。robot/limits/degree 不匹配仍报错。
+
+这解决维度兼容，不证明分布一致。RRT teacher 和 MPD generated 路径偏移仍需评估；
+F3 仍建议做 rollout/repaired timing 微调。
+
+### 14.2 表示、梯度和限制
+
+- `c`：反归一化六维 latent，展开端点成对的 full `c[8]`，直接使用 softplus timing。
+- `tau_r`：反归一化 `[tau,r5]`，直接解码 normalized log-density，按实际 `(P,r)`
+  计算 `Tmin=max(duration_min,T_velocity,T_acceleration)`，再重构 bounded duration。
+  不经过 c 拟合中转。若 `Tmin>=Tmax`，不向下裁剪 Tmin 伪造可行性；保留超时信息，
+  通过 deadline penalty 尝试修正 shape，最终拒绝超限候选。
+
+Tmin 是离散网格下界，不是连续区间证明。默认 timing/dense grid 为 128 点。
+首版要求零起终速度和加速度；非零边界直接报错。NaN/Inf checkpoint 在启动时拒绝，
+不会静默回退到 nominal timing。
+
+所有物理代价在 clean estimate 上计算：
+
+- 初始 Space：原 static/goal/spatial cost，加默认 0.2 倍动态项，使用默认 10s
+  nominal timing；关闭原 fixed-time velocity/acceleration 两项。
+- Timing：固定 P，更新 z；dynamic、velocity、acceleration、duration、timing smoothness。
+- F2/F3 Space：固定 timing latent，更新 P；原空间代价加 candidate-specific 时空代价。
+- Final joint：同时更新 P/z，按 candidate 限制梯度范数，并对 duration violation 回溯。
+
+注意：tau_r 模式中固定 tau/r 不代表固定绝对 T。P 改变会改变 Tmin(P,r)，从而
+改变 T；相应梯度保留在图中。c 模式固定 c 时则没有这种 P→T 的依赖。
+guide 不拥有隐式 Adam optimizer，sampler 显式决定更新哪个变量。
+`--space-lr/--timing-lr` 是标准化状态的步长，不能直接解释成弧度或秒。
+
+### 14.3 实际采样调度
+
+| 方法 | 调度 |
+|---|---|
+| F1 | 完整 Space → 固定 P 完整 Timing → 默认 5 步 joint refinement |
+| F2 | Space + Timing → P 低噪声重采样、z 低噪声重采样（默认一轮）→ joint refinement |
+| F3 | Space 高噪声段 → Timing 高噪声段 → 低噪声区 1:1/1:2 交替 → joint refinement |
+
+F2 在最后统一 refinement，不在每轮重采样前额外执行 F1 refinement。
+`--alternating-rounds` 只用于 F2。F3 第一个低噪声 Space 步仍用弱 nominal guidance；
+获得低噪声 timing estimate 后才对 Space 开启真实 timing cross guidance。
+
+独立 DDIM 默认 `--space-steps 32 --timing-steps 100 --eta 0`。guide fraction 默认
+0.3，按各自训练时间轴的 `ceil(rho*T)-1` 计算阈值。实际 timesteps/NFE 全部记录。
+F3 的低噪声 timing schedule 根据 Space 步数和 ratio 重新对齐，因此实际 Timing
+NFE 可能不同于 `--timing-steps`；以 metadata 的 `denoiser_evaluations` 为准。
+不能容纳指定 ratio 时明确报错，不重复 timestep 伪造 reverse step。
+eta=0 在初始随机状态/seed 固定时可复现；F2 forward-noise 也受同一 seed 控制。
+
+原 YAML 的 `ddim` sampling 参数不控制新 sampler。场景、空间模型、静态 cost、
+candidate 数和验证配置仍从 `--config` 读取。每条候选最终复算静态/动态碰撞、
+joint position、velocity、acceleration、时长；只导出通过验证的 top-K，无可行
+候选返回失败。
+
+### 14.4 运行方法
+
+```bash
+conda activate mpd-splines-public
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+# c 模型 F1；改 --method f2/f3 即复用同一 checkpoint
+python scripts/inference/infer_factorized.py \
+  --request tests/data/runtime_cartesian_request.json \
+  --timing-checkpoint data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt \
+  --adapt-spatial-basis --method f1 \
+  --space-steps 32 --timing-steps 100 \
+  --output-dir logs-factorized/f1-c --device cuda:0
+
+# tau_r 三种方法，使用崩溃前的健康 checkpoint
+for method in f1 f2 f3; do
+  python scripts/inference/infer_factorized.py \
+    --request tests/data/runtime_cartesian_request.json \
+    --timing-checkpoint data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt \
+    --adapt-spatial-basis --method "$method" \
+    --space-steps 32 --timing-steps 100 \
+    --output-dir "logs-factorized/${method}-tau-r" --device cuda:0
+done
+```
+
+动态世界通过 `--world /path/to/world.json` 或 request.dynamic_world 提供，二者互斥；
+有效期必须覆盖 trajectory start + duration_max。`--config` 切换 Panda 环境/空间
+checkpoint，request.scene_id 必须匹配。candidate 数修改独立 YAML 的
+`n_trajectory_samples`。F3 的 1:2 加 `--timing-steps-per-space-step 2`；F2 多轮加
+`--alternating-rounds 2`。CPU 用 `--device cpu`。重复测试用 `--repeats N --seed-step 1`。
+`--refinement-steps 0` 关闭最终联合优化；`--weak-dynamic-scale 0` 关闭名义动态项。
+`--debug` 输出完整 traceback。
+
+### 14.5 代码、导出和验证
+
+```text
+mpd/inference/learned_timing.py            checkpoint/basis/可微 codec
+mpd/inference/factorized_guidance.py       显式 cost/gradient 与回溯
+mpd/inference/factorized_sampler.py        F1/F2/F3、forward-noise、DDIM
+scripts/runtime/factorized_runtime_engine.py  request/world/dense validation 接入
+scripts/inference/infer_factorized.py     独立 CLI
+```
+
+输出 `summary.json` 和 `run-XXXX/result.json,trajectory.npz,request.json`。
+NPZ 保持 trajectory schema v3 和 `topk_time_from_start`；新增
+`timing_representation` 与反归一化 `timing_latents`。c 另存 full
+`timing_control_points[8]`；tau_r 存 `timing_tau`、`timing_shape_control_points`，
+不把 tau/r 错标为 c。JSON 的 factorized 节记录 checkpoint/hash、basis 适配、
+settings 和逐步 timestep/NFE。generator/guide 耗时分别统计；dense 时间包含实际
+candidate-specific validation 和旧 planner 内部的初步验证。
+
+```bash
+python -m pytest -q \
+  tests/test_learned_timing_inference.py \
+  tests/test_factorized_sampler.py \
+  tests/test_factorized_guidance.py \
+  tests/test_infer_factorized.py \
+  tests/test_infer_space_time.py \
+  tests/test_runtime_timing_contract.py
+```
+
+测试覆盖 NumPy teacher 一致性、梯度归属、空动态世界、basis 不改权重、旧 UNet、
+partial-noise、F3 ratio 与旧接口回归。真实 checkpoint smoke 只证明程序闭环，
+不是 F2/F3 优于 F1 的统计证据。F3 rollout 微调不会被自动推断，metadata 明确
+记录 `f3_rollout_finetuning_verified=false`。
+
+本次交付使用 `mpd-splines-public` 在 CPU 上完成六种组合的真实 checkpoint
+smoke（F1/F2/F3 × c/tau_r），每次生成 100 candidates、导出 8 条验证通过的轨迹。
+F3 同时覆盖移动 sphere、1:2 ratio 和原 static pruning。使用缩减采样预算检查
+端到端闭环，不作为性能 benchmark；GPU 吞吐量尚未测量。回归检查合计
+52 passed / 1 skipped，包含旧 timing 训练、旧 Phase-5 guidance 与入口。

@@ -32,6 +32,25 @@ def load_timing_checkpoint(path, device="cpu", *, use_ema=True):
     return model, payload
 
 
+def adapt_timing_path_basis(model, num_control_points):
+    """Explicit inference-only basis adaptation; trained parameters are untouched.
+
+    q/q_s/q_ss are evaluated exactly for the new uniform spline at the same
+    phase grid. This changes geometry preprocessing, not the learned encoder.
+    """
+    encoder = model.denoiser.path_encoder
+    num_control_points = int(num_control_points)
+    if num_control_points <= encoder.degree:
+        raise ValueError("spatial control-point count must exceed spline degree")
+    basis = BSpline(open_uniform_knots(num_control_points, encoder.degree),
+                    np.eye(num_control_points), encoder.degree)
+    phase = np.linspace(0., 1., encoder.num_phase_points)
+    tensor_args = dict(device=encoder.basis.device, dtype=encoder.basis.dtype)
+    for name, order in (("basis", 0), ("basis_d1", 1), ("basis_d2", 2)):
+        setattr(encoder, name, torch.tensor(basis.derivative(order)(phase), **tensor_args))
+    encoder.num_control_points = num_control_points
+
+
 class LearnedTimingCodec(nn.Module):
     def __init__(self, normalization, *, num_phase_points=128, duration_min=2.,
                  duration_max=14., u_min=.05, density_floor=.001,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Independent F1/F2/F3 CLI with the existing request/world/NPZ contract."""
 from pathlib import Path
+import argparse
 import json
 import sys
 
@@ -8,16 +9,32 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.inference.infer_space_time import _build_parser as base_parser, run
+from scripts.inference.infer_space_time import run, _positive_integer, _nonnegative_integer
 from scripts.runtime.factorized_runtime_engine import FactorizedMpdRuntimeEngine
 from scripts.runtime.infer_once import _atomic_write_json
 
 
 def _build_parser():
-    parser = base_parser()
-    parser.description = "Learned factorized F1/F2/F3 MPD inference (rest-to-rest Panda)."
-    parser.set_defaults(duration_min=2., timing_mode="phase5_joint",
-        config=REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-factorized.yaml")
+    parser = argparse.ArgumentParser(description="Learned factorized F1/F2/F3 MPD inference (rest-to-rest Panda).")
+    parser.add_argument("--request", type=Path, required=True)
+    parser.add_argument("--world", type=Path)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--config", type=Path,
+        default=REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-factorized.yaml")
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--repeats", type=_positive_integer, default=1)
+    parser.add_argument("--seed", type=_nonnegative_integer)
+    parser.add_argument("--seed-step", type=_nonnegative_integer, default=0)
+    parser.add_argument("--trajectory-start-unix-ns", type=_nonnegative_integer)
+    parser.add_argument("--max-dynamic-objects", type=_positive_integer, default=16)
+    parser.add_argument("--covariance-sigma", type=float, default=3.)
+    parser.add_argument("--process-acceleration-std", type=float, default=.01)
+    parser.add_argument("--duration-min", type=float, default=2.)
+    parser.add_argument("--duration-max", type=float, default=14.)
+    parser.add_argument("--nominal-duration", type=float, default=10.)
+    parser.add_argument("--no-static-spatial-pruning", dest="static_spatial_pruning", action="store_false", default=True)
+    parser.set_defaults(timing_mode="phase5_joint", timing_control_points=8, timing_degree=3,
+        timing_learning_rate=.08, u_min=.05, dynamic_space_time_pruning=False)
     parser.add_argument("--method", choices=("f1", "f2", "f3"), default="f1")
     parser.add_argument("--timing-checkpoint", type=Path, required=True)
     parser.add_argument("--adapt-spatial-basis", action="store_true",
@@ -49,7 +66,7 @@ def main(argv=None):
     try:
         path = run(args, engine_factory=factory)
         summary = json.loads(path.read_text())
-        summary.update(schema="mpd_factorized_inference", method=args.method,
+        summary.update(schema="mpd_factorized_inference", method=args.method, timing_mode=args.method,
                        timing_checkpoint=str(args.timing_checkpoint.resolve()))
         _atomic_write_json(path, summary)
         print(path)

@@ -7,7 +7,7 @@ import torch
 from mpd.datasets.spacetime_schema import load_panda_robot_bundle, sha256_file
 from mpd.inference.factorized_guidance import FactorizedCostGuide
 from mpd.inference.factorized_sampler import FactorizedSettings, FactorizedSampler, FactorizedModelAdapter
-from mpd.inference.learned_timing import LearnedTimingCodec, load_timing_checkpoint
+from mpd.inference.learned_timing import LearnedTimingCodec, load_timing_checkpoint, adapt_timing_path_basis
 from scripts.runtime.space_time_runtime_engine import SpaceTimeMpdRuntimeEngine
 
 
@@ -29,15 +29,7 @@ class FactorizedMpdRuntimeEngine(SpaceTimeMpdRuntimeEngine):
             raise ValueError("factorized inference requires planner_alg: mpd")
         self._validate_contract(payload)
         if self.spatial_basis_adapted:
-            from scipy.interpolate import BSpline
-            from mpd.datasets.spacetime_legacy import open_uniform_knots
-            encoder = timing_model.denoiser.path_encoder
-            count = int(self.planning_task.parametric_trajectory.bspline.n_pts)
-            basis = BSpline(open_uniform_knots(count, encoder.degree), np.eye(count), encoder.degree)
-            phase = np.linspace(0., 1., encoder.num_phase_points)
-            for name, order in (("basis", 0), ("basis_d1", 1), ("basis_d2", 2)):
-                setattr(encoder, name, torch.tensor(basis.derivative(order)(phase), dtype=torch.float32))
-            encoder.num_control_points = count
+            adapt_timing_path_basis(timing_model, self.planning_task.parametric_trajectory.bspline.n_pts)
         timing_model = timing_model.to(self.device)
         codec = LearnedTimingCodec(payload["normalization"], num_phase_points=int(self.args_inference.num_T_pts),
             duration_min=self.space_time_settings.duration_min, duration_max=self.space_time_settings.duration_max,
@@ -55,6 +47,16 @@ class FactorizedMpdRuntimeEngine(SpaceTimeMpdRuntimeEngine):
         self.timing_environment = payload["environment"]
         self.timing_representation = payload["representation"]
         self.timing_checkpoint_sha256 = sha256_file(self.timing_checkpoint)
+        self.training_spatial_control_points = int(payload["model_config"]["num_spatial_control_points"])
+
+    def _postprocess_plan_results(self, results):
+        from torch_robotics.torch_utils.torch_timer import TimerCUDA
+        with TimerCUDA(sync_cuda=self.device.type == "cuda") as timer:
+            results = super()._postprocess_plan_results(results)
+        # Include candidate-specific validation, not just the preliminary
+        # fixed-duration validation performed inside the legacy spatial planner.
+        results.dense_validation_time += timer.elapsed
+        return results
 
     def _validate_contract(self, payload):
         contract = payload["dataset_identity"]["contract"]
@@ -85,11 +87,14 @@ class FactorizedMpdRuntimeEngine(SpaceTimeMpdRuntimeEngine):
     def health(self):
         response = super().health()
         if hasattr(self, "timing_representation"):
+            response["space_time"].update(mode=self.factorized_settings.method, learned_timing=True)
             response["factorized"] = dict(settings=self.factorized_settings.__dict__,
                 representation=self.timing_representation, timing_checkpoint=str(self.timing_checkpoint),
                 timing_checkpoint_step=self.timing_checkpoint_step, timing_environment=self.timing_environment,
                 timing_checkpoint_sha256=self.timing_checkpoint_sha256,
                 spatial_basis_adapted=self.spatial_basis_adapted,
+                training_spatial_control_points=self.training_spatial_control_points,
+                runtime_spatial_control_points=int(self.planning_task.parametric_trajectory.bspline.n_pts),
                 rest_to_rest_only=True, f3_rollout_finetuning_verified=False)
         return response
 
@@ -118,4 +123,7 @@ class FactorizedMpdRuntimeEngine(SpaceTimeMpdRuntimeEngine):
         artifacts.result_payload["factorized"] = metadata
         artifacts.result_payload["trajectory"]["timing_mode"] = self.factorized_settings.method
         artifacts.result_payload["trajectory"]["timing_representation"] = self.timing_representation
+        artifacts.result_payload["space_time_guidance"]["settings"]["mode"] = self.factorized_settings.method
+        artifacts.result_payload["space_time_guidance"].update(learned_timing=True,
+            representation=self.timing_representation)
         return artifacts
