@@ -7,6 +7,7 @@ import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     CATEGORIES,
+    DEFAULT_MODES,
     DIFFICULTIES,
     MODE_SPECS,
     PREDICTION_HORIZON_S,
@@ -17,6 +18,7 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     _trajectory_segment_metrics,
     extract_run_metrics,
     generate_suite,
+    main,
     write_reports,
 )
 
@@ -85,15 +87,18 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
     }
 
 
-def test_benchmark_defaults_to_large_five_mode_matrix():
+def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     args = _parser().parse_args([])
 
     assert args.scenario_count == 50
     assert args.repeats == 5
-    assert args.modes == list(MODE_SPECS)
+    assert args.modes == list(DEFAULT_MODES)
     assert args.categories is None
     assert MODE_SPECS["phase4"] == ("phase4", None)
     assert MODE_SPECS["phase4_aligned"] == ("phase4_aligned", None)
+    assert MODE_SPECS["f1"] == ("factorized", None)
+    assert MODE_SPECS["f2"] == ("factorized", None)
+    assert MODE_SPECS["f3"] == ("factorized", None)
 
 
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
@@ -200,6 +205,13 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
                         }
                     ],
                 },
+                "factorized": {
+                    "representation": "tau_r",
+                    "timing_checkpoint_step": 60000,
+                    "timing_checkpoint_sha256": "a" * 64,
+                    "spatial_basis_adapted": True,
+                    "denoiser_evaluations": {"space": 32, "timing": 100},
+                },
             }
         ),
         encoding="utf-8",
@@ -225,6 +237,11 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert metrics["spatial_dynamic_grad_cap"] == pytest.approx(2.0)
     assert metrics["spatial_clip_ratio"] == pytest.approx(0.25)
     assert metrics["static_dynamic_gradient_cosine_mean"] == pytest.approx(-0.2)
+    assert metrics["factorized_representation"] == "tau_r"
+    assert metrics["factorized_timing_checkpoint_step"] == 60000
+    assert metrics["factorized_spatial_basis_adapted"] is True
+    assert metrics["factorized_space_nfe_mean"] == pytest.approx(32.0)
+    assert metrics["factorized_timing_nfe_mean"] == pytest.approx(100.0)
 
     suite = generate_suite(1, 42)
     write_reports(tmp_path, [metrics], suite)
@@ -238,7 +255,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "Clearance 汇总" in report
     assert "难度分层结果" in report
     assert "规划轨迹时长 mean s" in report
-    assert "Phase 5 梯度裁剪诊断" in report
+    assert "Phase 5 / Factorized 梯度裁剪诊断" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
 
 
@@ -340,7 +357,7 @@ def test_reversed_active_interval_is_a_real_continuity_failure(tmp_path):
     assert normalized["failure_class"] == "command_continuity"
 
 
-def test_paired_summary_requires_manifest_from_all_five_modes():
+def test_paired_summary_requires_manifest_from_all_report_modes():
     rows = [
         {
             "scenario_id": "scenario-000",
@@ -363,6 +380,61 @@ def test_paired_summary_requires_manifest_from_all_five_modes():
     assert paired["by_mode"]["phase4"]["goal_reached"] == 1
     assert paired["by_mode"]["phase4"]["goal_and_brake_runs"] == 1
     assert paired["by_mode"]["joint"]["goal_reached"] == 0
+
+
+def test_paired_summary_can_compare_only_requested_six_modes():
+    selected = ("phase4", "phase4_aligned", "joint", "f1", "f2", "f3")
+    rows = [
+        {
+            "scenario_id": "scenario-000",
+            "repeat": 0,
+            "mode": mode,
+            "manifest_available": True,
+            "pipeline_completed": True,
+            "goal_reached": True,
+        }
+        for mode in selected
+    ]
+
+    paired = _paired_summary(rows, selected)
+
+    assert paired["cell_count"] == 1
+    assert tuple(paired["by_mode"]) == selected
+
+
+def test_factorized_dry_run_writes_paired_commands_with_explicit_basis(tmp_path):
+    checkpoint = tmp_path / "timing.pt"
+    checkpoint.write_bytes(b"checkpoint-placeholder")
+    output = tmp_path / "benchmark"
+    selected = ("phase4", "phase4_aligned", "joint", "f1", "f2", "f3")
+
+    assert main(
+        [
+            "--output-dir",
+            str(output),
+            "--scenario-count",
+            "1",
+            "--repeats",
+            "1",
+            "--modes",
+            *selected,
+            "--factorized-timing-checkpoint",
+            str(checkpoint),
+            "--dry-run",
+        ]
+    ) == 0
+
+    specs = {}
+    for mode in selected:
+        path = next((output / "runs" / "scenario-000" / "repeat-00" / mode).glob("*/run-spec.json"))
+        specs[mode] = json.loads(path.read_text(encoding="utf-8"))
+    assert {spec["planner_seed"] for spec in specs.values()} == {20260829}
+    for method in ("f1", "f2", "f3"):
+        command = specs[method]["command"]
+        assert command[command.index("--phase") + 1] == "factorized"
+        assert command[command.index("--factorized-method") + 1] == method
+        assert "--factorized-adapt-spatial-basis" in command
+        assert specs[method]["factorized_spatial_basis_adapted"] is True
 
 
 def test_existing_rows_keep_historical_infrastructure_attempt_count(tmp_path):

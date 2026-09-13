@@ -31,8 +31,20 @@ MODE_SPECS = {
     "scalar_duration": ("phase5", "phase5_scalar_duration"),
     "timing_only": ("phase5", "phase5_timing_only"),
     "joint": ("phase5", "phase5_joint"),
+    "f1": ("factorized", None),
+    "f2": ("factorized", None),
+    "f3": ("factorized", None),
 }
-MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {}
+DEFAULT_MODES = (
+    "phase4",
+    "phase4_aligned",
+    "scalar_duration",
+    "timing_only",
+    "joint",
+)
+MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {
+    method: ("--factorized-method", method) for method in ("f1", "f2", "f3")
+}
 CATEGORIES = (
     "single_crossing",
     "staggered_multi",
@@ -110,6 +122,12 @@ REPORT_FIELDS = (
     "dense_self_clearance_m",
     "inference_total_mean_s",
     "inference_total_p95_s",
+    "factorized_representation",
+    "factorized_timing_checkpoint_step",
+    "factorized_timing_checkpoint_sha256",
+    "factorized_spatial_basis_adapted",
+    "factorized_space_nfe_mean",
+    "factorized_timing_nfe_mean",
     "spatial_dynamic_grad_cap",
     "spatial_clip_ratio",
     "timing_clip_ratio",
@@ -648,6 +666,25 @@ def extract_run_metrics(
             for guidance in guidance_payloads
         ]
     )
+    factorized_payloads = [
+        payload.get("factorized", {})
+        for payload in result_payloads
+        if isinstance(payload.get("factorized"), dict) and payload.get("factorized")
+    ]
+
+    def common_factorized_value(name: str) -> Any:
+        values = [payload.get(name) for payload in factorized_payloads]
+        values = [value for value in values if value is not None]
+        if not values:
+            return None
+        return values[0] if all(value == values[0] for value in values) else "mixed"
+
+    factorized_space_nfe = _finite(
+        [payload.get("denoiser_evaluations", {}).get("space") for payload in factorized_payloads]
+    )
+    factorized_timing_nfe = _finite(
+        [payload.get("denoiser_evaluations", {}).get("timing") for payload in factorized_payloads]
+    )
 
     def guidance_mean(name: str) -> float | None:
         values = _finite([step.get(name) for step in guidance_steps])
@@ -711,6 +748,22 @@ def extract_run_metrics(
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
         inference_total_p95_s=(
             float(np.percentile(inference_times, 95)) if inference_times else None
+        ),
+        factorized_representation=common_factorized_value("representation"),
+        factorized_timing_checkpoint_step=common_factorized_value(
+            "timing_checkpoint_step"
+        ),
+        factorized_timing_checkpoint_sha256=common_factorized_value(
+            "timing_checkpoint_sha256"
+        ),
+        factorized_spatial_basis_adapted=common_factorized_value(
+            "spatial_basis_adapted"
+        ),
+        factorized_space_nfe_mean=(
+            float(np.mean(factorized_space_nfe)) if factorized_space_nfe else None
+        ),
+        factorized_timing_nfe_mean=(
+            float(np.mean(factorized_timing_nfe)) if factorized_timing_nfe else None
         ),
         spatial_dynamic_grad_cap=(
             float(np.mean(gradient_caps)) if gradient_caps else None
@@ -802,6 +855,29 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
+        "factorized_representations": sorted(
+            {
+                str(row["factorized_representation"])
+                for row in rows
+                if row.get("factorized_representation") is not None
+            }
+        ),
+        "factorized_checkpoint_steps": sorted(
+            {
+                int(row["factorized_timing_checkpoint_step"])
+                for row in rows
+                if isinstance(row.get("factorized_timing_checkpoint_step"), (int, float))
+            }
+        ),
+        "factorized_basis_adapted_runs": sum(
+            row.get("factorized_spatial_basis_adapted") is True for row in rows
+        ),
+        "factorized_space_nfe": _describe(
+            [row.get("factorized_space_nfe_mean") for row in rows]
+        ),
+        "factorized_timing_nfe": _describe(
+            [row.get("factorized_timing_nfe_mean") for row in rows]
+        ),
         "spatial_dynamic_grad_cap": _describe(
             [row.get("spatial_dynamic_grad_cap") for row in rows]
         ),
@@ -833,7 +909,20 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _paired_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _report_modes(
+    rows: list[dict[str, Any]], mode_names: tuple[str, ...] | list[str] | None = None
+) -> tuple[str, ...]:
+    if mode_names is not None:
+        return tuple(dict.fromkeys(mode_names))
+    present = {str(row.get("mode")) for row in rows if row.get("mode") is not None}
+    ordered = [mode for mode in MODE_SPECS if mode in present]
+    return tuple(ordered + sorted(present - set(ordered)))
+
+
+def _paired_summary(
+    rows: list[dict[str, Any]], mode_names: tuple[str, ...] | list[str] | None = None
+) -> dict[str, Any]:
+    modes_to_pair = _report_modes(rows, mode_names)
     grouped: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
     for row in rows:
         key = (str(row.get("scenario_id")), int(row.get("repeat", 0)))
@@ -841,12 +930,16 @@ def _paired_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     complete_cells = [
         modes
         for modes in grouped.values()
-        if all(mode in modes and bool(modes[mode].get("manifest_available")) for mode in MODE_SPECS)
+        if modes_to_pair
+        and all(
+            mode in modes and bool(modes[mode].get("manifest_available"))
+            for mode in modes_to_pair
+        )
     ]
     return {
         "cell_count": len(complete_cells),
         "by_mode": {
-            mode: _aggregate([cell[mode] for cell in complete_cells]) for mode in MODE_SPECS
+            mode: _aggregate([cell[mode] for cell in complete_cells]) for mode in modes_to_pair
         },
     }
 
@@ -857,7 +950,13 @@ def _fmt(value: Any, digits: int = 3) -> str:
     return f"{float(value):.{digits}f}"
 
 
-def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str, Any]) -> None:
+def write_reports(
+    output_dir: Path,
+    rows: list[dict[str, Any]],
+    suite: dict[str, Any],
+    mode_names: tuple[str, ...] | list[str] | None = None,
+) -> None:
+    report_modes = _report_modes(rows, mode_names)
     reports = output_dir / "report"
     reports.mkdir(parents=True, exist_ok=True)
     with (reports / "runs.csv").open("w", newline="", encoding="utf-8") as stream:
@@ -865,14 +964,15 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         writer.writeheader()
         writer.writerows(rows)
     by_mode = {
-        mode: _aggregate([row for row in rows if row.get("mode") == mode]) for mode in MODE_SPECS
+        mode: _aggregate([row for row in rows if row.get("mode") == mode])
+        for mode in report_modes
     }
     by_category = {
         category: {
             mode: _aggregate(
                 [row for row in rows if row.get("category") == category and row.get("mode") == mode]
             )
-            for mode in MODE_SPECS
+            for mode in report_modes
         }
         for category in CATEGORIES
     }
@@ -885,17 +985,18 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
                     if row.get("difficulty") == difficulty and row.get("mode") == mode
                 ]
             )
-            for mode in MODE_SPECS
+            for mode in report_modes
         }
         for difficulty in DIFFICULTIES
     }
-    paired = _paired_summary(rows)
+    paired = _paired_summary(rows, report_modes)
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
         "schema_version": 3,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "run_count": len(rows),
+        "modes": list(report_modes),
         "metric_semantics": {
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
@@ -916,7 +1017,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
         f"- suite seed：`{suite['suite_seed']}`",
         f"- 场景数：{suite['scenario_count']}",
         f"- 已发现运行：{len(rows)}",
-        "- 模式：" + "、".join(MODE_SPECS),
+        "- 模式：" + "、".join(report_modes),
         "- 场景构造：包含水平/竖直穿越、匀速、匀加速、曲线和光滑速度/加速度波动；按 easy/moderate/hard 分层。硬场景仍保留一条空间通道或后续时间间隙，但不预先保证规划成功。",
         "",
         "## 指标口径",
@@ -986,7 +1087,7 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
     lines.extend(
         [
             "",
-            "## Phase 5 梯度裁剪诊断",
+            "## Phase 5 / Factorized 梯度裁剪诊断",
             "",
             "Phase 4 不计算候选特定时空梯度，因此对应项为 `n/a`。cosine 只统计静态与动态梯度均非零的候选；conflict ratio 表示 cosine < 0 的比例。",
             "",
@@ -1004,6 +1105,34 @@ def write_reports(output_dir: Path, rows: list[dict[str, Any]], suite: dict[str,
             f"{_fmt(data['static_dynamic_gradient_conflict_ratio']['mean'])} | "
             f"{_fmt(data['static_dynamic_gradient_cosine_valid_ratio']['mean'])} |"
         )
+    factorized_modes = {
+        mode: data
+        for mode, data in by_mode.items()
+        if mode in {"f1", "f2", "f3"}
+    }
+    if factorized_modes:
+        lines.extend(
+            [
+                "",
+                "## Factorized 模型与计算量",
+                "",
+                "NFE 是每次成功规划中空间/时间 denoiser 的平均调用次数；basis adapted runs 应与该模式有结果的运行数一致（ToDrawer 的 21 点空间模型显式适配 29 点 timing 训练条件）。",
+                "",
+                "| 模式 | timing 表达 | checkpoint step | basis adapted runs | space NFE mean | timing NFE mean |",
+                "|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for mode, data in factorized_modes.items():
+            representations = ", ".join(data["factorized_representations"]) or "—"
+            checkpoint_steps = ", ".join(
+                str(value) for value in data["factorized_checkpoint_steps"]
+            ) or "—"
+            lines.append(
+                f"| {mode} | {representations} | {checkpoint_steps} | "
+                f"{data['factorized_basis_adapted_runs']} | "
+                f"{_fmt(data['factorized_space_nfe']['mean'])} | "
+                f"{_fmt(data['factorized_timing_nfe']['mean'])} |"
+            )
     lines.extend(
         [
             "",
@@ -1272,6 +1401,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "planner_seed": planner_seed,
                     "scenario_file": scenario_path.as_posix(),
                 }
+                if phase == "factorized":
+                    run_spec.update(
+                        factorized_method=mode,
+                        factorized_timing_checkpoint=(
+                            args.factorized_timing_checkpoint.resolve().as_posix()
+                        ),
+                        factorized_spatial_basis_adapted=(
+                            args.factorized_adapt_spatial_basis
+                        ),
+                    )
                 command = [
                     PIPELINE.as_posix(),
                     "--profile",
@@ -1295,6 +1434,15 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     command.extend(("--ros-domain-id", str(args.ros_domain_id)))
                 if timing_mode is not None:
                     command.extend(("--timing-mode", timing_mode))
+                if phase == "factorized":
+                    command.extend(
+                        (
+                            "--factorized-timing-checkpoint",
+                            args.factorized_timing_checkpoint.resolve().as_posix(),
+                        )
+                    )
+                    if args.factorized_adapt_spatial_basis:
+                        command.append("--factorized-adapt-spatial-basis")
                 command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
                 if not args.render:
                     command.append("--skip-render")
@@ -1312,7 +1460,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 metrics["wall_time_s"] = time.time() - started
                 _write_json(attempt_dir / "run-metrics.json", metrics)
                 rows = _existing_rows(output_dir)
-                write_reports(output_dir, rows, suite)
+                write_reports(output_dir, rows, suite, args.modes)
                 if returncode != 0:
                     failures += 1
                     if args.fail_fast:
@@ -1358,8 +1506,26 @@ def _parser() -> argparse.ArgumentParser:
         "--modes",
         nargs="+",
         choices=tuple(MODE_SPECS),
-        default=list(MODE_SPECS),
+        default=list(DEFAULT_MODES),
     )
+    parser.add_argument(
+        "--factorized-timing-checkpoint",
+        type=Path,
+        help="Required when f1, f2, or f3 is selected; checkpoint decides c vs tau_r",
+    )
+    factorized_basis = parser.add_mutually_exclusive_group()
+    factorized_basis.add_argument(
+        "--factorized-adapt-spatial-basis",
+        dest="factorized_adapt_spatial_basis",
+        action="store_true",
+        help="Explicit 29-point training to runtime spatial-basis adaptation (default: on)",
+    )
+    factorized_basis.add_argument(
+        "--no-factorized-adapt-spatial-basis",
+        dest="factorized_adapt_spatial_basis",
+        action="store_false",
+    )
+    parser.set_defaults(factorized_adapt_spatial_basis=True)
     parser.add_argument(
         "--categories",
         nargs="+",
@@ -1388,11 +1554,22 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
     if args.dry_run:
         args.skip_build = True
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
+    factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
+    if factorized_selected and args.factorized_timing_checkpoint is None:
+        parser.error("--factorized-timing-checkpoint is required when f1/f2/f3 is selected")
+    if (
+        args.factorized_timing_checkpoint is not None
+        and not args.factorized_timing_checkpoint.is_file()
+    ):
+        parser.error(
+            "--factorized-timing-checkpoint must name an existing regular file"
+        )
     if args.ros_domain_id is not None and not 0 <= args.ros_domain_id <= 232:
         raise SystemExit("ros-domain-id must lie in [0, 232]")
     return run_benchmark(args)
