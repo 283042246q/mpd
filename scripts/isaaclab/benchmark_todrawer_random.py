@@ -992,7 +992,7 @@ def write_reports(
     paired = _paired_summary(rows, report_modes)
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
-        "schema_version": 3,
+        "schema_version": 4,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "run_count": len(rows),
@@ -1561,10 +1561,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
     factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
-    if factorized_selected and args.factorized_timing_checkpoint is None:
+    if (
+        not args.report_only
+        and factorized_selected
+        and args.factorized_timing_checkpoint is None
+    ):
         parser.error("--factorized-timing-checkpoint is required when f1/f2/f3 is selected")
     if (
-        args.factorized_timing_checkpoint is not None
+        not args.report_only
+        and args.factorized_timing_checkpoint is not None
         and not args.factorized_timing_checkpoint.is_file()
     ):
         parser.error(

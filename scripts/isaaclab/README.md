@@ -122,6 +122,21 @@ Valid Phase 5 timing modes are `phase5_joint`, `phase5_timing_only`, and
 `--timing-mode` is rejected with either Phase 4 path so a requested ablation
 cannot be silently ignored.
 
+F1/F2/F3 use the same Phase-5 ROS execution and safety contract through the
+separate `factorized` worker. A checkpoint is deliberately required instead of
+silently choosing one, and the 29-control-point timing condition must be
+explicitly adapted for the 21-control-point ToDrawer spatial model:
+
+```bash
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer \
+  --phase factorized \
+  --factorized-method f1 \
+  --factorized-timing-checkpoint \
+    data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt \
+  --factorized-adapt-spatial-basis
+```
+
 ### Paired random ToDrawer benchmark
 
 `benchmark_todrawer_random.py` freezes every random world to a repository artifact and
@@ -156,6 +171,30 @@ Full benchmark:
   --suite-seed 20260829
 ```
 
+The original five modes remain the default. For the direct Phase 4, Phase 4 aligned,
+Phase 5 joint, and F1/F2/F3 comparison (50 x 5 x 6 = 1500 runs), select the six modes
+and one shared learned timing checkpoint explicitly:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-factorized-50x5x6 \
+  --scenario-count 50 \
+  --repeats 5 \
+  --duration-sec 35 \
+  --suite-seed 20260829 \
+  --modes phase4 phase4_aligned joint f1 f2 f3 \
+  --factorized-timing-checkpoint \
+    data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt
+```
+
+The benchmark enables explicit spatial-basis adaptation by default for factorized
+modes; `--no-factorized-adapt-spatial-basis` is a fail-closed contract experiment and
+will not run this 29-to-21 checkpoint/config pair. The checkpoint determines whether
+all three methods use `c` or `tau_r`. Keeping one checkpoint shared by F1/F2/F3 isolates
+the sampler design; use a separate output directory when comparing another checkpoint
+or representation.
+
 Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
 planner-seed repeats x 8 modes = 640 paired runs):
 
@@ -187,8 +226,8 @@ delayed obstacle. They still retain a spatial corridor or later time gap, avoidi
 obvious permanent wall without making the benchmark artificially easy. This is a
 construction criterion, not a guarantee that every planner run succeeds.
 Use `--categories` and/or `--modes` to run a resumable slice of the frozen large
-suite without changing `suite.json`; omitted filters select all ten categories and all
-five modes.
+suite without changing `suite.json`; omitted filters select all ten categories and the
+original five modes. `f1`, `f2`, and `f3` are opt-in because they require a checkpoint.
 
 Completed mode/scenario/repeat triples are skipped when the same output directory is
 resumed. Failed attempts are retained as `attempt-NNN`; nothing is deleted. Reports are
@@ -223,6 +262,10 @@ Passive replay does not measure contact forces. It reports dynamic collision rej
 brake events, goal/episode/execution duration, realized joint-space path length, selected
 hard/common-window clearance, mean/CVaR clearance cost, dense environment/self
 clearance, and inference latency.
+For factorized runs it additionally records timing representation, checkpoint step/hash,
+whether explicit basis adaptation was active, and spatial/timing denoiser NFE. Strictly
+paired reporting uses exactly the modes selected for that benchmark invocation, rather
+than requiring unrelated ablation modes.
 
 Every invocation selects an isolated ROS 2 DDS domain after Pixi activation so stale
 transient-local `/robot_description` publishers cannot switch a fake-hardware run onto
