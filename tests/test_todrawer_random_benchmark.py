@@ -7,6 +7,8 @@ import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     CATEGORIES,
+    DEFAULT_FACTORIZED_C_CHECKPOINT,
+    DEFAULT_FACTORIZED_TAU_R_CHECKPOINT,
     DEFAULT_MODES,
     DIFFICULTIES,
     MODE_SPECS,
@@ -99,6 +101,10 @@ def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     assert MODE_SPECS["f1"] == ("factorized", None)
     assert MODE_SPECS["f2"] == ("factorized", None)
     assert MODE_SPECS["f3"] == ("factorized", None)
+    assert MODE_SPECS["f1_c"] == ("factorized", None)
+    assert MODE_SPECS["f3_tau_r"] == ("factorized", None)
+    assert args.factorized_c_checkpoint == DEFAULT_FACTORIZED_C_CHECKPOINT
+    assert args.factorized_tau_r_checkpoint == DEFAULT_FACTORIZED_TAU_R_CHECKPOINT
 
 
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
@@ -435,6 +441,58 @@ def test_factorized_dry_run_writes_paired_commands_with_explicit_basis(tmp_path)
         assert command[command.index("--factorized-method") + 1] == method
         assert "--factorized-adapt-spatial-basis" in command
         assert specs[method]["factorized_spatial_basis_adapted"] is True
+
+
+def test_c_and_tau_r_factorized_modes_run_together_with_best_defaults(tmp_path):
+    output = tmp_path / "benchmark"
+    selected = (
+        "phase4",
+        "phase4_aligned",
+        "joint",
+        "f1_c",
+        "f2_c",
+        "f3_c",
+        "f1_tau_r",
+        "f2_tau_r",
+        "f3_tau_r",
+    )
+
+    assert main(
+        [
+            "--output-dir",
+            str(output),
+            "--scenario-count",
+            "1",
+            "--repeats",
+            "1",
+            "--modes",
+            *selected,
+            "--dry-run",
+        ]
+    ) == 0
+
+    seeds = set()
+    for mode in selected:
+        path = next(
+            (output / "runs" / "scenario-000" / "repeat-00" / mode).glob(
+                "*/run-spec.json"
+            )
+        )
+        spec = json.loads(path.read_text(encoding="utf-8"))
+        seeds.add(spec["planner_seed"])
+        if mode.endswith("_c"):
+            assert spec["factorized_representation"] == "c"
+            assert spec["factorized_timing_checkpoint"] == (
+                DEFAULT_FACTORIZED_C_CHECKPOINT.resolve().as_posix()
+            )
+        elif mode.endswith("_tau_r"):
+            assert spec["factorized_representation"] == "tau_r"
+            assert spec["factorized_timing_checkpoint"] == (
+                DEFAULT_FACTORIZED_TAU_R_CHECKPOINT.resolve().as_posix()
+            )
+        if mode.startswith("f"):
+            assert spec["factorized_method"] == mode.split("_")[0]
+    assert seeds == {20260829}
 
 
 def test_existing_rows_keep_historical_infrastructure_attempt_count(tmp_path):

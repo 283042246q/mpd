@@ -1339,35 +1339,40 @@ Phase 4、Phase 4 aligned 或 Phase 5 inference 入口；新增的
 ROS backend，因此复用相同的动态世界快照、candidate-specific 时间轴、top-K guard、
 控制连续性检查和被动 replay。worker health 与结果仍标记真实 `f1/f2/f3`。
 
-直接比较 Phase 5 joint（benchmark 模式名 `joint`）、Phase 4、Phase 4 aligned 和
-三个 factorized sampler：
+直接比较 Phase 5 joint（benchmark 模式名 `joint`）、Phase 4、Phase 4 aligned，
+以及 `c`、`tau_r` 两种表示下的三个 factorized sampler：
 
 ```bash
 conda activate mpd-splines-public
 cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 
 python scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-factorized-smoke \
+  --output-dir scripts/isaaclab/logs/todrawer-factorized-c-tau-r-smoke \
   --scenario-count 10 --repeats 1 --duration-sec 20 \
-  --modes phase4 phase4_aligned joint f1 f2 f3 \
-  --factorized-timing-checkpoint \
+  --modes phase4 phase4_aligned joint \
+    f1_c f2_c f3_c f1_tau_r f2_tau_r f3_tau_r \
+  --factorized-c-checkpoint \
+    data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt \
+  --factorized-tau-r-checkpoint \
     data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt \
   --dry-run
 ```
 
 检查 `run-spec.json` 后移除 `--dry-run` 即执行。正式 50 场景、5 repeats 时是
-`50 × 5 × 6 = 1500` 次串行 GPU/ROS run。所有方法在同一 frozen scenario/repeat
-使用相同 `planner_seed`，模式顺序按场景/repeat 轮换。F1/F2/F3 强制共用命令行指定
-的同一 checkpoint，因而三者差异可主要归因于采样调度；若比较 `c` 与 `tau_r`，应
-使用两个不同 output directory，避免 resume 把不同模型混为同一 mode。
+`50 × 5 × 9 = 2250` 次串行 GPU/ROS run。所有方法在同一 frozen scenario/repeat
+使用相同 `planner_seed`，模式顺序按场景/repeat 轮换。`f1_c/f2_c/f3_c` 共用
+step-500000 的 `c` checkpoint；`f1_tau_r/f2_tau_r/f3_tau_r` 共用崩溃前健康的
+step-60000 `tau_r` checkpoint，因而同一表示内部的差异可主要归因于采样调度。
+这两个路径也是 CLI 默认值，但正式实验仍建议显式写入命令。
 
 ToDrawer 空间配置是 21 控制点，当前 timing checkpoint 是 29 控制点条件。benchmark
 默认显式传入 `--factorized-adapt-spatial-basis`，使用第 14.1 节的 basis evaluation，
 不训练或篡改 timing 权重。可用 `--no-factorized-adapt-spatial-basis` 做 fail-closed
 契约检查，但该 29→21 组合会按设计拒绝启动。
 
-原五模式仍是默认值；F1/F2/F3 是 opt-in，因为必须明确 checkpoint。报告的严格配对
-集合取本次 `--modes`，不会再要求未选择的 scalar/timing-only。除原安全、目标到达、
+原五模式仍是默认值；所有 factorized 模式均为 opt-in。旧的通用 `f1/f2/f3` 仍保留，
+并通过 `--factorized-timing-checkpoint` 选择一种表示。报告的严格配对集合取本次
+`--modes`，不会再要求未选择的 scalar/timing-only。除原安全、目标到达、
 轨迹质量、clearance 与耗时指标外，factorized 还写出 representation、checkpoint
 step/hash、basis adaptation 和空间/时间 denoiser NFE。`--report-only` 从已有结果中
 自动恢复实际出现的模式。

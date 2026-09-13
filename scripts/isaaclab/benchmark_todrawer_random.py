@@ -25,6 +25,25 @@ from scripts.isaaclab.summarize_replan_timing import summarize_manifest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE = REPO_ROOT / "scripts" / "isaaclab" / "run_dynamic_demo_pipeline.sh"
 DEFAULT_AIRUNTIME_ROOT = Path("/home/eric/Projects/physical_ai_runtime")
+DEFAULT_FACTORIZED_C_CHECKPOINT = (
+    REPO_ROOT
+    / "data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt"
+)
+DEFAULT_FACTORIZED_TAU_R_CHECKPOINT = (
+    REPO_ROOT
+    / "data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt"
+)
+FACTORIZED_MODE_SPECS = {
+    "f1": ("f1", None),
+    "f2": ("f2", None),
+    "f3": ("f3", None),
+    "f1_c": ("f1", "c"),
+    "f2_c": ("f2", "c"),
+    "f3_c": ("f3", "c"),
+    "f1_tau_r": ("f1", "tau_r"),
+    "f2_tau_r": ("f2", "tau_r"),
+    "f3_tau_r": ("f3", "tau_r"),
+}
 MODE_SPECS = {
     "phase4": ("phase4", None),
     "phase4_aligned": ("phase4_aligned", None),
@@ -34,6 +53,12 @@ MODE_SPECS = {
     "f1": ("factorized", None),
     "f2": ("factorized", None),
     "f3": ("factorized", None),
+    "f1_c": ("factorized", None),
+    "f2_c": ("factorized", None),
+    "f3_c": ("factorized", None),
+    "f1_tau_r": ("factorized", None),
+    "f2_tau_r": ("factorized", None),
+    "f3_tau_r": ("factorized", None),
 }
 DEFAULT_MODES = (
     "phase4",
@@ -43,7 +68,8 @@ DEFAULT_MODES = (
     "joint",
 )
 MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {
-    method: ("--factorized-method", method) for method in ("f1", "f2", "f3")
+    mode: ("--factorized-method", method)
+    for mode, (method, _representation) in FACTORIZED_MODE_SPECS.items()
 }
 CATEGORIES = (
     "single_crossing",
@@ -1108,7 +1134,7 @@ def write_reports(
     factorized_modes = {
         mode: data
         for mode, data in by_mode.items()
-        if mode in {"f1", "f2", "f3"}
+        if mode in FACTORIZED_MODE_SPECS
     }
     if factorized_modes:
         lines.extend(
@@ -1272,6 +1298,23 @@ def _attempt_dir(output_dir: Path, scenario_id: str, repeat: int, mode: str) -> 
     return root / f"attempt-{len(existing) + 1:03d}"
 
 
+def _factorized_mode_contract(
+    args: argparse.Namespace, mode: str
+) -> tuple[str, str | None, Path]:
+    method, representation = FACTORIZED_MODE_SPECS[mode]
+    if representation == "c":
+        checkpoint = args.factorized_c_checkpoint
+    elif representation == "tau_r":
+        checkpoint = args.factorized_tau_r_checkpoint
+    else:
+        checkpoint = args.factorized_timing_checkpoint
+    if checkpoint is None:
+        raise ValueError(
+            f"mode {mode} requires --factorized-timing-checkpoint"
+        )
+    return method, representation, checkpoint.resolve()
+
+
 def _existing_rows(output_dir: Path) -> list[dict[str, Any]]:
     rows = []
     for path in sorted(output_dir.glob("runs/**/run-metrics.json")):
@@ -1402,11 +1445,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "scenario_file": scenario_path.as_posix(),
                 }
                 if phase == "factorized":
+                    factorized_method, factorized_representation, factorized_checkpoint = (
+                        _factorized_mode_contract(args, mode)
+                    )
                     run_spec.update(
-                        factorized_method=mode,
-                        factorized_timing_checkpoint=(
-                            args.factorized_timing_checkpoint.resolve().as_posix()
-                        ),
+                        factorized_method=factorized_method,
+                        factorized_representation=factorized_representation,
+                        factorized_timing_checkpoint=factorized_checkpoint.as_posix(),
                         factorized_spatial_basis_adapted=(
                             args.factorized_adapt_spatial_basis
                         ),
@@ -1438,7 +1483,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     command.extend(
                         (
                             "--factorized-timing-checkpoint",
-                            args.factorized_timing_checkpoint.resolve().as_posix(),
+                            factorized_checkpoint.as_posix(),
                         )
                     )
                     if args.factorized_adapt_spatial_basis:
@@ -1511,7 +1556,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--factorized-timing-checkpoint",
         type=Path,
-        help="Required when f1, f2, or f3 is selected; checkpoint decides c vs tau_r",
+        help="Checkpoint for backward-compatible generic f1/f2/f3 modes",
+    )
+    parser.add_argument(
+        "--factorized-c-checkpoint",
+        type=Path,
+        default=DEFAULT_FACTORIZED_C_CHECKPOINT,
+        help="Checkpoint for f1_c/f2_c/f3_c modes",
+    )
+    parser.add_argument(
+        "--factorized-tau-r-checkpoint",
+        type=Path,
+        default=DEFAULT_FACTORIZED_TAU_R_CHECKPOINT,
+        help="Checkpoint for f1_tau_r/f2_tau_r/f3_tau_r modes",
     )
     factorized_basis = parser.add_mutually_exclusive_group()
     factorized_basis.add_argument(
@@ -1560,21 +1617,27 @@ def main(argv: list[str] | None = None) -> int:
         args.skip_build = True
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
-    factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
+    generic_factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
     if (
         not args.report_only
-        and factorized_selected
+        and generic_factorized_selected
         and args.factorized_timing_checkpoint is None
     ):
         parser.error("--factorized-timing-checkpoint is required when f1/f2/f3 is selected")
-    if (
-        not args.report_only
-        and args.factorized_timing_checkpoint is not None
-        and not args.factorized_timing_checkpoint.is_file()
-    ):
-        parser.error(
-            "--factorized-timing-checkpoint must name an existing regular file"
-        )
+    if not args.report_only:
+        selected_checkpoints = []
+        for mode in args.modes:
+            if mode in FACTORIZED_MODE_SPECS:
+                try:
+                    selected_checkpoints.append(_factorized_mode_contract(args, mode)[2])
+                except ValueError as error:
+                    parser.error(str(error))
+        missing = [path for path in dict.fromkeys(selected_checkpoints) if not path.is_file()]
+        if missing:
+            parser.error(
+                "factorized checkpoint is not an existing regular file: "
+                + ", ".join(path.as_posix() for path in missing)
+            )
     if args.ros_domain_id is not None and not 0 <= args.ros_domain_id <= 232:
         raise SystemExit("ros-domain-id must lie in [0, 232]")
     return run_benchmark(args)

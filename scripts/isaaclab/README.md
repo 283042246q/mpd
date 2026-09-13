@@ -172,28 +172,31 @@ Full benchmark:
 ```
 
 The original five modes remain the default. For the direct Phase 4, Phase 4 aligned,
-Phase 5 joint, and F1/F2/F3 comparison (50 x 5 x 6 = 1500 runs), select the six modes
-and one shared learned timing checkpoint explicitly:
+Phase 5 joint, and F1/F2/F3 comparison under both `c` and `tau_r`
+(50 x 5 x 9 = 2250 runs), select the nine modes explicitly:
 
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-factorized-50x5x6 \
+  --output-dir scripts/isaaclab/logs/todrawer-factorized-c-tau-r-50x5x9 \
   --scenario-count 50 \
   --repeats 5 \
   --duration-sec 35 \
   --suite-seed 20260829 \
-  --modes phase4 phase4_aligned joint f1 f2 f3 \
-  --factorized-timing-checkpoint \
+  --modes phase4 phase4_aligned joint \
+    f1_c f2_c f3_c f1_tau_r f2_tau_r f3_tau_r \
+  --factorized-c-checkpoint \
+    data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt \
+  --factorized-tau-r-checkpoint \
     data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt
 ```
 
-The benchmark enables explicit spatial-basis adaptation by default for factorized
-modes; `--no-factorized-adapt-spatial-basis` is a fail-closed contract experiment and
-will not run this 29-to-21 checkpoint/config pair. The checkpoint determines whether
-all three methods use `c` or `tau_r`. Keeping one checkpoint shared by F1/F2/F3 isolates
-the sampler design; use a separate output directory when comparing another checkpoint
-or representation.
+These two best-known checkpoint paths are also the CLI defaults. The benchmark enables
+explicit spatial-basis adaptation by default for factorized modes;
+`--no-factorized-adapt-spatial-basis` is a fail-closed contract experiment and will not
+run this 29-to-21 checkpoint/config pair. Within each representation, F1/F2/F3 share one
+checkpoint so the comparison isolates sampler design. The generic legacy modes
+`f1/f2/f3` remain available with `--factorized-timing-checkpoint`.
 
 Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
 planner-seed repeats x 8 modes = 640 paired runs):
@@ -227,7 +230,8 @@ obvious permanent wall without making the benchmark artificially easy. This is a
 construction criterion, not a guarantee that every planner run succeeds.
 Use `--categories` and/or `--modes` to run a resumable slice of the frozen large
 suite without changing `suite.json`; omitted filters select all ten categories and the
-original five modes. `f1`, `f2`, and `f3` are opt-in because they require a checkpoint.
+original five modes. All factorized modes are opt-in; the representation-specific modes
+use the two defaults above, while generic `f1/f2/f3` require a checkpoint.
 
 Completed mode/scenario/repeat triples are skipped when the same output directory is
 resumed. Failed attempts are retained as `attempt-NNN`; nothing is deleted. Reports are
