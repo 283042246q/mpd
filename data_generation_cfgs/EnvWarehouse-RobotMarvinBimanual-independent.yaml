@@ -16,9 +16,16 @@ planner: RRTConnect
 # the short benchmark only measures per-worker latency.
 gpu_device: cuda:0
 gpu_rrt_batch_size: 64
+# The new multi-query backend separates trajectories per launch from candidate
+# edges per trajectory. Conservative defaults leave headroom for 1,035 spheres.
+gpu_query_batch_size_dual: 4
+gpu_query_batch_size_left: 8
+gpu_query_batch_size_right: 8
+gpu_rrt_edges_per_query: 16
 gpu_rrt_max_iterations: 4096
 gpu_rrt_goal_bias: 0.125
 gpu_collision_batch_size: 256
+gpu_shortcut_attempts: 64
 gpu_workers: 1
 gpu_worker_lifetime_trajectories: 100
 planner_allowed_time: 10.0
