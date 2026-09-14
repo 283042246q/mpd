@@ -105,6 +105,14 @@ class StreamingCoordinator:
         self.run_started = time.perf_counter()
         self.idle_sleep = float(config.get("gpu_pipeline_coordinator_idle_sleep", 0.001))
         self.plan_wait = float(config.get("gpu_pipeline_plan_batch_max_wait_seconds", 1.0))
+        max_inflight = int(
+            config.get("gpu_pipeline_max_inflight_candidates_per_task", 1)
+        )
+        if max_inflight != 1:
+            raise ValueError(
+                "the candidate wavefront requires exactly one planned candidate "
+                "in flight per task"
+            )
 
     def _open_shard(self, start, size, path):
         tasks = {
@@ -366,7 +374,6 @@ class StreamingCoordinator:
             return True
         mode = request["mode"]
         self.global_stats[f"gpu_plan_batches/{mode}"] += 1
-        self.global_stats[f"gpu_plan_queries/{mode}"] += len(result)
         capacity = int(self.config.get(MODE_BATCH_CONFIG[mode], 1))
         self.global_stats[f"gpu_plan_capacity/{mode}"] += capacity
         self.global_stats[f"gpu_plan_batch_size/{mode}/{len(result)}"] += 1

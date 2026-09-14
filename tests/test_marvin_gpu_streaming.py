@@ -97,6 +97,11 @@ class ImmediateActor:
 
 def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_path):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    assert config["gpu_pipeline_active_window_tasks"] == 80
+    assert config["gpu_query_batch_size_dual"] == 12
+    assert config["gpu_query_batch_size_left"] == 16
+    assert config["gpu_query_batch_size_right"] == 16
+    assert config["gpu_pipeline_endpoint_workers"] == 4
     config.update(
         gpu_pipeline_active_window_tasks=20,
         gpu_pipeline_max_open_shards=2,
@@ -130,9 +135,31 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     dual_batches = [task_ids for mode, task_ids in gpu.plan_batches if mode == "dual_independent"]
     assert any(min(task_ids) < 10 <= max(task_ids) for task_ids in dual_batches)
     assert all(len(paths) == len(metadata) == 10 for _, paths, metadata, _ in published)
-    assert stats["gpu_plan_queries/dual_independent"] >= 12
+    expected_dual_queries = sum(
+        len(task_ids)
+        for mode, task_ids in gpu.plan_batches
+        if mode == "dual_independent"
+    )
+    assert stats["gpu_plan_queries/dual_independent"] == expected_dual_queries
     telemetry = coordinator.telemetry()
     assert telemetry["batch_occupancy"]["dual_independent"] > 0
     assert telemetry["counters"]["max_open_shards"] == 2
     assert telemetry["counters"]["max_active_window_tasks"] == 20
     assert telemetry["actors"]["gpu"]["host_peak_rss_kib"] == 1234
+
+
+def test_streaming_rejects_more_than_one_planned_candidate_per_task(tmp_path):
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["gpu_pipeline_max_inflight_candidates_per_task"] = 2
+    actors = [ImmediateActor("endpoint")]
+
+    with np.testing.assert_raises_regex(ValueError, "exactly one planned candidate"):
+        StreamingCoordinator(
+            config,
+            [(0, 10, tmp_path / "000000000")],
+            TaskContract(config, config["seed"]),
+            actors,
+            ImmediateActor("gpu"),
+            ImmediateActor("pybullet"),
+            lambda *args: None,
+        )

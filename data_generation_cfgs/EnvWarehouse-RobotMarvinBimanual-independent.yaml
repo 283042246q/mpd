@@ -19,9 +19,8 @@ gpu_rrt_batch_size: 64
 # The new multi-query backend separates trajectories per launch from candidate
 # edges per trajectory. Conservative defaults leave headroom for 1,035 spheres.
 gpu_query_batch_size_dual: 12
-# With ten-task checkpoints and four candidates per task, the two single-arm
-# tasks can currently supply at most eight queries; 16 is tested headroom for
-# a future cross-checkpoint/wavefront scheduler rather than current occupancy.
+# The 80-task cross-shard active window can fill the larger single-arm buckets
+# while the per-task wavefront keeps only one planned candidate in flight.
 gpu_query_batch_size_left: 16
 gpu_query_batch_size_right: 16
 gpu_rrt_edges_per_query: 16
@@ -46,8 +45,6 @@ gpu_pipeline_endpoint_candidate_chunk_size: 2
 gpu_pipeline_dual_cross_candidates: 64
 gpu_pipeline_planning_candidates_per_task: 4
 gpu_pipeline_max_inflight_candidates_per_task: 1
-gpu_pipeline_hard_task_max_inflight_candidates: 2
-gpu_pipeline_candidate_hedge_after_attempts: 3
 # Keep the dedicated pipeline's retry policy independent from the legacy CPU
 # generator without changing that generator's 30-attempt contract.
 gpu_pipeline_max_attempts_per_task: 100
