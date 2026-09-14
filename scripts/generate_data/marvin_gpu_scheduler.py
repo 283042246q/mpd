@@ -57,6 +57,7 @@ class TaskState:
     status: TaskStatus = TaskStatus.ACTIVE
     attempt: int = 0
     endpoint_inflight: bool = False
+    endpoint_candidate_cursor: int = 0
     candidate_serial: int = 0
     candidates: dict[int, CandidateState] = field(default_factory=dict)
     accepted_path: object | None = None
@@ -80,8 +81,24 @@ class TaskState:
             self.status = TaskStatus.HARD_FAILED
             return None
         self.attempt += 1
+        self.endpoint_candidate_cursor = 0
         self.endpoint_inflight = True
         return self.attempt
+
+    def begin_endpoint_chunk(self, hard_limit, candidates_per_attempt, chunk_size):
+        """Reserve deterministic candidate indices for one small actor job."""
+        if self.endpoint_inflight or self.live_candidates():
+            return None
+        if self.attempt == 0 or self.endpoint_candidate_cursor >= candidates_per_attempt:
+            attempt = self.begin_attempt(hard_limit)
+            if attempt is None:
+                return None
+        else:
+            self.endpoint_inflight = True
+        begin = self.endpoint_candidate_cursor
+        end = min(begin + int(chunk_size), int(candidates_per_attempt))
+        self.endpoint_candidate_cursor = end
+        return self.attempt, list(range(begin, end))
 
     def finish_endpoint_work(self):
         if not self.endpoint_inflight:

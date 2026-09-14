@@ -18,6 +18,7 @@ import numpy as np
 import yaml
 
 from scripts.generate_data.marvin_gpu_pipeline_actors import actor_main
+from scripts.generate_data.marvin_gpu_streaming import StreamingCoordinator
 from scripts.generate_data.marvin_gpu_task_contract import (
     TaskContract,
     stable_seed,
@@ -548,7 +549,9 @@ def main(argv=None):
     root = args.output_dir or Path(config["output_dir"])
     print(
         f"GPU pipeline: {count} trajectories, {endpoint_workers} endpoint actors, "
-        f"1 GPU actor, 1 PyBullet actor, checkpoint={checkpoint_size} -> {root}",
+        f"1 GPU actor, 1 PyBullet actor, checkpoint={checkpoint_size}, "
+        f"active_window={config.get('gpu_pipeline_active_window_tasks', checkpoint_size)} "
+        f"-> {root}",
         flush=True,
     )
     if args.dry_run:
@@ -595,24 +598,17 @@ def main(argv=None):
             context, "pybullet", config, "pybullet", timeout, restarts
         )
         contract = TaskContract(config, int(config["seed"]))
-        recycle = int(config.get("gpu_pipeline_pybullet_recycle_trajectories", 50))
-        generated_since_recycle = 0
-        for start, size, path in pending:
-            definitions = [contract.build(task_id) for task_id in range(start, start + size)]
-            paths, metadata, stats = generate_checkpoint(
-                config, definitions, endpoint_actors, gpu_actor, bullet_actor
-            )
-            stats["endpoint_actor_restarts"] = sum(
-                actor.restart_count for actor in endpoint_actors
-            )
-            stats["gpu_actor_restarts"] = gpu_actor.restart_count
-            stats["pybullet_actor_restarts"] = bullet_actor.restart_count
-            _publish_checkpoint(path, config, start, paths, metadata, stats)
-            completed.append(path)
-            generated_since_recycle += size
-            if recycle > 0 and generated_since_recycle >= recycle:
-                bullet_actor.recycle()
-                generated_since_recycle = 0
+        coordinator = StreamingCoordinator(
+            config,
+            pending,
+            contract,
+            endpoint_actors,
+            gpu_actor,
+            bullet_actor,
+            _publish_checkpoint,
+        )
+        generated, _ = coordinator.run()
+        completed.extend(generated)
     finally:
         for actor in endpoint_actors:
             actor.close()

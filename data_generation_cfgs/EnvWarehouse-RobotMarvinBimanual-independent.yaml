@@ -55,6 +55,11 @@ gpu_pipeline_checkpoint_size: 10
 gpu_pipeline_actor_timeout_seconds: 600
 gpu_pipeline_max_actor_restarts: 3
 gpu_pipeline_pybullet_recycle_trajectories: 50
+gpu_pipeline_gpu_endpoint_batch_size: 128
+gpu_pipeline_pybullet_endpoint_batch_size: 64
+gpu_pipeline_pybullet_trajectory_batch_size: 4
+gpu_pipeline_plan_batch_max_wait_seconds: 1.0
+gpu_pipeline_coordinator_idle_sleep: 0.001
 planner_allowed_time: 10.0
 # Avoid OMPL's automatic ~3.47 rad extension in the narrow 14D free space.
 planner_range: 0.35
