@@ -28,6 +28,24 @@ gpu_collision_batch_size: 256
 gpu_shortcut_attempts: 64
 gpu_workers: 1
 gpu_worker_lifetime_trajectories: 100
+# Dedicated multi-query pipeline. These settings are ignored by the original
+# CPU generate/launch entrypoints.
+gpu_pipeline_endpoint_workers: 2
+# Each proposer uses the CPU sphere model for sequential per-arm feedback, but
+# still owns no OMPL, PyBullet or CUDA state. The GPU repeats the final check.
+gpu_pipeline_endpoint_cpu_sphere_filter: true
+gpu_pipeline_endpoint_candidates_per_attempt: 8
+# For dual tasks, combine each left-arm endpoint pair with each right-arm pair
+# before the GPU inter-arm collision gate (8x8 at the default setting).
+gpu_pipeline_dual_cross_candidates: 64
+gpu_pipeline_planning_candidates_per_task: 4
+# Keep the dedicated pipeline's retry policy independent from the legacy CPU
+# generator without changing that generator's 30-attempt contract.
+gpu_pipeline_max_attempts_per_task: 100
+gpu_pipeline_checkpoint_size: 10
+gpu_pipeline_actor_timeout_seconds: 600
+gpu_pipeline_max_actor_restarts: 3
+gpu_pipeline_pybullet_recycle_trajectories: 50
 planner_allowed_time: 10.0
 # Avoid OMPL's automatic ~3.47 rad extension in the narrow 14D free space.
 planner_range: 0.35

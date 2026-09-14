@@ -1,9 +1,9 @@
-"""Collision-agnostic Marvin endpoint proposals using only Pinocchio/SciPy.
+"""Marvin endpoint proposals with Pinocchio/SciPy kinematics.
 
 Candidates from this module are not accepted endpoints.  They must pass the
 GPU sphere model and the independent PyBullet mesh worker before planning.
-Keeping collision libraries out of this process makes it safe to scale IK
-proposal workers without recreating the old OMPL worker pool.
+The optional validity callback lets the actor add lightweight candidate
+feedback without coupling this module to OMPL, PyBullet, Torch or CUDA.
 """
 from __future__ import annotations
 
@@ -57,10 +57,11 @@ def _position_in_workspace(position, region):
 
 
 class MarvinEndpointProposer:
-    """Persistent, collision-free IK proposal worker."""
+    """Persistent IK worker with an optional endpoint-validity callback."""
 
-    def __init__(self, config):
+    def __init__(self, config, validity_fn=None):
         self.config = dict(config)
+        self.validity_fn = validity_fn
         repository = Path(__file__).resolve().parents[2]
         robot_root = (
             repository
@@ -88,6 +89,9 @@ class MarvinEndpointProposer:
         self.low = np.asarray([limits[name]["qmin"] for name in JOINT_NAMES])
         self.high = np.asarray([limits[name]["qmax"] for name in JOINT_NAMES])
         self.regions = self.config["placement_regions"]
+
+    def _valid(self, q):
+        return self.validity_fn is None or bool(self.validity_fn(q))
 
     def pose(self, q, arm):
         data = self.data[arm]
@@ -138,9 +142,10 @@ class MarvinEndpointProposer:
                 candidate[joint_slice] = rng.uniform(
                     self.low[joint_slice], self.high[joint_slice]
                 )
-                if region is None or _position_in_workspace(
-                    self.pose(candidate, arm).translation, region
-                ):
+                if (
+                    region is None
+                    or _position_in_workspace(self.pose(candidate, arm).translation, region)
+                ) and self._valid(candidate):
                     q = candidate
                     found = True
                     break
@@ -193,7 +198,7 @@ class MarvinEndpointProposer:
                     float(self.config.get("ik_orientation_tolerance_deg", 2.0))
                 ):
                     continue
-            if self._pose_in_region(q, arm, region_name):
+            if self._pose_in_region(q, arm, region_name) and self._valid(q):
                 return q.copy()
         return None
 
@@ -218,9 +223,10 @@ class MarvinEndpointProposer:
                 candidate[joint_slice] = rng.uniform(
                     self.low[joint_slice], self.high[joint_slice]
                 )
-                if region is None or _position_in_workspace(
-                    self.pose(candidate, arm).translation, region
-                ):
+                if (
+                    region is None
+                    or _position_in_workspace(self.pose(candidate, arm).translation, region)
+                ) and self._valid(candidate):
                     q = candidate
                     found = True
                     break
@@ -264,4 +270,3 @@ class MarvinEndpointProposer:
             pose = self.pose(q_goal, arm)
             poses.append(np.c_[pose.rotation, pose.translation])
         return np.asarray(poses, dtype=np.float32)
-

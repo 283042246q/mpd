@@ -2,30 +2,78 @@
 
 ## 结论
 
-在完成长时间稳定性 soak 之前，暂时不要直接把生产默认值从 OMPL `RRTConnect` 改成
-GPU batch。仓库现在已有一个可通过
-`--planner GpuBatchRRTConnect` 启用的实验后端，并保留了与原流程相同的最终 Torch 和
-PyBullet 稠密校验。RTX 4090 上的固定端点配对测试显示，GPU 后端把 RRT 核心平均耗时
-从 2.052 s 降到 0.599 s（3.43x），但在真正“生成到 10 条有效轨迹”为止的测试中，
-总耗时从 158.18 s 增加到 280.54 s（15.82 s/条变成 28.05 s/条）。主要原因不是碰撞
-查询速度，而是当前 GPU 树产生的路径更曲折，导致样条重试和最终稠密校验显著增加。
+仓库现在有两条互不影响的路径：原 CPU generate/launch 仍默认使用 OMPL `RRTConnect`；
+新增的专用 launcher 使用按模式分桶的 `GpuMultiQueryRRTConnect`。新流程在一个 shard 内
+仍保留 6 dual、2 left-only、2 right-only 的混合任务与原 task id/方向分布，但把当轮已经
+通过 endpoint gate 的 query 按 14-D、左 7-D、右 7-D 分桶后批量规划。这样既能马上填满
+GPU batch，又不会出现“先生成完所有 dual，某类困难任务长时间卡住后两类完全没有进度”
+的问题；checkpoint 也仍是可独立校验和恢复的完整混合样本块。
 
-这里的 CPU/GPU 端到端数字都是**单 worker**，只回答每个稳定 worker 的延迟，不回答原
-CPU launcher 多 worker 并发时的崩溃问题。如果目标是用一个稳定 GPU 进程替代多个会崩的
-OMPL/PyBullet worker，那么 GPU 路线仍然合理；判断门槛应改为长时间稳定吞吐，而不是只看
-单条延迟。因此本次先把 GPU batch 留作显式 opt-in，配置默认值继续使用 `RRTConnect`，
-待 100/1,000 条单进程 soak 通过后再切换默认值。
+10 条真实 GPU 冒烟已经成功：两轮完成 6 dual、2 left-only、2 right-only，actor restart
+均为 0，输出通过训练入口的 hash、模型资产、形状、样条和 EE context 校验。该结果证明
+实现链路可用，但不能替代 100/1,000 条 soak。原来的单-query 对照仍有参考价值：RTX 4090
+上 RRT 核心从 2.052 s 降到 0.599 s（3.43x），而旧单-query GPU 完整生成反而从 CPU 的
+15.82 s/条退化到 28.05 s/条。新架构正是针对该 Amdahl 瓶颈，把 query、shortcut 和
+raw/spline Torch audit 合并到 GPU 批处理中。
 
-## 本次实现
+生产默认值暂不切换。CPU 多 worker 已知可能导致整机不稳定，因此稳定性基线应使用 CPU
+单 worker，而不是把不可持续的 workers=3 当作吞吐目标。GPU 专用 launcher 先完成
+100/1,000 条 soak，再决定是否成为生产入口。
+
+## Multi-query 专用管线
+
+```text
+Coordinator（唯一 writer，保留混合 checkpoint）
+    ├── 2 × endpoint actor（Pinocchio/IK + CPU sphere 候选引导）
+    │       无 OMPL、无 PyBullet、无 CUDA；只返回 endpoint candidates
+    ├── 1 × GPU actor（持久 CUDA context）
+    │       endpoint gate → 同模式 multi-query RRT → shortcut
+    │       → batched raw/spline Torch audit
+    └── 1 × PyBullet actor（DIRECT、私有 client、可重启/定期 recycle）
+            endpoint mesh gate → 最终 raw/spline mesh gate
+```
+
+这里的 CPU sphere 仅用于 IK 过程的逐臂候选反馈，不是最终 Torch audit。实测完全取消这层
+反馈时，一个困难 dual task 的 6,400 个组合中只有 1 个通过 GPU endpoint gate，且随后被
+PyBullet 拒绝；因此保留两份 CPU sphere checker 是成功率所需的折中。所有 endpoint 都会
+在 GPU 上重新批量检查，raw path 和 spline 的 Torch 审计也只在 GPU actor 中执行。
+
+actor 采用 `spawn`，请求队列容量为 1，超时或退出后最多自动重启 3 次；PyBullet 默认每
+50 条主动 recycle。CUDA 不可用、driver/device 掉线属于 actor 进程无法自行修复的主机级
+故障，launcher 会失败并保留已发布 checkpoint，未发布 staging 不会冒充完整 shard。
+
+启用方式：
+
+```bash
+python scripts/generate_data/launch_generate_marvin_warehouse_gpu_pipeline.py \
+  --gpu-device cuda:0 \
+  --num-trajectories 100 \
+  --output-dir /path/to/output
+```
+
+该入口会在 manifest 中写入 `GpuMultiQueryRRTConnect`。原 YAML 的 `planner: RRTConnect`
+未修改，原 `generate_marvin_warehouse_bimanual.py` 和
+`launch_generate_marvin_warehouse_bimanual.py` 也没有接入这些 actors。新增的
+`gpu_pipeline_*` 配置项只被专用 launcher 读取。
+
+首次 10 条成功 smoke 的有效统计为：14 次 task-attempt、285 个 dual-cross 后候选、9 个
+GPU endpoint 拒绝、11 个 PyBullet endpoint 拒绝、13 个 RRT 拒绝、7 个 spline Torch
+拒绝，最终 10/10；RRT 共 238 轮、5,500 条采样边、48,758 个检查状态。后续版本会在
+manifest 中额外记录 endpoint proposal、GPU endpoint、PyBullet endpoint、GPU plan/audit、
+PyBullet trajectory 及整个 checkpoint 的 wall milliseconds，供长时间吞吐分析。
+
+## 早期单-query 实现
 
 - 新增纯 Torch/CUDA 的双向 batched RRT，批量做采样、最近邻扩展和边碰撞检测。
-- 当前 batch 是**单条轨迹内部**的并行：每轮同时扩展 64 条候选边，碰撞状态以最多 256
-  个一组送入 GPU。它不是同时规划 64 条轨迹，也不是多个 GPU worker。
+- `GpuBatchRRTConnect` 的 batch 是**单条轨迹内部**的并行：每轮同时扩展 64 条候选边，
+  不是同时规划 64 条轨迹。新的 `GpuMultiQueryRRTConnect` 才增加独立 query 维度，并在
+  每个 query 内默认并行 16 条候选边。
 - `dual_independent` 在完整 14-D 空间规划。
 - `left_only` 和 `right_only` 只在对应 7-D 子空间规划；另一只手臂在树、边检查、
   返回路径和样条输入中都保持 `q_start`，不会把“终点不动”误当成“路径中间也不动”。
 - GPU 规划仍使用 Marvin 的 1,035 个细碰撞球、自碰撞 pair、warehouse analytic
-  primitives；最终路径仍经过 CPU Torch 与 PyBullet 两套稠密审计。
+  primitives；早期入口的最终路径仍经过 CPU Torch 与 PyBullet 两套稠密审计，专用入口
+  则把 Torch 审计移到 GPU actor。
 - launcher 支持 `--planner`、`--gpu-device` 和 `--gpu-batch-size`。当前一个 CUDA device
   只允许一个持久 worker，以避免多个 CUDA context 抢显存和不可控的吞吐退化。
 - 该单进程仍串行执行 endpoint/IK 和最终 PyBullet mesh 审计；它移除了实际 RRT solve
@@ -97,7 +145,7 @@ RRT 尝试更快，但为了得到 10 条最终样本进行了更多规划和样
 
 | 路线 | 当前状态 / 主要工作 | 达到可生产比较的剩余工作量 | Marvin 端到端速度判断 |
 |---|---|---:|---|
-| 仓库内 GPU batch | 已接入 14-D/7-D 模式、真实碰撞模型、最终双审计和 benchmark | 3–5 人日：GPU shortcut/平滑、clearance-aware 选择、批量 query pipeline、300+ paired 回归、worker 调度 | 已测：RRT 3.43x；固定端点有效样条 1.42x；完整生成目前 **0.56x**（更慢） |
+| 仓库内 GPU batch | 已接入 14-D/7-D multi-query、GPU shortcut、批量 Torch audit、隔离 actors 和原子 checkpoint | 2–4 人日：100/1,000 条 soak、显存/host RSS 监控、300+ paired 回归和参数调优 | 早期单 query 已测：RRT 3.43x、固定端点有效样条 1.42x、完整生成 **0.56x**；新 multi-query 目前只有 10 条功能 smoke，尚不能报告可靠加速比 |
 | pRRTC | Marvin 不在上游支持列表；需 Foam 球化 URDF、Cricket FKCC CUDA codegen、Marvin/Pika robot struct、编译和 Python 数据管线适配，并分别处理 14-D 与两种锁臂 7-D | 7–12 人日 | 上游报告 RRT 层面约 6–10x 的量级，但没有 Marvin/Pika 数据；若不同时解决路径质量与最终审计，端到端远低于该数字 |
 | cuRobo | 本机 runtime 有 `BatchMotionPlanner`，但现有 Marvin 配置不含 Pika gripper collision links，也没有可直接用于每个 query 的 inactive-arm dynamic lock | 6–12 人日：重做 Pika collision YAML、精确 warehouse world、三套/动态锁臂配置、环境桥接、语义与回归验证 | 不应拿缺 Pika 的 smoke test 当结果；需要完成等价几何后才可测。它也会改变数据的规划器/路径分布，不是原 RRT 的无缝替换 |
 
@@ -112,18 +160,17 @@ Pika 碰撞几何时，跑出的更快数字会漏碰撞，不具可比性。
 
 ## 推荐顺序
 
-1. 先跑 GPU 单进程 100 条和 1,000 条 soak，记录进程退出码、CUDA/host 峰值内存、每 10/100
+1. 跑 GPU 单进程 100 条和 1,000 条 soak，记录进程退出码、CUDA/host 峰值内存、每 10/100
    条 wall time、失败重试和 shard 完整性；同时用 CPU `workers=1` 作为稳定基线。不要再把
    已知会崩的 CPU `workers=3` 当作可实现吞吐基线。
-2. soak 通过后，如果稳定产数优先于单条速度，可以把 GPU planner 切成默认；如果 GPU 仍崩，
-   应进一步让 GPU 分支完全不构造 OMPL native setup，并把 PyBullet 审计隔离成可重启进程。
-3. 若目标还包括提速，再改 GPU batch 的路径质量：连接成功后做 GPU shortcut，并用长度、
-   clearance 和曲率筛选候选，再进行 512 点样条审计。完整生成测试表明这比继续加大采样 batch 更重要。
-4. 把 endpoint/最终 Torch 审计改成 GPU query batches，同时保留 PyBullet 作为最终 CPU
-   gate；否则 RRT 加速会受 Amdahl 限制。
-5. 用每种模式至少 100 对、总计 300+ 固定端点，以及不少于 1,000 条完整生成，比较
+2. soak 通过后再决定是否把专用 launcher 作为生产入口；不要修改原 CPU 默认值，直到新入口
+   的数据分布、失败率与恢复行为都有长期证据。
+3. 从新写入的阶段 wall 统计判断瓶颈：如果 endpoint actors 占主导，先比较 1/2 个 producer
+   的 RSS 和吞吐；如果 GPU plan/audit 占主导，再调整 dual/left/right query batch 和每 query
+   edge 数；如果 PyBullet 占主导，仍保持单 actor，只调整 recycle 周期或审核分块。
+4. 用每种模式至少 100 对、总计 300+ 固定端点，以及不少于 1,000 条完整生成，比较
    成功率、wall time、路径长度、最小 clearance、样条拒绝率和任务分布。
-6. 如果仍达不到吞吐目标，再优先试 cuRobo（本机已有 fork 和 batch API）；只有在确实要
+5. 如果仍达不到吞吐目标，再优先试 cuRobo（本机已有 fork 和 batch API）；只有在确实要
    保持 RRT 算法族且能接受 C++/CUDA codegen 维护成本时，再投入 pRRTC 适配。
 
 ## 复现
@@ -142,6 +189,10 @@ python scripts/generate_data/benchmark_marvin_planner_backends.py DATASET_ROOT \
 ```bash
 PYTHONPATH=. python -m pytest -q \
   tests/test_gpu_batch_rrt.py \
+  tests/test_marvin_gpu_planning_backend.py \
+  tests/test_marvin_gpu_pipeline_workers.py \
+  tests/test_marvin_gpu_task_contract.py \
+  tests/test_marvin_gpu_pipeline_launcher.py \
   tests/test_marvin_warehouse_generation.py
 ```
 

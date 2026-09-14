@@ -45,6 +45,23 @@ def test_endpoint_proposer_preserves_single_arm_contract():
     assert proposer.ee_goal_pose(q_goal).shape == (2, 3, 4)
 
 
+def test_endpoint_proposer_uses_optional_collision_feedback():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    calls = []
+    proposer = MarvinEndpointProposer(
+        config, validity_fn=lambda q: calls.append(np.asarray(q).copy()) or True
+    )
+    proposal = proposer.propose(
+        "right_only",
+        "random_to_random",
+        {"left": "inactive", "right": "random"},
+        {"left": "inactive", "right": "random"},
+        seed=21,
+    )
+    assert proposal is not None
+    assert len(calls) >= 3  # left/right reference plus the active goal arm
+
+
 def test_pybullet_auditor_import_does_not_load_ompl():
     command = (
         "import sys; "
