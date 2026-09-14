@@ -102,13 +102,12 @@ def test_checkpoint_keeps_mixed_contract_but_dispatches_homogeneous_batches():
     assert len(paths) == len(metadata) == 10
     assert [item["task_id"] for item in metadata] == list(range(10))
     assert gpu.plan_batches == [
-        ("dual_independent", 4),
-        ("dual_independent", 2),
+        ("dual_independent", 6),
         ("left_only", 2),
         ("right_only", 2),
     ]
     assert stats["accepted"] == 10
-    assert stats["gpu_plan_batches"] == 4
+    assert stats["gpu_plan_batches"] == 3
     assert stats["gpu_plan_queries"] == 10
     assert stats["checkpoint_wall_milliseconds"] >= 0
     assert stats["endpoint_proposal_wall_milliseconds"] >= 0

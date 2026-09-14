@@ -18,9 +18,12 @@ gpu_device: cuda:0
 gpu_rrt_batch_size: 64
 # The new multi-query backend separates trajectories per launch from candidate
 # edges per trajectory. Conservative defaults leave headroom for 1,035 spheres.
-gpu_query_batch_size_dual: 4
-gpu_query_batch_size_left: 8
-gpu_query_batch_size_right: 8
+gpu_query_batch_size_dual: 8
+# With ten-task checkpoints and four candidates per task, the two single-arm
+# tasks can currently supply at most eight queries; 16 is tested headroom for
+# a future cross-checkpoint/wavefront scheduler rather than current occupancy.
+gpu_query_batch_size_left: 16
+gpu_query_batch_size_right: 16
 gpu_rrt_edges_per_query: 16
 gpu_rrt_max_iterations: 4096
 gpu_rrt_goal_bias: 0.125
@@ -30,7 +33,7 @@ gpu_workers: 1
 gpu_worker_lifetime_trajectories: 100
 # Dedicated multi-query pipeline. These settings are ignored by the original
 # CPU generate/launch entrypoints.
-gpu_pipeline_endpoint_workers: 2
+gpu_pipeline_endpoint_workers: 3
 # Each proposer uses the CPU sphere model for sequential per-arm feedback, but
 # still owns no OMPL, PyBullet or CUDA state. The GPU repeats the final check.
 gpu_pipeline_endpoint_cpu_sphere_filter: true
