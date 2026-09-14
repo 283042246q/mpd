@@ -18,6 +18,7 @@ import numpy as np
 import yaml
 
 from scripts.generate_data.marvin_gpu_pipeline_actors import actor_main
+from scripts.generate_data.marvin_gpu_partial_spool import PartialTaskSpool
 from scripts.generate_data.marvin_gpu_streaming import StreamingCoordinator
 from scripts.generate_data.marvin_gpu_task_contract import (
     TaskContract,
@@ -598,6 +599,9 @@ def main(argv=None):
             context, "pybullet", config, "pybullet", timeout, restarts
         )
         contract = TaskContract(config, int(config["seed"]))
+        spool = PartialTaskSpool(root, config)
+        for path in completed:
+            spool.clear_shard(int(path.name))
         coordinator = StreamingCoordinator(
             config,
             pending,
@@ -606,6 +610,7 @@ def main(argv=None):
             gpu_actor,
             bullet_actor,
             _publish_checkpoint,
+            spool,
         )
         generated, _ = coordinator.run()
         completed.extend(generated)

@@ -79,6 +79,7 @@ class StreamingCoordinator:
         gpu_actor,
         bullet_actor,
         publish,
+        spool=None,
     ):
         self.config = dict(config)
         self.contract = contract
@@ -86,6 +87,7 @@ class StreamingCoordinator:
         self.gpu_actor = gpu_actor
         self.bullet_actor = bullet_actor
         self.publish = publish
+        self.spool = spool
         self.base_seed = int(config["seed"])
         self.window = ActiveShardWindow(
             specs,
@@ -107,7 +109,11 @@ class StreamingCoordinator:
             task_id: TaskState(self.contract.build(task_id), start)
             for task_id in range(start, start + size)
         }
-        return ShardState(start, size, path, tasks)
+        shard = ShardState(start, size, path, tasks)
+        if self.spool is not None:
+            restored = self.spool.restore(shard)
+            self.total_accepted += len(restored)
+        return shard
 
     def _task(self, task_id):
         for shard in self.window.open.values():
@@ -439,6 +445,9 @@ class StreamingCoordinator:
                     shard.stats["rrt_checked_states"] += int(
                         candidate.payload["rrt_checked_states"]
                     )
+                    if self.spool is not None:
+                        self.spool.save_task(task, shard.size)
+                        self.spool.save_stats(shard)
                     self.total_accepted += 1
                     print(
                         f"[gpu pipeline] accepted total={self.total_accepted} "
@@ -468,6 +477,8 @@ class StreamingCoordinator:
             self.publish(
                 shard.path, self.config, shard.start, paths, metadata, shard.stats
             )
+            if self.spool is not None:
+                self.spool.clear_shard(shard.start)
             self.completed_paths.append(shard.path)
             self.published_since_recycle += shard.size
             self.window.remove(start)
