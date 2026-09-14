@@ -265,6 +265,25 @@ def _factor_dual_candidates(proposals, definitions_by_id, maximum):
     return result
 
 
+def _candidate_waves(endpoints_by_task, definitions_by_id, accepted):
+    """Yield one endpoint per unfinished task before any second candidate."""
+    ordered = {
+        task_id: sorted(values, key=lambda item: item["candidate_index"])
+        for task_id, values in endpoints_by_task.items()
+    }
+    wave_count = max((len(values) for values in ordered.values()), default=0)
+    for wave in range(wave_count):
+        by_mode = defaultdict(list)
+        for task_id in sorted(ordered):
+            if task_id in accepted or wave >= len(ordered[task_id]):
+                continue
+            mode = definitions_by_id[task_id].mode
+            by_mode[mode].append(ordered[task_id][wave])
+        if not by_mode:
+            break
+        yield wave, by_mode
+
+
 def generate_checkpoint(config, definitions, endpoint_actors, gpu_actor, bullet_actor):
     checkpoint_started = time.perf_counter()
     base_seed = int(config["seed"])
@@ -375,101 +394,101 @@ def generate_checkpoint(config, definitions, endpoint_actors, gpu_actor, bullet_
             else:
                 stats["endpoint_pybullet_rejected"] += 1
                 stats[f"task/{item['task_id']}/endpoint_pybullet_rejected"] += 1
-        endpoints = [
-            item for values in endpoints_by_task.values() for item in values
-        ]
-        if not endpoints:
+        if not endpoints_by_task:
             continue
 
-        by_mode = defaultdict(list)
-        for item in endpoints:
-            by_mode[definitions_by_id[item["task_id"]].mode].append(item)
-        planned = []
-        for mode in MODE_BATCH_CONFIG:
-            batch_size = int(config.get(MODE_BATCH_CONFIG[mode], 1))
-            for batch in _chunks(by_mode[mode], batch_size):
-                query_seeds = [
-                    stable_seed(
-                        base_seed,
-                        item["task_id"],
-                        item["attempt"],
-                        f"rrt-{item['candidate_index']}",
+        for wave, by_mode in _candidate_waves(
+            endpoints_by_task, definitions_by_id, accepted
+        ):
+            planned = []
+            stats["candidate_waves"] += 1
+            for mode in MODE_BATCH_CONFIG:
+                batch_size = int(config.get(MODE_BATCH_CONFIG[mode], 1))
+                for batch in _chunks(by_mode[mode], batch_size):
+                    query_seeds = [
+                        stable_seed(
+                            base_seed,
+                            item["task_id"],
+                            item["attempt"],
+                            f"rrt-{item['candidate_index']}",
+                        )
+                        for item in batch
+                    ]
+                    stage_started = time.perf_counter()
+                    result = gpu_actor.request(
+                        {
+                            "op": "plan",
+                            "mode": mode,
+                            "items": batch,
+                            "query_seeds": query_seeds,
+                        }
                     )
-                    for item in batch
-                ]
-                stage_started = time.perf_counter()
-                result = gpu_actor.request(
-                    {
-                        "op": "plan",
-                        "mode": mode,
-                        "items": batch,
-                        "query_seeds": query_seeds,
-                    }
-                )
-                stats["gpu_plan_audit_wall_milliseconds"] += round(
-                    1000 * (time.perf_counter() - stage_started)
-                )
-                stats["gpu_plan_batches"] += 1
-                stats["gpu_plan_queries"] += len(batch)
-                for item, plan in zip(batch, result):
-                    if plan["path"] is None:
-                        stats[f"gpu_rejected/{plan['rejection_reason']}"] += 1
-                        stats[
-                            f"task/{item['task_id']}/gpu_rejected/{plan['rejection_reason']}"
-                        ] += 1
-                    else:
-                        planned.append({**item, **plan})
-        if not planned:
-            continue
+                    stats["gpu_plan_audit_wall_milliseconds"] += round(
+                        1000 * (time.perf_counter() - stage_started)
+                    )
+                    stats["gpu_plan_batches"] += 1
+                    stats["gpu_plan_queries"] += len(batch)
+                    for item, plan in zip(batch, result):
+                        if plan["path"] is None:
+                            reason = plan["rejection_reason"]
+                            stats[f"gpu_rejected/{reason}"] += 1
+                            stats[f"task/{item['task_id']}/gpu_rejected/{reason}"] += 1
+                        else:
+                            planned.append({**item, **plan})
+            if not planned:
+                continue
 
-        stage_started = time.perf_counter()
-        mesh_valid = bullet_actor.request(
-            {"op": "trajectories", "items": planned}
-        )
-        stats["pybullet_trajectory_audit_wall_milliseconds"] += round(
-            1000 * (time.perf_counter() - stage_started)
-        )
-        for item, valid in zip(planned, mesh_valid):
-            if not valid:
-                stats["trajectory_pybullet_rejected"] += 1
-                stats[f"task/{item['task_id']}/trajectory_pybullet_rejected"] += 1
-                continue
-            task = definitions_by_id[item["task_id"]]
-            if task.task_id in accepted:
-                stats["valid_alternate_not_selected"] += 1
-                continue
-            path = np.asarray(item["path"])
-            metadata = {
-                "task_id": task.task_id,
-                "task_mode": task.mode,
-                "direction": task.direction,
-                "q_start": np.asarray(item["q_start"]),
-                "q_goal": np.asarray(item["q_goal"]),
-                "planning_time": float(item["batch_seconds"]),
-                "bspline": item["spline"],
-                "ee_goal_pose": np.asarray(item["ee_goal_pose"], dtype=np.float32),
-                "joint_path_length": float(
-                    np.linalg.norm(np.diff(path, axis=0), axis=1).sum()
-                ),
-                "source_region_left": task.source["left"],
-                "source_region_right": task.source["right"],
-                "goal_region_left": task.goal["left"],
-                "goal_region_right": task.goal["right"],
-            }
-            accepted[task.task_id] = (path, metadata)
-            stats["accepted"] += 1
-            stats[f"accepted/{task.mode}"] += 1
-            stats["rrt_iterations"] += int(item["rrt_iterations"])
-            stats["rrt_sampled_edges"] += int(item["rrt_sampled_edges"])
-            stats["rrt_checked_states"] += int(item["rrt_checked_states"])
-            stats["accepted_task_wall_milliseconds"] += int(
-                1000 * (time.perf_counter() - started[task.task_id])
+            stage_started = time.perf_counter()
+            mesh_valid = bullet_actor.request(
+                {"op": "trajectories", "items": planned}
             )
-            print(
-                f"[gpu pipeline] accepted {len(accepted)}/{len(definitions)} "
-                f"task={task.task_id} mode={task.mode} attempt={attempts[task.task_id]}",
-                flush=True,
+            stats["pybullet_trajectory_audit_wall_milliseconds"] += round(
+                1000 * (time.perf_counter() - stage_started)
             )
+            for item, valid in zip(planned, mesh_valid):
+                if not valid:
+                    stats["trajectory_pybullet_rejected"] += 1
+                    stats[f"task/{item['task_id']}/trajectory_pybullet_rejected"] += 1
+                    continue
+                task = definitions_by_id[item["task_id"]]
+                if task.task_id in accepted:
+                    stats["stale_candidates_discarded"] += 1
+                    continue
+                path = np.asarray(item["path"])
+                metadata = {
+                    "task_id": task.task_id,
+                    "task_mode": task.mode,
+                    "direction": task.direction,
+                    "q_start": np.asarray(item["q_start"]),
+                    "q_goal": np.asarray(item["q_goal"]),
+                    "planning_time": float(item["batch_seconds"]),
+                    "bspline": item["spline"],
+                    "ee_goal_pose": np.asarray(
+                        item["ee_goal_pose"], dtype=np.float32
+                    ),
+                    "joint_path_length": float(
+                        np.linalg.norm(np.diff(path, axis=0), axis=1).sum()
+                    ),
+                    "source_region_left": task.source["left"],
+                    "source_region_right": task.source["right"],
+                    "goal_region_left": task.goal["left"],
+                    "goal_region_right": task.goal["right"],
+                }
+                accepted[task.task_id] = (path, metadata)
+                stats["accepted"] += 1
+                stats[f"accepted/{task.mode}"] += 1
+                stats["rrt_iterations"] += int(item["rrt_iterations"])
+                stats["rrt_sampled_edges"] += int(item["rrt_sampled_edges"])
+                stats["rrt_checked_states"] += int(item["rrt_checked_states"])
+                stats["accepted_task_wall_milliseconds"] += int(
+                    1000 * (time.perf_counter() - started[task.task_id])
+                )
+                print(
+                    f"[gpu pipeline] accepted {len(accepted)}/{len(definitions)} "
+                    f"task={task.task_id} mode={task.mode} "
+                    f"attempt={attempts[task.task_id]} wave={wave}",
+                    flush=True,
+                )
     ordered = [accepted[task.task_id] for task in definitions]
     stats["checkpoint_wall_milliseconds"] = round(
         1000 * (time.perf_counter() - checkpoint_started)

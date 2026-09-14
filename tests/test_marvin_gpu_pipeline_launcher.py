@@ -6,6 +6,7 @@ import yaml
 
 from scripts.generate_data.launch_generate_marvin_warehouse_gpu_pipeline import (
     DEFAULT_CONFIG,
+    _candidate_waves,
     _factor_dual_candidates,
     _dynamic_proposals,
     generate_checkpoint,
@@ -106,14 +107,15 @@ def test_checkpoint_keeps_mixed_contract_but_dispatches_homogeneous_batches():
     assert len(paths) == len(metadata) == 10
     assert [item["task_id"] for item in metadata] == list(range(10))
     assert gpu.plan_batches == [
-        ("dual_independent", 12),
-        ("dual_independent", 12),
-        ("left_only", 8),
-        ("right_only", 8),
+        ("dual_independent", 6),
+        ("left_only", 2),
+        ("right_only", 2),
     ]
     assert stats["accepted"] == 10
-    assert stats["gpu_plan_batches"] == 4
-    assert stats["gpu_plan_queries"] == 40
+    assert stats["gpu_plan_batches"] == 3
+    assert stats["gpu_plan_queries"] == 10
+    assert stats["candidate_waves"] == 1
+    assert stats["stale_candidates_discarded"] == 0
     assert stats["checkpoint_wall_milliseconds"] >= 0
     assert stats["endpoint_proposal_wall_milliseconds"] >= 0
     assert stats["gpu_endpoint_audit_wall_milliseconds"] >= 0
@@ -153,6 +155,27 @@ def test_endpoint_jobs_are_dynamically_refilled_one_at_a_time():
     result = _dynamic_proposals(actors, jobs, idle_sleep=0)
     assert sorted(item["task_id"] for item in result) == list(range(5))
     assert all(len(actor.message["jobs"]) == 1 for actor in actors)
+
+
+def test_candidate_waves_prioritize_distinct_unfinished_tasks():
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    contract = TaskContract(config, config["seed"])
+    definitions = {task_id: contract.build(task_id) for task_id in (0, 1, 3)}
+    endpoints = {
+        task_id: [
+            {"task_id": task_id, "candidate_index": candidate}
+            for candidate in range(3)
+        ]
+        for task_id in definitions
+    }
+    waves = list(_candidate_waves(endpoints, definitions, accepted={1: object()}))
+    assert len(waves) == 3
+    for wave, by_mode in waves:
+        items = [item for values in by_mode.values() for item in values]
+        assert {(item["task_id"], item["candidate_index"]) for item in items} == {
+            (0, wave),
+            (3, wave),
+        }
 
 
 def test_dual_candidates_cross_arm_pairs_but_single_arm_candidates_do_not():

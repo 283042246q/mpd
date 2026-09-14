@@ -45,6 +45,9 @@ gpu_pipeline_endpoint_candidate_chunk_size: 2
 # before the GPU inter-arm collision gate (8x8 at the default setting).
 gpu_pipeline_dual_cross_candidates: 64
 gpu_pipeline_planning_candidates_per_task: 4
+gpu_pipeline_max_inflight_candidates_per_task: 1
+gpu_pipeline_hard_task_max_inflight_candidates: 2
+gpu_pipeline_candidate_hedge_after_attempts: 3
 # Keep the dedicated pipeline's retry policy independent from the legacy CPU
 # generator without changing that generator's 30-attempt contract.
 gpu_pipeline_max_attempts_per_task: 100
