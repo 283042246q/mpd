@@ -523,6 +523,38 @@ def _publish_checkpoint(path, config, start, paths, metadata, stats):
         os.close(descriptor)
 
 
+def _write_pipeline_telemetry(root, telemetry):
+    def fsync_parent(path):
+        descriptor = os.open(Path(path).parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    path = Path(root) / "pipeline_telemetry.yaml"
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_text(yaml.safe_dump(telemetry, sort_keys=False))
+    descriptor = os.open(temporary, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+    fsync_parent(path)
+    manifest_path = Path(root) / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+    manifest["pipeline_telemetry"] = telemetry
+    temporary = manifest_path.with_name(f".{manifest_path.name}.tmp-{os.getpid()}")
+    temporary.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    descriptor = os.open(temporary, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, manifest_path)
+    fsync_parent(manifest_path)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -584,6 +616,7 @@ def main(argv=None):
     endpoint_actors = []
     gpu_actor = None
     bullet_actor = None
+    telemetry = None
     try:
         context = mp.get_context("spawn")
         timeout = float(config.get("gpu_pipeline_actor_timeout_seconds", 600))
@@ -614,6 +647,7 @@ def main(argv=None):
         )
         generated, _ = coordinator.run()
         completed.extend(generated)
+        telemetry = coordinator.telemetry()
     finally:
         for actor in endpoint_actors:
             actor.close()
@@ -622,6 +656,8 @@ def main(argv=None):
         if bullet_actor is not None:
             bullet_actor.close()
     merge_shards(root, completed, config)
+    if telemetry is not None:
+        _write_pipeline_telemetry(root, telemetry)
     return 0
 
 

@@ -9,6 +9,7 @@ from scripts.generate_data.launch_generate_marvin_warehouse_gpu_pipeline import 
     _candidate_waves,
     _factor_dual_candidates,
     _dynamic_proposals,
+    _write_pipeline_telemetry,
     generate_checkpoint,
     main,
 )
@@ -210,3 +211,12 @@ def test_dual_candidates_cross_arm_pairs_but_single_arm_candidates_do_not():
     np.testing.assert_array_equal(crossed["q_start"][7:], np.full(7, 12))
     np.testing.assert_array_equal(crossed["ee_goal_pose"][0], np.full((3, 4), 41))
     np.testing.assert_array_equal(crossed["ee_goal_pose"][1], np.full((3, 4), 52))
+
+
+def test_pipeline_telemetry_is_written_beside_and_into_manifest(tmp_path):
+    (tmp_path / "manifest.yaml").write_text("schema: test\n")
+    telemetry = {"schema": "telemetry/v1", "counters": {"accepted": 10}}
+    _write_pipeline_telemetry(tmp_path, telemetry)
+    assert yaml.safe_load((tmp_path / "pipeline_telemetry.yaml").read_text()) == telemetry
+    manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+    assert manifest["pipeline_telemetry"] == telemetry

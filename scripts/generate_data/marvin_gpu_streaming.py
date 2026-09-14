@@ -101,6 +101,8 @@ class StreamingCoordinator:
         self.total_accepted = 0
         self.published_since_recycle = 0
         self.global_stats = Counter()
+        self.checkpoint_wall_seconds = []
+        self.run_started = time.perf_counter()
         self.idle_sleep = float(config.get("gpu_pipeline_coordinator_idle_sleep", 0.001))
         self.plan_wait = float(config.get("gpu_pipeline_plan_batch_max_wait_seconds", 1.0))
 
@@ -135,7 +137,16 @@ class StreamingCoordinator:
         total = len(items)
         for start, count in groups.items():
             self.window.open[start].stats[key] += round(1000 * seconds * count / total)
-        self.global_stats[key] += seconds
+        self.global_stats[key] += round(1000 * seconds)
+
+    def _record_queue_wait(self, candidates, stage):
+        now = time.perf_counter()
+        waits = [now - item.queued_at for item in candidates if np.isfinite(item.queued_at)]
+        if waits:
+            self.global_stats[f"queue_wait_milliseconds/{stage}"] += round(
+                1000 * sum(waits)
+            )
+            self.global_stats[f"queue_wait_items/{stage}"] += len(waits)
 
     def _endpoint_eligible(self):
         active = [
@@ -290,6 +301,7 @@ class StreamingCoordinator:
         if endpoints:
             size = int(self.config.get("gpu_pipeline_gpu_endpoint_batch_size", 128))
             selected = endpoints[:size]
+            self._record_queue_wait(selected, "gpu_endpoint")
             items = [candidate.payload for candidate in selected]
             self.gpu_actor.send({"op": "endpoints", "items": items})
             self.gpu_request = {
@@ -303,6 +315,7 @@ class StreamingCoordinator:
         if not selected:
             return False
         items = [candidate.payload for candidate in selected]
+        self._record_queue_wait(selected, f"gpu_plan/{mode}")
         query_seeds = [
             stable_seed(
                 self.base_seed,
@@ -354,6 +367,9 @@ class StreamingCoordinator:
         mode = request["mode"]
         self.global_stats[f"gpu_plan_batches/{mode}"] += 1
         self.global_stats[f"gpu_plan_queries/{mode}"] += len(result)
+        capacity = int(self.config.get(MODE_BATCH_CONFIG[mode], 1))
+        self.global_stats[f"gpu_plan_capacity/{mode}"] += capacity
+        self.global_stats[f"gpu_plan_batch_size/{mode}/{len(result)}"] += 1
         for candidate, plan in zip(request["candidates"], result):
             self._count(candidate.task_id, f"gpu_plan_queries/{mode}")
             if self._task(candidate.task_id).accepted:
@@ -362,6 +378,7 @@ class StreamingCoordinator:
                 reason = plan["rejection_reason"]
                 candidate.reject(f"gpu_{reason}")
                 self._count(candidate.task_id, f"gpu_rejected/{reason}")
+                self.global_stats[f"gpu_rejected/{mode}/{reason}"] += 1
             else:
                 candidate.payload.update(plan)
                 candidate.advance(CandidateStage.PYBULLET_TRAJECTORY)
@@ -374,6 +391,7 @@ class StreamingCoordinator:
         if endpoints:
             size = int(self.config.get("gpu_pipeline_pybullet_endpoint_batch_size", 64))
             selected = endpoints[:size]
+            self._record_queue_wait(selected, "pybullet_endpoint")
             items = [candidate.payload for candidate in selected]
             self.bullet_actor.send({"op": "endpoints", "items": items})
             self.bullet_request = {
@@ -388,6 +406,7 @@ class StreamingCoordinator:
             return False
         size = int(self.config.get("gpu_pipeline_pybullet_trajectory_batch_size", 4))
         selected = trajectories[:size]
+        self._record_queue_wait(selected, "pybullet_trajectory")
         items = [candidate.payload for candidate in selected]
         self.bullet_actor.send({"op": "trajectories", "items": items})
         self.bullet_request = {
@@ -432,10 +451,15 @@ class StreamingCoordinator:
                 candidate.advance(CandidateStage.PLAN)
             else:
                 path, metadata = _metadata(task.definition, candidate.payload)
+                stale_count = max(0, len(task.live_candidates()) - 1)
                 if task.accept(path, metadata):
                     shard = self._shard(task.task_id)
                     shard.stats["accepted"] += 1
                     shard.stats[f"accepted/{task.definition.mode}"] += 1
+                    shard.stats["stale_candidates_discarded"] += stale_count
+                    self.global_stats["accepted"] += 1
+                    self.global_stats[f"accepted/{task.definition.mode}"] += 1
+                    self.global_stats["stale_candidates_discarded"] += stale_count
                     shard.stats["rrt_iterations"] += int(
                         candidate.payload["rrt_iterations"]
                     )
@@ -468,6 +492,9 @@ class StreamingCoordinator:
             paths, metadata = shard.ordered_results()
             shard.stats["checkpoint_wall_milliseconds"] = round(
                 1000 * (time.perf_counter() - shard.opened_at)
+            )
+            self.checkpoint_wall_seconds.append(
+                shard.stats["checkpoint_wall_milliseconds"] / 1000
             )
             shard.stats["endpoint_actor_restarts"] = sum(
                 actor.restart_count for actor in self.endpoint_actors
@@ -502,6 +529,12 @@ class StreamingCoordinator:
     def run(self):
         self.window.fill(self._open_shard)
         while not self.window.finished:
+            self.global_stats["max_open_shards"] = max(
+                self.global_stats["max_open_shards"], len(self.window.open)
+            )
+            self.global_stats["max_active_window_tasks"] = max(
+                self.global_stats["max_active_window_tasks"], self.window.task_count
+            )
             progressed = False
             progressed |= self._poll_endpoints()
             progressed |= self._poll_gpu()
@@ -523,3 +556,56 @@ class StreamingCoordinator:
             if not progressed:
                 time.sleep(self.idle_sleep)
         return self.completed_paths, self.global_stats
+
+    def telemetry(self):
+        wall = time.perf_counter() - self.run_started
+        actors = {
+            "endpoints": [
+                actor.request({"op": "telemetry"}) for actor in self.endpoint_actors
+            ],
+            "gpu": self.gpu_actor.request({"op": "telemetry"}),
+            "pybullet": self.bullet_actor.request({"op": "telemetry"}),
+        }
+        counters = dict(self.global_stats)
+        counters["pipeline_wall_milliseconds"] = round(1000 * wall)
+        gpu_busy = counters.get("gpu_endpoint_audit_busy_milliseconds", 0) + counters.get(
+            "gpu_plan_audit_busy_milliseconds", 0
+        )
+        bullet_busy = counters.get(
+            "pybullet_endpoint_audit_busy_milliseconds", 0
+        ) + counters.get("pybullet_trajectory_audit_busy_milliseconds", 0)
+        endpoint_busy = counters.get("endpoint_actor_busy_milliseconds", 0)
+        capacity = max(wall * 1000, 1)
+        utilization = {
+            "endpoint_actor_busy_fraction": endpoint_busy
+            / (capacity * len(self.endpoint_actors)),
+            "gpu_actor_busy_fraction": gpu_busy / capacity,
+            "pybullet_actor_busy_fraction": bullet_busy / capacity,
+        }
+        occupancy = {}
+        for mode in MODE_BATCH_CONFIG:
+            queries = counters.get(f"gpu_plan_queries/{mode}", 0)
+            slots = counters.get(f"gpu_plan_capacity/{mode}", 0)
+            occupancy[mode] = queries / slots if slots else 0.0
+        return {
+            "schema": "marvin_gpu_pipeline_telemetry/v1",
+            "scope": "current_launcher_session",
+            "counters": counters,
+            "batch_occupancy": occupancy,
+            "actor_utilization": utilization,
+            "checkpoint_wall_seconds": self.checkpoint_wall_seconds,
+            "actors": actors,
+            "configuration": {
+                "active_window_tasks": int(
+                    self.config.get("gpu_pipeline_active_window_tasks", 80)
+                ),
+                "max_open_shards": int(
+                    self.config.get("gpu_pipeline_max_open_shards", 8)
+                ),
+                "endpoint_workers": len(self.endpoint_actors),
+                "query_batch_size": {
+                    mode: int(self.config.get(key, 1))
+                    for mode, key in MODE_BATCH_CONFIG.items()
+                },
+            },
+        }

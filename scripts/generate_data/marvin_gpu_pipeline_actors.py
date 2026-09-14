@@ -5,9 +5,35 @@ spawned actor therefore owns only the native runtime required for its job.
 """
 from __future__ import annotations
 
+import os
+import resource
 import traceback
 
 import numpy as np
+
+
+def _actor_telemetry(role, worker):
+    result = {
+        "pid": os.getpid(),
+        "host_peak_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+    }
+    if role == "gpu":
+        import torch
+
+        device = worker.robot.q_pos_min.device
+        torch.cuda.synchronize(device)
+        result.update(
+            gpu_device=str(device),
+            gpu_name=torch.cuda.get_device_name(device),
+            gpu_total_memory_bytes=int(
+                torch.cuda.get_device_properties(device).total_memory
+            ),
+            gpu_memory_allocated_bytes=int(torch.cuda.memory_allocated(device)),
+            gpu_memory_reserved_bytes=int(torch.cuda.memory_reserved(device)),
+            gpu_peak_allocated_bytes=int(torch.cuda.max_memory_allocated(device)),
+            gpu_peak_reserved_bytes=int(torch.cuda.max_memory_reserved(device)),
+        )
+    return result
 
 
 def _endpoint_command(worker, message):
@@ -135,7 +161,12 @@ def actor_main(role, config, requests, responses):
             if message is None:
                 break
             try:
-                responses.put({"ok": True, "result": handler(worker, message)})
+                result = (
+                    _actor_telemetry(role, worker)
+                    if message.get("op") == "telemetry"
+                    else handler(worker, message)
+                )
+                responses.put({"ok": True, "result": result})
             except BaseException as error:
                 responses.put(
                     {

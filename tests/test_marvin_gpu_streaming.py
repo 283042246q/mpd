@@ -22,7 +22,9 @@ class ImmediateActor:
     def send(self, message):
         if self.response is not None:
             raise RuntimeError("actor is busy")
-        if self.role == "endpoint":
+        if message["op"] == "telemetry":
+            self.response = {"host_peak_rss_kib": 1234}
+        elif self.role == "endpoint":
             values = []
             for job in message["jobs"]:
                 task = job["task"]
@@ -83,6 +85,12 @@ class ImmediateActor:
         result, self.response = self.response, None
         return True, result
 
+    def request(self, message):
+        self.send(message)
+        ready, result = self.poll()
+        assert ready
+        return result
+
     def recycle(self):
         self.recycle_count += 1
 
@@ -123,3 +131,8 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert any(min(task_ids) < 10 <= max(task_ids) for task_ids in dual_batches)
     assert all(len(paths) == len(metadata) == 10 for _, paths, metadata, _ in published)
     assert stats["gpu_plan_queries/dual_independent"] >= 12
+    telemetry = coordinator.telemetry()
+    assert telemetry["batch_occupancy"]["dual_independent"] > 0
+    assert telemetry["counters"]["max_open_shards"] == 2
+    assert telemetry["counters"]["max_active_window_tasks"] == 20
+    assert telemetry["actors"]["gpu"]["host_peak_rss_kib"] == 1234

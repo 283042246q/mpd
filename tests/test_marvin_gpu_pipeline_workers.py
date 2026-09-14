@@ -8,6 +8,7 @@ import yaml
 from scripts.generate_data.generate_marvin_warehouse_bimanual import DEFAULT_CONFIG
 from scripts.generate_data.marvin_endpoint_proposer import MarvinEndpointProposer
 from scripts.generate_data.marvin_pybullet_auditor import MarvinPyBulletAuditor
+from scripts.generate_data.marvin_gpu_pipeline_actors import _actor_telemetry
 
 
 DATASET = (
@@ -70,6 +71,12 @@ def test_pybullet_auditor_import_does_not_load_ompl():
         "assert 'pb_ompl.pb_ompl' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", command], check=True)
+
+
+def test_actor_telemetry_reports_host_peak_without_loading_cuda():
+    result = _actor_telemetry("endpoint", object())
+    assert result["pid"] > 0
+    assert result["host_peak_rss_kib"] > 0
 
 
 def test_pybullet_auditor_accepts_published_endpoint_and_path():
