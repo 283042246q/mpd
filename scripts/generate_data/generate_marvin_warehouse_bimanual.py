@@ -30,8 +30,10 @@ import yaml
 
 from pb_ompl.pb_ompl import PbOMPLRobot, fit_bspline_to_path, ob, og
 from scripts.generate_data.generate_trajectories import GenerateDataOMPL
+from scripts.generate_data.gpu_batch_rrt import GpuBatchRRTConnect
 from scripts.generate_data.marvin_pair_sampling import mixture_distribution, pair_distributions, pair_report
 from torch_robotics.environments.env_warehouse_marvin_bimanual import EnvWarehouseMarvinBimanual
+from torch_robotics.robots.robot_marvin_bimanual import RobotMarvinBimanual
 from torch_robotics.torch_planning_objectives.fields.distance_fields import CollisionObjectDistanceField
 
 JOINT_NAMES = tuple([f"Joint{i}_L" for i in range(1, 8)] + [f"Joint{i}_R" for i in range(1, 8)])
@@ -48,6 +50,7 @@ DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[2] / "data_generation_cfgs/EnvWarehouse-RobotMarvinBimanual-independent.yaml"
 )
 PRE_RRT_FILTERS = ("none", "endpoint_clearance", "endpoint_clearance_and_sparse_line")
+PLANNERS = ("RRTConnect", "GpuBatchRRTConnect")
 EE_GOAL_SCHEMA = "marvin_dual_pika_tcp/v1"
 EE_GOAL_LINKS = ("left_pika_gripper_tcp", "right_pika_gripper_tcp")
 
@@ -244,13 +247,19 @@ def validate_config(config):
             "use trajectory_direction_weights for four-way sampling"
         )
     _direction_schedule(direction_weights)
-    if config.get("planner", "RRTConnect") != "RRTConnect":
-        raise ValueError("this entrypoint uses RRTConnect")
+    if config.get("planner", "RRTConnect") not in PLANNERS:
+        raise ValueError(f"planner must be one of {PLANNERS}")
     if not 0 < float(config.get("state_validity_resolution", 0.002)) <= 1:
         raise ValueError("state_validity_resolution must lie in (0, 1]")
     planner_range = config.get("planner_range", 0.35)
     if planner_range is not None and float(planner_range) <= 0:
         raise ValueError("planner_range must be positive")
+    if int(config.get("gpu_rrt_batch_size", 64)) < 1:
+        raise ValueError("gpu_rrt_batch_size must be positive")
+    if int(config.get("gpu_rrt_max_iterations", 4096)) < 1:
+        raise ValueError("gpu_rrt_max_iterations must be positive")
+    if not 0 <= float(config.get("gpu_rrt_goal_bias", 0.125)) <= 1:
+        raise ValueError("gpu_rrt_goal_bias must lie in [0, 1]")
     if not isinstance(config.get("simplify_path", False), bool):
         raise ValueError("simplify_path must be boolean")
     pre_rrt_filter = config.get("pre_rrt_filter", "none")
@@ -298,6 +307,7 @@ def file_sha256(path):
 class MarvinWarehouseGenerator:
     def __init__(self, config, seed, progress_label=None):
         self.config = validate_config(config)
+        self.seed = int(seed)
         self.rng = np.random.default_rng(seed)
         self.progress_label = progress_label
         self.stats = Counter()
@@ -345,10 +355,44 @@ class MarvinWarehouseGenerator:
         self._pin_data = {arm: self._pin_model.createData() for arm in ARM_SLICES}
         self.deadline = float("inf")
         self._closed = False
-        self._rrt_setups = {
-            mode: self._build_rrt_setup(mode)
-            for mode in ("dual_independent", "left_only", "right_only")
-        }
+        self._gpu_rrt_query_id = 0
+        self.gpu_torch_robot = None
+        self.gpu_torch_object_field = None
+        if config.get("planner", "RRTConnect") == "GpuBatchRRTConnect":
+            self._build_gpu_collision_backend()
+            self._rrt_setups = {}
+            # GenerateDataOMPL creates a legacy setup during construction. The
+            # GPU backend only needs its Bullet validity interface.
+            self._release_generic_pbompl_setup()
+        else:
+            self._rrt_setups = {
+                mode: self._build_rrt_setup(mode)
+                for mode in ("dual_independent", "left_only", "right_only")
+            }
+
+    def _build_gpu_collision_backend(self):
+        device = torch.device(self.config.get("gpu_device", "cuda:0"))
+        if device.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("GpuBatchRRTConnect requires an available CUDA device")
+        tensor_args = {"device": device, "dtype": torch.float32}
+        self.gpu_torch_robot = RobotMarvinBimanual(tensor_args=tensor_args)
+        # Match GenerateDataOMPL exactly: the production generator uses the
+        # analytic primitives, not the 2 cm interpolated SDF grid.
+        gpu_env = EnvWarehouseMarvinBimanual(
+            precompute_sdf_obj_fixed=False,
+            precompute_sdf_obj_extra=False,
+            tensor_args=tensor_args,
+        )
+        self.gpu_torch_object_field = CollisionObjectDistanceField(
+            self.gpu_torch_robot,
+            df_obj_list_fn=gpu_env.get_df_obj_list,
+            link_margins_for_object_collision_checking_tensor=(
+                self.gpu_torch_robot.link_collision_spheres_radii
+            ),
+            cutoff_margin=float(self.config.get("min_distance_robot_env", 0.02)),
+            tensor_args=tensor_args,
+        )
+        self.stats["gpu_collision_backend_builds"] += 1
 
     def _configure_marvin_self_collision_pairs(self):
         config = yaml.safe_load(Path(self.torch_robot.self_collision_pairs_file_path).read_text())
@@ -464,6 +508,8 @@ class MarvinWarehouseGenerator:
         finally:
             self.interface = None
             self.worker = None
+            self.gpu_torch_object_field = None
+            self.gpu_torch_robot = None
 
     def dual_ee_goal_pose(self, q_goal):
         """Return the two Pika TCP poses for a canonical 14-D joint goal.
@@ -491,21 +537,50 @@ class MarvinWarehouseGenerator:
         states = np.atleast_2d(q)
         if not np.isfinite(states).all():
             return False
-        for start in range(0, len(states), 32):
-            qt = torch.as_tensor(states[start : start + 32], **self.torch_robot.tensor_args)
-            if ((qt < self.torch_robot.q_pos_min) | (qt > self.torch_robot.q_pos_max)).any():
-                return False
-            positions = self.collision_positions(qt)
-            self_collision = self.torch_robot.df_collision_self.compute_cost(qt, positions, field_type="occupancy")
-            object_collision = self.torch_object_field.compute_cost(qt, positions, field_type="occupancy")
-            if (self_collision | object_collision).any():
-                return False
-        return True
+        collision = self._torch_collision_mask(
+            states,
+            robot=self.torch_robot,
+            object_field=self.torch_object_field,
+            batch_size=32,
+        )
+        return not bool(collision.any().item())
 
-    def collision_positions(self, q):
+    @torch.no_grad()
+    def _torch_collision_mask(self, q, *, robot, object_field, batch_size):
+        qt = torch.as_tensor(q, **robot.tensor_args)
+        if qt.ndim == 1:
+            qt = qt[None]
+        result = torch.empty(len(qt), dtype=torch.bool, device=qt.device)
+        for start in range(0, len(qt), int(batch_size)):
+            chunk = qt[start : start + int(batch_size)]
+            out_of_bounds = ((chunk < robot.q_pos_min) | (chunk > robot.q_pos_max)).any(dim=1)
+            positions = self.collision_positions(chunk, robot=robot)
+            self_collision = robot.df_collision_self.compute_cost(
+                chunk, positions, field_type="occupancy"
+            )
+            object_collision = object_field.compute_cost(
+                chunk, positions, field_type="occupancy"
+            )
+            result[start : start + len(chunk)] = (
+                out_of_bounds | self_collision.reshape(-1) | object_collision.reshape(-1)
+            )
+        return result
+
+    @torch.no_grad()
+    def _gpu_collision_mask(self, q):
+        if self.gpu_torch_robot is None or self.gpu_torch_object_field is None:
+            raise RuntimeError("GPU collision backend is not initialized")
+        return self._torch_collision_mask(
+            q,
+            robot=self.gpu_torch_robot,
+            object_field=self.gpu_torch_object_field,
+            batch_size=int(self.config.get("gpu_collision_batch_size", 256)),
+        )
+
+    def collision_positions(self, q, robot=None):
         # Expand exact fine-sphere centers from their physical parent links.
         # Traversing >1000 fixed sphere frames per RRT state is unnecessary.
-        robot = self.torch_robot
+        robot = self.torch_robot if robot is None else robot
         parent_poses = torch.stack(robot.fk_collision_sphere_parent_links(q), dim=1)
         selected = parent_poses[:, robot.collision_sphere_parent_indices]
         return (
@@ -802,6 +877,8 @@ class MarvinWarehouseGenerator:
 
     def plan_once(self, q_start, q_goal, mode):
         """A 7D subspace freezes the inactive arm during ALL RRT operations."""
+        if self.config.get("planner", "RRTConnect") == "GpuBatchRRTConnect":
+            return self._plan_once_gpu(q_start, q_goal, mode)
         try:
             bundle = self._rrt_setups[mode]
         except KeyError as error:
@@ -848,6 +925,79 @@ class MarvinWarehouseGenerator:
             [
                 np.interp(np.linspace(0, t[-1], int(self.config.get("interpolate_num", 128))), t, raw[:, j])
                 for j in range(14)
+            ],
+            axis=1,
+        )
+        self.stats["path_resample_seconds"] += time.perf_counter() - before
+        if not self.path_valid(path, stats_prefix="path"):
+            self.stats["path_rejected"] += 1
+            return None
+        return path
+
+    def _plan_once_gpu(self, q_start, q_goal, mode):
+        indices = np.concatenate(
+            [np.arange(14)[ARM_SLICES[arm]] for arm in active_arms(mode)]
+        )
+        robot = self.gpu_torch_robot
+        low = robot.q_pos_min[indices]
+        high = robot.q_pos_max[indices]
+        planner = GpuBatchRRTConnect(
+            self._gpu_collision_mask,
+            low,
+            high,
+            batch_size=int(self.config.get("gpu_rrt_batch_size", 64)),
+            max_iterations=int(self.config.get("gpu_rrt_max_iterations", 4096)),
+            extension_range=float(self.config.get("planner_range", 0.35)),
+            collision_step=float(
+                self.config.get(
+                    "gpu_rrt_collision_max_joint_step",
+                    self.config.get("collision_max_joint_step", 0.025),
+                )
+            ),
+            goal_bias=float(self.config.get("gpu_rrt_goal_bias", 0.125)),
+            seed=self.seed + self._gpu_rrt_query_id,
+        )
+        self._gpu_rrt_query_id += 1
+        self.stats["rrt_attempts"] += 1
+        torch.cuda.synchronize(robot.q_pos_min.device)
+        before = time.perf_counter()
+        result = planner.plan(
+            q_start,
+            q_goal,
+            indices,
+            float(self.config.get("planner_allowed_time", 10.0)),
+        )
+        torch.cuda.synchronize(robot.q_pos_min.device)
+        self.stats["rrt_seconds"] += time.perf_counter() - before
+        self.stats["gpu_rrt_iterations"] += result.iterations
+        self.stats["gpu_rrt_sampled_edges"] += result.sampled_edges
+        self.stats["gpu_rrt_checked_states"] += result.checked_states
+        if result.path is None:
+            self.stats["rrt_no_exact_solution"] += 1
+            return None
+        self.stats["rrt_exact"] += 1
+        before = time.perf_counter()
+        raw = result.path.astype(float, copy=True)
+        inactive_indices = np.setdiff1d(np.arange(14), indices, assume_unique=True)
+        # Preserve the dataset endpoint/frozen-arm contract in the original
+        # host precision. GPU float32 roundoff must not appear as inactive-arm
+        # motion in left_only/right_only trajectories.
+        raw[:, inactive_indices] = np.asarray(q_start)[inactive_indices]
+        raw[0] = q_start
+        raw[-1, indices] = np.asarray(q_goal)[indices]
+        t = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(raw, axis=0), axis=1))]
+        t, unique = np.unique(t, return_index=True)
+        raw = raw[unique]
+        if len(t) < 2:
+            return None
+        path = np.stack(
+            [
+                np.interp(
+                    np.linspace(0, t[-1], int(self.config.get("interpolate_num", 128))),
+                    t,
+                    raw[:, joint],
+                )
+                for joint in range(14)
             ],
             axis=1,
         )
@@ -1029,7 +1179,7 @@ def _write_dataset(output, config, paths, metadata, seed, stats=None):
         env_id=config["env_id"],
         robot_id=config["robot_id"],
         min_distance_robot_env=float(config.get("min_distance_robot_env", 0.02)),
-        planner="RRTConnect",
+        planner=config.get("planner", "RRTConnect"),
         joint_names=list(JOINT_NAMES),
         task_family="independent",
         task_mode="dual_independent",
@@ -1038,6 +1188,7 @@ def _write_dataset(output, config, paths, metadata, seed, stats=None):
     (output / "args.yaml").write_text(yaml.safe_dump(args, sort_keys=False))
     manifest = dict(
         schema="marvin_bimanual_warehouse_dataset/v3",
+        planner=config.get("planner", "RRTConnect"),
         ee_goal_schema=EE_GOAL_SCHEMA,
         ee_goal_links=list(EE_GOAL_LINKS),
         scene_version=EnvWarehouseMarvinBimanual.scene_version,

@@ -462,7 +462,8 @@ if [[ "$SKIP_BUILD" != true ]]; then
 fi
 set +e
 timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
-  pixi run env ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID" \
+  pixi run env -u CYCLONEDDS_URI \
+  ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID" \
   bash -lc 'source install/setup.bash && exec "$@"' bash \
   ros2 launch mpd_dynamic_planner_adapter "$ROS_LAUNCH" \
   plan_only:=false \

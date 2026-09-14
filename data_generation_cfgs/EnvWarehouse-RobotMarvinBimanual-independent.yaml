@@ -8,6 +8,19 @@ num_trajectories: 1000
 seed: 1726484688
 sampler: region_ik
 planner: RRTConnect
+# Experimental GPU alternative: override with --planner GpuBatchRRTConnect.
+# It batches RRT samples/edges on the sphere model, freezes inactive-arm joints
+# for left/right-only tasks, then keeps the same dense Torch + PyBullet path and
+# spline audits as the CPU baseline. Keep this opt-in until a long-running
+# single-process soak proves that it avoids the native multi-worker failures;
+# the short benchmark only measures per-worker latency.
+gpu_device: cuda:0
+gpu_rrt_batch_size: 64
+gpu_rrt_max_iterations: 4096
+gpu_rrt_goal_bias: 0.125
+gpu_collision_batch_size: 256
+gpu_workers: 1
+gpu_worker_lifetime_trajectories: 100
 planner_allowed_time: 10.0
 # Avoid OMPL's automatic ~3.47 rad extension in the narrow 14D free space.
 planner_range: 0.35

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch resumable CPU shards (3 workers / 500 tasks, matching Panda)."""
+"""Launch resumable Marvin shards for CPU OMPL or GPU-batched RRT."""
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
@@ -22,6 +22,7 @@ from scripts.generate_data.generate_marvin_warehouse_bimanual import (
     DEFAULT_CONFIG,
     EE_GOAL_SCHEMA,
     MarvinWarehouseGenerator,
+    PLANNERS,
     PRE_RRT_FILTERS,
     TaskSamplingBudgetExhausted,
     _write_dataset,
@@ -341,22 +342,37 @@ def main(argv=None):
     parser.add_argument("--max-worker-restarts-per-shard", type=int)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--sampler", choices=("region_ik", "joint_fk"))
+    parser.add_argument("--planner", choices=PLANNERS)
+    parser.add_argument("--gpu-device")
+    parser.add_argument("--gpu-batch-size", type=int)
     parser.add_argument("--pre-rrt-filter", choices=PRE_RRT_FILTERS)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     config = yaml.safe_load(args.config.read_text())
     if args.sampler:
         config["sampler"] = args.sampler
+    if args.planner:
+        config["planner"] = args.planner
+    if args.gpu_device:
+        config["gpu_device"] = args.gpu_device
+    if args.gpu_batch_size is not None:
+        config["gpu_rrt_batch_size"] = args.gpu_batch_size
     if args.pre_rrt_filter:
         config["pre_rrt_filter"] = args.pre_rrt_filter
     validate_config(config)
     n = args.num_trajectories if args.num_trajectories is not None else config["num_trajectories"]
-    workers = args.workers if args.workers is not None else config.get("workers", 3)
+    gpu_planner = config.get("planner", "RRTConnect") == "GpuBatchRRTConnect"
+    workers = args.workers if args.workers is not None else config.get(
+        "gpu_workers" if gpu_planner else "workers", 1 if gpu_planner else 3
+    )
     shard_size = args.tasks_per_shard if args.tasks_per_shard is not None else config.get("tasks_per_shard", 500)
     worker_lifetime = (
         args.worker_lifetime_trajectories
         if args.worker_lifetime_trajectories is not None
-        else config.get("worker_lifetime_trajectories", 10)
+        else config.get(
+            "gpu_worker_lifetime_trajectories" if gpu_planner else "worker_lifetime_trajectories",
+            100 if gpu_planner else 10,
+        )
     )
     max_restarts = (
         args.max_worker_restarts_per_shard
@@ -374,13 +390,19 @@ def main(argv=None):
         or max_restarts < 0
     ):
         raise ValueError("counts/shard/worker lifetime must be positive multiples of 10; workers >= 1; restarts >= 0")
+    if gpu_planner and workers != 1:
+        raise ValueError(
+            "GpuBatchRRTConnect uses one persistent process per CUDA device; "
+            "multi-GPU scheduling is not implemented, so workers must be 1"
+        )
     root = args.output_dir or Path(config["output_dir"])
     effective_shard_size = min(shard_size, worker_lifetime)
     shards = build_shards(n, effective_shard_size, workers)
     active_workers = min(workers, len(shards))
     print(
         f"{config['sampler']}, pre_rrt_filter={config.get('pre_rrt_filter', 'none')}: "
-        f"{n} trajectories, {active_workers}/{workers} active CPU workers, "
+        f"planner={config.get('planner', 'RRTConnect')}, {n} trajectories, "
+        f"{active_workers}/{workers} active {'GPU' if gpu_planner else 'CPU'} workers, "
         f"{len(shards)} fresh-worker shards (size <= {effective_shard_size}) -> {root}",
         flush=True,
     )
