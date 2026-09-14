@@ -53,6 +53,7 @@ class RestartableActor:
         self.requests = None
         self.responses = None
         self.pending = None
+        self.pending_started = None
         self._start()
 
     def _start(self):
@@ -79,7 +80,31 @@ class RestartableActor:
         if self.pending is not None:
             raise RuntimeError(f"{self.name} already has an in-flight request")
         self.pending = message
+        self.pending_started = time.monotonic()
         self.requests.put(message, timeout=self.timeout)
+
+    def poll(self):
+        """Return ``(ready, result)`` without blocking a healthy actor."""
+        if self.pending is None:
+            return False, None
+        try:
+            response = self.responses.get_nowait()
+        except Empty:
+            elapsed = time.monotonic() - self.pending_started
+            if self.process.is_alive() and elapsed < self.timeout:
+                return False, None
+            message = self.pending
+            self._restart_after_failure()
+            self.send(message)
+            return False, None
+        self.pending = None
+        self.pending_started = None
+        if response.get("ok"):
+            return True, response["result"]
+        raise RuntimeError(
+            f"{self.name} request failed: {response.get('error_type')}: "
+            f"{response.get('message')}\n{response.get('traceback', '')}"
+        )
 
     def receive(self):
         if self.pending is None:
@@ -89,6 +114,7 @@ class RestartableActor:
             response = self._wait_response()
             if response is not None:
                 self.pending = None
+                self.pending_started = None
                 if response.get("ok"):
                     return response["result"]
                 raise RuntimeError(
@@ -98,9 +124,9 @@ class RestartableActor:
             if retry:
                 break
             self._restart_after_failure()
-            self.pending = message
-            self.requests.put(message, timeout=self.timeout)
+            self.send(message)
         self.pending = None
+        self.pending_started = None
         raise RuntimeError(f"{self.name} request timed out after restart")
 
     def _wait_response(self):
@@ -133,6 +159,7 @@ class RestartableActor:
             flush=True,
         )
         self.pending = None
+        self.pending_started = None
         self._start()
 
     def recycle(self):
@@ -162,6 +189,7 @@ class RestartableActor:
 
     def close(self):
         self.pending = None
+        self.pending_started = None
         self._terminate(graceful=True)
 
 
@@ -170,16 +198,28 @@ def _chunks(values, size):
         yield values[begin : begin + int(size)]
 
 
-def _parallel_proposals(actors, jobs):
-    partitions = [[] for _ in actors]
-    for index, job in enumerate(jobs):
-        partitions[index % len(actors)].append(job)
-    active = []
-    for actor, partition in zip(actors, partitions):
-        if partition:
-            actor.send({"op": "propose", "jobs": partition})
-            active.append(actor)
-    return [item for actor in active for item in actor.receive()]
+def _dynamic_proposals(actors, jobs, idle_sleep=0.001):
+    """Dispatch one small job per free actor and refill whichever finishes."""
+    pending = list(jobs)
+    next_job = 0
+    active = set()
+    result = []
+    while next_job < len(pending) or active:
+        for index, actor in enumerate(actors):
+            if index not in active and next_job < len(pending):
+                actor.send({"op": "propose", "jobs": [pending[next_job]]})
+                next_job += 1
+                active.add(index)
+        progressed = False
+        for index in tuple(active):
+            ready, values = actors[index].poll()
+            if ready:
+                result.extend(values)
+                active.remove(index)
+                progressed = True
+        if not progressed and active:
+            time.sleep(float(idle_sleep))
+    return result
 
 
 def _factor_dual_candidates(proposals, definitions_by_id, maximum):
@@ -253,26 +293,34 @@ def generate_checkpoint(config, definitions, endpoint_actors, gpu_actor, bullet_
                 f"stats={dict(stats)}"
             )
         jobs = []
+        candidate_chunk = int(
+            config.get("gpu_pipeline_endpoint_candidate_chunk_size", 2)
+        )
+        if candidate_chunk < 1:
+            raise ValueError("endpoint candidate chunk size must be positive")
         for task in pending:
             attempts[task.task_id] += 1
             stats["task_attempts"] += 1
-            jobs.append(
-                {
-                    "task": asdict(task),
-                    "attempt": attempts[task.task_id],
-                    "candidate_seeds": [
-                        stable_seed(
-                            base_seed,
-                            task.task_id,
-                            attempts[task.task_id],
-                            f"endpoint-{candidate}",
-                        )
-                        for candidate in range(candidates_per_attempt)
-                    ],
-                }
-            )
+            indices = list(range(candidates_per_attempt))
+            for chunk in _chunks(indices, candidate_chunk):
+                jobs.append(
+                    {
+                        "task": asdict(task),
+                        "attempt": attempts[task.task_id],
+                        "candidate_indices": chunk,
+                        "candidate_seeds": [
+                            stable_seed(
+                                base_seed,
+                                task.task_id,
+                                attempts[task.task_id],
+                                f"endpoint-{candidate}",
+                            )
+                            for candidate in chunk
+                        ],
+                    }
+                )
         stage_started = time.perf_counter()
-        proposed = _parallel_proposals(endpoint_actors, jobs)
+        proposed = _dynamic_proposals(endpoint_actors, jobs)
         stats["endpoint_proposal_wall_milliseconds"] += round(
             1000 * (time.perf_counter() - stage_started)
         )

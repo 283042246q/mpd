@@ -14,7 +14,10 @@ def _endpoint_command(worker, message):
     result = []
     for job in message["jobs"]:
         task = job["task"]
-        for candidate_index, seed in enumerate(job["candidate_seeds"]):
+        candidate_indices = job.get(
+            "candidate_indices", range(len(job["candidate_seeds"]))
+        )
+        for candidate_index, seed in zip(candidate_indices, job["candidate_seeds"]):
             proposal = worker.propose(
                 task["mode"],
                 task["direction"],

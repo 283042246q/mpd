@@ -40,6 +40,7 @@ gpu_pipeline_max_open_shards: 8
 # still owns no OMPL, PyBullet or CUDA state. The GPU repeats the final check.
 gpu_pipeline_endpoint_cpu_sphere_filter: true
 gpu_pipeline_endpoint_candidates_per_attempt: 8
+gpu_pipeline_endpoint_candidate_chunk_size: 2
 # For dual tasks, combine each left-arm endpoint pair with each right-arm pair
 # before the GPU inter-arm collision gate (8x8 at the default setting).
 gpu_pipeline_dual_cross_candidates: 64
