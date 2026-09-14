@@ -51,6 +51,77 @@ class _Tree:
         return self.states[torch.as_tensor(indices, device=self.states.device)]
 
 
+class _BatchedTree:
+    """Dense, independently-sized trees for a homogeneous query batch."""
+
+    def __init__(self, roots, capacity):
+        if roots.ndim != 2:
+            raise ValueError("batched tree roots must have shape [queries, dof]")
+        self.states = torch.zeros(
+            (len(roots), capacity, roots.shape[1]),
+            dtype=roots.dtype,
+            device=roots.device,
+        )
+        self.states[:, 0] = roots
+        self.parents = torch.full(
+            (len(roots), capacity), -1, dtype=torch.long, device=roots.device
+        )
+        self.counts = torch.ones(len(roots), dtype=torch.long, device=roots.device)
+
+    def nearest(self, targets, chunk_size=4096):
+        if targets.ndim != 3 or targets.shape[0] != len(self.states):
+            raise ValueError("targets must have shape [queries, samples, dof]")
+        max_count = int(self.counts.max().item())
+        best_distance = torch.full(
+            targets.shape[:2], torch.inf, dtype=targets.dtype, device=targets.device
+        )
+        best_index = torch.zeros(targets.shape[:2], dtype=torch.long, device=targets.device)
+        for begin in range(0, max_count, int(chunk_size)):
+            end = min(begin + int(chunk_size), max_count)
+            distance = torch.cdist(targets, self.states[:, begin:end])
+            node_index = torch.arange(begin, end, device=targets.device)
+            distance = distance.masked_fill(
+                node_index[None, None] >= self.counts[:, None, None], torch.inf
+            )
+            value, index = distance.min(dim=2)
+            update = value < best_distance
+            best_distance = torch.where(update, value, best_distance)
+            best_index = torch.where(update, index + begin, best_index)
+        return best_index, best_distance
+
+    def gather(self, indices):
+        query = torch.arange(len(self.states), device=self.states.device)[:, None]
+        return self.states[query, indices]
+
+    def add(self, states, parents, accepted):
+        if states.shape[:2] != parents.shape or parents.shape != accepted.shape:
+            raise ValueError("batched tree insertion shapes do not match")
+        additions = accepted.sum(dim=1)
+        if bool((self.counts + additions > self.states.shape[1]).any().item()):
+            raise RuntimeError("GPU multi-query RRT tree capacity exhausted")
+        offsets = torch.cumsum(accepted.long(), dim=1) - 1
+        positions = self.counts[:, None] + offsets
+        node_indices = torch.full_like(parents, -1)
+        query, sample = torch.nonzero(accepted, as_tuple=True)
+        if len(query):
+            destination = positions[query, sample]
+            self.states[query, destination] = states[query, sample]
+            self.parents[query, destination] = parents[query, sample]
+            node_indices[query, sample] = destination
+        self.counts += additions
+        return node_indices
+
+    def trace(self, query, index):
+        indices = []
+        while index >= 0:
+            indices.append(index)
+            index = int(self.parents[query, index].item())
+        indices.reverse()
+        return self.states[
+            query, torch.as_tensor(indices, dtype=torch.long, device=self.states.device)
+        ]
+
+
 class GpuBatchRRTConnect:
     """Grow two trees with batched samples and batched edge collision checks.
 
@@ -256,3 +327,243 @@ class GpuBatchRRTConnect:
         return GpuBatchRRTResult(
             None, iteration if "iteration" in locals() else 0, sampled_edges, checked_states
         )
+
+
+class GpuMultiQueryRRTConnect(GpuBatchRRTConnect):
+    """Plan several homogeneous requests in parallel on one device.
+
+    ``query_batch_size`` and the inherited ``batch_size`` are independent:
+    the former is the number of trajectories, while the latter is the number
+    of candidate tree edges expanded per trajectory and iteration.  One call
+    must use a common active-joint mapping, so dual, left-only and right-only
+    requests are deliberately placed in separate scheduler buckets.
+    """
+
+    def _expand_full_states_batch(self, active_states, active_indices, frozen_states):
+        full = frozen_states[:, None].expand(
+            -1, active_states.shape[1], -1
+        ).clone()
+        full[:, :, active_indices] = active_states
+        return full
+
+    def _edge_prefix_batch(
+        self, starts, goals, active_indices, frozen_states, enabled
+    ):
+        """Vectorized edge-prefix checks for ``[query, candidate, dof]``."""
+        delta = goals - starts
+        steps = (
+            torch.ceil(delta.abs().amax(dim=2) / self.collision_step)
+            .long()
+            .clamp_min(1)
+        )
+        max_steps = int(steps.max().item())
+        sample_index = torch.arange(
+            1, max_steps + 1, dtype=starts.dtype, device=starts.device
+        )
+        fractions = torch.minimum(
+            sample_index[None, None] / steps[:, :, None],
+            torch.ones(1, dtype=starts.dtype, device=starts.device),
+        )
+        active = starts[:, :, None] + fractions[..., None] * delta[:, :, None]
+        relevant = sample_index[None, None] <= steps[:, :, None]
+        relevant &= enabled[:, :, None]
+        # Do not run the expensive 1,035-sphere predicate for padded steps or
+        # queries that already finished. Only the compact enabled state list
+        # reaches the collision backend.
+        query_index = torch.arange(
+            len(starts), device=starts.device
+        )[:, None, None].expand_as(relevant)[relevant]
+        full = frozen_states[query_index].clone()
+        full[:, active_indices] = active[relevant]
+        collision = torch.zeros_like(relevant)
+        if len(full):
+            collision[relevant] = self.collision_fn(full)
+        blocked = collision & relevant
+        sentinel = torch.full_like(sample_index, max_steps)
+        first_blocked = torch.where(
+            blocked, sample_index[None, None] - 1, sentinel[None, None]
+        ).amin(dim=2)
+        safe_steps = torch.minimum(first_blocked, steps)
+        accepted = enabled & (safe_steps > 0)
+        reached = accepted & (safe_steps == steps)
+        safe_fraction = safe_steps.to(starts.dtype) / steps.to(starts.dtype)
+        last = starts + safe_fraction[:, :, None] * delta
+        checked_per_query = relevant.sum(dim=(1, 2)).detach().cpu().numpy()
+        return last, accepted, reached, checked_per_query
+
+    def _sample_targets_batch(self, other_tree, generators):
+        query_count = len(other_tree.states)
+        targets = torch.empty(
+            (query_count, self.batch_size, len(self.joint_low)),
+            dtype=self.joint_low.dtype,
+            device=self.joint_low.device,
+        )
+        biased = (
+            max(1, int(round(self.batch_size * self.goal_bias)))
+            if self.goal_bias
+            else 0
+        )
+        for query, generator in enumerate(generators):
+            targets[query] = self.joint_low + torch.rand(
+                (self.batch_size, len(self.joint_low)),
+                dtype=self.joint_low.dtype,
+                device=self.joint_low.device,
+                generator=generator,
+            ) * (self.joint_high - self.joint_low)
+            if biased:
+                indices = torch.randint(
+                    int(other_tree.counts[query].item()),
+                    (biased,),
+                    device=self.joint_low.device,
+                    generator=generator,
+                )
+                targets[query, :biased] = other_tree.states[query, indices]
+        return targets
+
+    def plan_batch(
+        self,
+        q_starts,
+        q_goals,
+        active_indices,
+        allowed_time,
+        *,
+        query_seeds=None,
+    ):
+        """Return one :class:`GpuBatchRRTResult` per input query."""
+        device = self.joint_low.device
+        dtype = self.joint_low.dtype
+        q_starts = torch.as_tensor(q_starts, dtype=dtype, device=device)
+        q_goals = torch.as_tensor(q_goals, dtype=dtype, device=device)
+        active_indices = torch.as_tensor(
+            active_indices, dtype=torch.long, device=device
+        )
+        if q_starts.ndim != 2 or q_starts.shape != q_goals.shape:
+            raise ValueError("q_starts and q_goals must have shape [queries, full_dof]")
+        if not len(q_starts):
+            return []
+        if len(active_indices) != len(self.joint_low):
+            raise ValueError("active index count must match planner bounds")
+        query_count = len(q_starts)
+        if query_seeds is None:
+            query_seeds = [self.generator.initial_seed() + i for i in range(query_count)]
+        if len(query_seeds) != query_count:
+            raise ValueError("query_seeds must contain one seed per query")
+        generators = []
+        for seed in query_seeds:
+            generator = torch.Generator(device=device)
+            generator.manual_seed(int(seed))
+            generators.append(generator)
+
+        # The inactive arm is a start-state constraint, not merely an equal
+        # endpoint. Normalize it before checking goal validity or growing the
+        # goal tree so arbitrary inactive values can never leak into a path.
+        normalized_goals = q_starts.clone()
+        normalized_goals[:, active_indices] = q_goals[:, active_indices]
+        endpoints = torch.stack((q_starts, normalized_goals), dim=1)
+        endpoint_collision = self.collision_fn(
+            endpoints.reshape(-1, endpoints.shape[-1])
+        ).reshape(query_count, 2)
+        eligible = ~endpoint_collision.any(dim=1)
+
+        capacity = 1 + self.max_iterations * self.batch_size
+        start_tree = _BatchedTree(q_starts[:, active_indices], capacity)
+        goal_tree = _BatchedTree(normalized_goals[:, active_indices], capacity)
+        solved = torch.zeros(query_count, dtype=torch.bool, device=device)
+        start_nodes = torch.full(
+            (query_count,), -1, dtype=torch.long, device=device
+        )
+        goal_nodes = torch.full_like(start_nodes, -1)
+        iterations = np.zeros(query_count, dtype=np.int64)
+        sampled_edges = np.zeros(query_count, dtype=np.int64)
+        checked_states = np.full(query_count, 2, dtype=np.int64)
+        deadline = time.perf_counter() + float(allowed_time)
+
+        for iteration in range(1, self.max_iterations + 1):
+            active_queries = eligible & ~solved
+            if not bool(active_queries.any().item()) or time.perf_counter() >= deadline:
+                break
+            active_np = active_queries.detach().cpu().numpy()
+            iterations[active_np] = iteration
+            active_is_start = iteration % 2 == 1
+            tree_a, tree_b = (
+                (start_tree, goal_tree)
+                if active_is_start
+                else (goal_tree, start_tree)
+            )
+            targets = self._sample_targets_batch(tree_b, generators)
+            parent_a, distance_a = tree_a.nearest(targets)
+            starts_a = tree_a.gather(parent_a)
+            goals_a = self._steer(
+                starts_a.reshape(-1, starts_a.shape[-1]),
+                targets.reshape(-1, targets.shape[-1]),
+                distance_a.reshape(-1),
+            ).reshape_as(starts_a)
+            enabled_a = active_queries[:, None].expand(-1, self.batch_size)
+            last_a, accepted_a, _, checked = self._edge_prefix_batch(
+                starts_a,
+                goals_a,
+                active_indices,
+                q_starts,
+                enabled_a,
+            )
+            sampled_edges[active_np] += self.batch_size
+            checked_states += checked.astype(np.int64, copy=False)
+            indices_a = tree_a.add(last_a, parent_a, accepted_a)
+
+            parent_b, distance_b = tree_b.nearest(last_a)
+            starts_b = tree_b.gather(parent_b)
+            goals_b = self._steer(
+                starts_b.reshape(-1, starts_b.shape[-1]),
+                last_a.reshape(-1, last_a.shape[-1]),
+                distance_b.reshape(-1),
+            ).reshape_as(starts_b)
+            last_b, accepted_b, reached_b, checked = self._edge_prefix_batch(
+                starts_b,
+                goals_b,
+                active_indices,
+                q_starts,
+                accepted_a,
+            )
+            sampled_edges += accepted_a.sum(dim=1).detach().cpu().numpy()
+            checked_states += checked.astype(np.int64, copy=False)
+            indices_b = tree_b.add(last_b, parent_b, accepted_b)
+            connected = (
+                reached_b
+                & accepted_b
+                & (distance_b <= self.extension_range + 1e-6)
+            )
+            for query in torch.nonzero(
+                connected.any(dim=1) & ~solved, as_tuple=False
+            ).flatten().tolist():
+                candidate = int(
+                    torch.nonzero(connected[query], as_tuple=False)[0].item()
+                )
+                node_a = indices_a[query, candidate]
+                node_b = indices_b[query, candidate]
+                if active_is_start:
+                    start_nodes[query], goal_nodes[query] = node_a, node_b
+                else:
+                    start_nodes[query], goal_nodes[query] = node_b, node_a
+                solved[query] = True
+
+        results = []
+        for query in range(query_count):
+            path = None
+            if bool(solved[query].item()):
+                start_path = start_tree.trace(query, int(start_nodes[query].item()))
+                goal_path = goal_tree.trace(query, int(goal_nodes[query].item()))
+                active_path = torch.cat(
+                    (start_path, goal_path[:-1].flip(0)), dim=0
+                )
+                full_path = q_starts[query].expand(len(active_path), -1).clone()
+                full_path[:, active_indices] = active_path
+                path = full_path.detach().cpu().numpy()
+            results.append(
+                GpuBatchRRTResult(
+                    path,
+                    int(iterations[query]),
+                    int(sampled_edges[query]),
+                    int(checked_states[query]),
+                )
+            )
+        return results
