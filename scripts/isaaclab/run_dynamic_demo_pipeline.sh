@@ -422,7 +422,10 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
 
 printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
 printf '  runtime socket: %s\n' "$SOCKET_PATH"
-env -u PYTHONPATH -u LD_LIBRARY_PATH "$CONDA_EXECUTABLE" run --no-capture-output \
+MPD_ENV_PREFIX="$(dirname "$(dirname "$MPD_PYTHON")")"
+env -u PYTHONPATH \
+  LD_LIBRARY_PATH="${MPD_ENV_PREFIX}/lib" \
+  "$CONDA_EXECUTABLE" run --no-capture-output \
   -n mpd-splines-public python "$SERVER_SCRIPT" \
   --socket "$SOCKET_PATH" \
   --output-root "$PLANNER_RESULTS" \
