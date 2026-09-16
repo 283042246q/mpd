@@ -174,7 +174,7 @@ def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path, capsys):
     assert not (tmp_path / "dry").exists()
     output = capsys.readouterr().out
     assert "active_unfinished=80" in output
-    assert "max_open_shards=16" in output
+    assert "max_open_shards=8" in output
 
 
 def test_endpoint_jobs_are_dynamically_refilled_one_at_a_time():

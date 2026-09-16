@@ -98,12 +98,12 @@ class ImmediateActor:
 def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_path):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
     assert config["gpu_pipeline_active_unfinished_tasks"] == 80
-    assert config["gpu_pipeline_max_open_shards"] == 16
+    assert config["gpu_pipeline_max_open_shards"] == 8
     assert config["gpu_query_batch_size_dual"] == 12
     assert config["gpu_query_batch_size_left"] == 16
     assert config["gpu_query_batch_size_right"] == 16
-    assert config["gpu_pipeline_endpoint_workers"] == 4
-    assert config["gpu_pipeline_endpoint_recycle_jobs"] == 150
+    assert config["gpu_pipeline_endpoint_workers"] == 2
+    assert config["gpu_pipeline_endpoint_recycle_jobs"] == 100
     config.update(
         gpu_pipeline_active_unfinished_tasks=20,
         gpu_pipeline_max_open_shards=2,
