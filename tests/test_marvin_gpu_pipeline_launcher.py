@@ -6,6 +6,7 @@ import yaml
 
 from scripts.generate_data.launch_generate_marvin_warehouse_gpu_pipeline import (
     DEFAULT_CONFIG,
+    RestartableActor,
     _candidate_waves,
     _factor_dual_candidates,
     _dynamic_proposals,
@@ -82,6 +83,14 @@ class FakeBulletActor:
         return [True] * len(message["items"])
 
 
+class ImmediateResponseQueue:
+    def __init__(self, response):
+        self.response = response
+
+    def get_nowait(self):
+        return self.response
+
+
 def test_gpu_launcher_import_does_not_eagerly_load_native_workers():
     command = (
         "import sys; "
@@ -91,6 +100,33 @@ def test_gpu_launcher_import_does_not_eagerly_load_native_workers():
         "assert 'torch' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", command], check=True)
+
+
+def test_actor_restart_limit_is_consecutive_but_total_is_lifetime():
+    actor = object.__new__(RestartableActor)
+    actor.name = "test-actor"
+    actor.max_restarts = 1
+    actor.restart_count = 0
+    actor.consecutive_restart_count = 0
+    actor.pending = {"op": "work"}
+    actor.pending_started = 0.0
+    actor._terminate = lambda *args, **kwargs: None
+    actor._start = lambda: None
+
+    actor._restart_after_failure()
+    assert actor.restart_count == actor.consecutive_restart_count == 1
+
+    actor.pending = {"op": "work"}
+    actor.pending_started = 0.0
+    actor.responses = ImmediateResponseQueue({"ok": True, "result": 7})
+    assert actor.poll() == (True, 7)
+    assert actor.consecutive_restart_count == 0
+
+    actor._restart_after_failure()
+    assert actor.restart_count == 2
+    assert actor.consecutive_restart_count == 1
+    with np.testing.assert_raises_regex(RuntimeError, "3 total"):
+        actor._restart_after_failure()
 
 
 def test_checkpoint_keeps_mixed_contract_but_dispatches_homogeneous_batches():

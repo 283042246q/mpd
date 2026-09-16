@@ -51,6 +51,7 @@ class RestartableActor:
         if self.timeout <= 0 or self.max_restarts < 0:
             raise ValueError("actor timeout must be positive and restart count nonnegative")
         self.restart_count = 0
+        self.consecutive_restart_count = 0
         self.process = None
         self.requests = None
         self.responses = None
@@ -102,6 +103,7 @@ class RestartableActor:
         self.pending = None
         self.pending_started = None
         if response.get("ok"):
+            self.consecutive_restart_count = 0
             return True, response["result"]
         raise RuntimeError(
             f"{self.name} request failed: {response.get('error_type')}: "
@@ -118,6 +120,7 @@ class RestartableActor:
                 self.pending = None
                 self.pending_started = None
                 if response.get("ok"):
+                    self.consecutive_restart_count = 0
                     return response["result"]
                 raise RuntimeError(
                     f"{self.name} request failed: {response.get('error_type')}: "
@@ -151,13 +154,16 @@ class RestartableActor:
     def _restart_after_failure(self):
         self._terminate()
         self.restart_count += 1
-        if self.restart_count > self.max_restarts:
+        self.consecutive_restart_count += 1
+        if self.consecutive_restart_count > self.max_restarts:
             raise RuntimeError(
-                f"{self.name} exceeded {self.max_restarts} automatic restarts"
+                f"{self.name} exceeded {self.max_restarts} consecutive automatic "
+                f"restarts ({self.restart_count} total)"
             )
         print(
             f"[{self.name}] actor exited or hung; restart "
-            f"{self.restart_count}/{self.max_restarts}",
+            f"{self.consecutive_restart_count}/{self.max_restarts} consecutive "
+            f"({self.restart_count} total)",
             flush=True,
         )
         self.pending = None
@@ -169,6 +175,7 @@ class RestartableActor:
             raise RuntimeError(f"cannot recycle busy actor {self.name}")
         self._terminate(graceful=True)
         self._start()
+        self.consecutive_restart_count = 0
 
     def _terminate(self, graceful=False):
         process = self.process
