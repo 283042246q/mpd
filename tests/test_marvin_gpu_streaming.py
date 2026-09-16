@@ -95,6 +95,21 @@ class ImmediateActor:
         self.recycle_count += 1
 
 
+class RecordingSpool:
+    def __init__(self):
+        self.progress = []
+        self.stats = []
+
+    def restore(self, shard):
+        return []
+
+    def save_progress(self, task, shard_size):
+        self.progress.append((task.task_id, task.attempt, shard_size))
+
+    def save_stats(self, shard):
+        self.stats.append(dict(shard.stats))
+
+
 def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_path):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
     assert config["gpu_pipeline_active_unfinished_tasks"] == 80
@@ -191,3 +206,41 @@ def test_streaming_rejects_more_than_one_planned_candidate_per_task(tmp_path):
             ImmediateActor("pybullet"),
             lambda *args: None,
         )
+
+
+def test_attempt_progress_is_saved_once_and_stats_are_debounced(tmp_path):
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config.update(
+        gpu_pipeline_active_unfinished_tasks=1,
+        gpu_pipeline_max_open_shards=1,
+        gpu_pipeline_stats_flush_accepted=2,
+        gpu_pipeline_stats_flush_seconds=3600,
+    )
+    endpoint = ImmediateActor("endpoint")
+    spool = RecordingSpool()
+    coordinator = StreamingCoordinator(
+        config,
+        [(0, 1, tmp_path / "000000000")],
+        TaskContract(config, config["seed"]),
+        [endpoint],
+        ImmediateActor("gpu"),
+        ImmediateActor("pybullet"),
+        lambda *args: None,
+        spool,
+    )
+    coordinator.window.fill(coordinator._open_shard)
+
+    assert coordinator._dispatch_endpoints()
+    assert coordinator._poll_endpoints()
+    task = coordinator._task(0)
+    for candidate in task.candidates.values():
+        candidate.reject("test")
+    assert coordinator._dispatch_endpoints()
+
+    assert spool.progress == [(0, 1, 1)]
+    assert not coordinator._flush_due_stats()
+    shard = coordinator._shard(0)
+    shard.stats["accepted"] = 2
+    coordinator.stats_dirty.add(shard.start)
+    assert coordinator._flush_due_stats()
+    assert len(spool.stats) == 1

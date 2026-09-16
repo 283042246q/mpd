@@ -109,6 +109,17 @@ class StreamingCoordinator:
         self.global_stats = Counter()
         self.checkpoint_wall_seconds = []
         self.run_started = time.perf_counter()
+        self.stats_flush_accepted = int(
+            config.get("gpu_pipeline_stats_flush_accepted", 10)
+        )
+        self.stats_flush_seconds = float(
+            config.get("gpu_pipeline_stats_flush_seconds", 2.0)
+        )
+        if self.stats_flush_accepted < 1 or self.stats_flush_seconds <= 0:
+            raise ValueError("stats flush thresholds must be positive")
+        self.stats_dirty = set()
+        self.stats_last_flush = {}
+        self.stats_accepted_at_flush = {}
         self.idle_sleep = float(config.get("gpu_pipeline_coordinator_idle_sleep", 0.001))
         self.plan_wait = float(config.get("gpu_pipeline_plan_batch_max_wait_seconds", 1.0))
         max_inflight = int(
@@ -129,6 +140,8 @@ class StreamingCoordinator:
         if self.spool is not None:
             restored = self.spool.restore(shard)
             self.total_accepted += len(restored)
+        self.stats_last_flush[start] = time.perf_counter()
+        self.stats_accepted_at_flush[start] = int(shard.stats.get("accepted", 0))
         return shard
 
     def _task(self, task_id):
@@ -141,7 +154,9 @@ class StreamingCoordinator:
         return self.window.open[self._task(task_id).shard_start]
 
     def _count(self, task_id, key, value=1):
-        self._shard(task_id).stats[key] += value
+        shard = self._shard(task_id)
+        shard.stats[key] += value
+        self.stats_dirty.add(shard.start)
         self.global_stats[key] += value
 
     def _record_busy(self, items, key, seconds):
@@ -151,7 +166,37 @@ class StreamingCoordinator:
         total = len(items)
         for start, count in groups.items():
             self.window.open[start].stats[key] += round(1000 * seconds * count / total)
+            self.stats_dirty.add(start)
         self.global_stats[key] += round(1000 * seconds)
+
+    def _flush_due_stats(self, force=False):
+        if self.spool is None:
+            return False
+        now = time.perf_counter()
+        flushed = False
+        for start in tuple(self.stats_dirty):
+            shard = self.window.open.get(start)
+            if shard is None:
+                self.stats_dirty.discard(start)
+                continue
+            accepted_delta = int(shard.stats.get("accepted", 0)) - int(
+                self.stats_accepted_at_flush.get(start, 0)
+            )
+            elapsed = now - self.stats_last_flush.get(start, self.run_started)
+            if (
+                not force
+                and accepted_delta < self.stats_flush_accepted
+                and elapsed < self.stats_flush_seconds
+            ):
+                continue
+            self.spool.save_stats(shard)
+            self.stats_dirty.discard(start)
+            self.stats_last_flush[start] = now
+            self.stats_accepted_at_flush[start] = int(
+                shard.stats.get("accepted", 0)
+            )
+            flushed = True
+        return flushed
 
     def _record_queue_wait(self, candidates, stage):
         now = time.perf_counter()
@@ -196,11 +241,9 @@ class StreamingCoordinator:
                 new_attempt = task.endpoint_candidate_cursor == len(indices)
                 if new_attempt:
                     self._count(task.task_id, "task_attempts")
-                if self.spool is not None:
+                if self.spool is not None and new_attempt:
                     shard = self._shard(task.task_id)
                     self.spool.save_progress(task, shard.size)
-                    if new_attempt:
-                        self.spool.save_stats(shard)
                 job = {
                     "task": asdict(task.definition),
                     "attempt": attempt,
@@ -498,6 +541,7 @@ class StreamingCoordinator:
                     shard.stats["accepted"] += 1
                     shard.stats[f"accepted/{task.definition.mode}"] += 1
                     shard.stats["stale_candidates_discarded"] += stale_count
+                    self.stats_dirty.add(shard.start)
                     self.global_stats["accepted"] += 1
                     self.global_stats[f"accepted/{task.definition.mode}"] += 1
                     self.global_stats["stale_candidates_discarded"] += stale_count
@@ -505,7 +549,6 @@ class StreamingCoordinator:
                         shard.stats[key] += value
                     if self.spool is not None:
                         self.spool.save_task(task, shard.size)
-                        self.spool.save_stats(shard)
                     self.total_accepted += 1
                     print(
                         f"[gpu pipeline] accepted total={self.total_accepted} "
@@ -535,6 +578,9 @@ class StreamingCoordinator:
             )
             if self.spool is not None:
                 self.spool.clear_shard(shard.start)
+            self.stats_dirty.discard(shard.start)
+            self.stats_last_flush.pop(shard.start, None)
+            self.stats_accepted_at_flush.pop(shard.start, None)
             self.completed_paths.append(shard.path)
             self.published_since_recycle += shard.size
             self.window.remove(start)
@@ -557,37 +603,41 @@ class StreamingCoordinator:
 
     def run(self):
         self.window.fill(self._open_shard)
-        while not self.window.finished:
-            self.global_stats["max_open_shards"] = max(
-                self.global_stats["max_open_shards"], len(self.window.open)
-            )
-            self.global_stats["max_active_window_tasks"] = max(
-                self.global_stats["max_active_window_tasks"], self.window.task_count
-            )
-            self.global_stats["max_active_unfinished_tasks"] = max(
-                self.global_stats["max_active_unfinished_tasks"],
-                self.window.unfinished_task_count,
-            )
-            progressed = False
-            progressed |= self._poll_endpoints()
-            progressed |= self._poll_gpu()
-            progressed |= self._poll_bullet()
-            progressed |= self._publish_complete()
-            self.window.fill(self._open_shard)
-            progressed |= self._dispatch_endpoints()
-            progressed |= self._dispatch_gpu()
-            progressed |= self._dispatch_bullet()
-            failures = self._hard_failures()
-            productive = any(
-                task.status in {TaskStatus.ACTIVE, TaskStatus.DEFERRED}
-                or task.live_candidates()
-                or task.endpoint_inflight
-                for task in self.window.active_tasks()
-            )
-            if failures and not productive:
-                raise RuntimeError(f"GPU pipeline hard-failed task(s): {failures}")
-            if not progressed:
-                time.sleep(self.idle_sleep)
+        try:
+            while not self.window.finished:
+                self.global_stats["max_open_shards"] = max(
+                    self.global_stats["max_open_shards"], len(self.window.open)
+                )
+                self.global_stats["max_active_window_tasks"] = max(
+                    self.global_stats["max_active_window_tasks"], self.window.task_count
+                )
+                self.global_stats["max_active_unfinished_tasks"] = max(
+                    self.global_stats["max_active_unfinished_tasks"],
+                    self.window.unfinished_task_count,
+                )
+                progressed = False
+                progressed |= self._poll_endpoints()
+                progressed |= self._poll_gpu()
+                progressed |= self._poll_bullet()
+                progressed |= self._flush_due_stats()
+                progressed |= self._publish_complete()
+                self.window.fill(self._open_shard)
+                progressed |= self._dispatch_endpoints()
+                progressed |= self._dispatch_gpu()
+                progressed |= self._dispatch_bullet()
+                failures = self._hard_failures()
+                productive = any(
+                    task.status in {TaskStatus.ACTIVE, TaskStatus.DEFERRED}
+                    or task.live_candidates()
+                    or task.endpoint_inflight
+                    for task in self.window.active_tasks()
+                )
+                if failures and not productive:
+                    raise RuntimeError(f"GPU pipeline hard-failed task(s): {failures}")
+                if not progressed:
+                    time.sleep(self.idle_sleep)
+        finally:
+            self._flush_due_stats(force=True)
         return self.completed_paths, self.global_stats
 
     def telemetry(self):
@@ -649,6 +699,8 @@ class StreamingCoordinator:
                 "endpoint_recycle_jobs": int(
                     self.config.get("gpu_pipeline_endpoint_recycle_jobs", 150)
                 ),
+                "stats_flush_accepted": self.stats_flush_accepted,
+                "stats_flush_seconds": self.stats_flush_seconds,
                 "query_batch_size": {
                     mode: int(self.config.get(key, 1))
                     for mode, key in MODE_BATCH_CONFIG.items()

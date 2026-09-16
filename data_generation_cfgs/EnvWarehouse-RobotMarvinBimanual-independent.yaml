@@ -54,6 +54,10 @@ gpu_pipeline_checkpoint_size: 10
 gpu_pipeline_actor_timeout_seconds: 600
 gpu_pipeline_max_consecutive_actor_restarts: 3
 gpu_pipeline_max_total_actor_restarts: 10
+# Accepted task payloads remain individually durable; only aggregate counters
+# are debounced to avoid a YAML fsync for every candidate/trajectory event.
+gpu_pipeline_stats_flush_accepted: 10
+gpu_pipeline_stats_flush_seconds: 2.0
 gpu_pipeline_pybullet_recycle_trajectories: 50
 gpu_pipeline_gpu_endpoint_batch_size: 128
 gpu_pipeline_pybullet_endpoint_batch_size: 64
