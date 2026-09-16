@@ -144,12 +144,18 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
         if mode == "dual_independent"
     )
     assert stats["gpu_plan_queries/dual_independent"] == expected_dual_queries
+    endpoints[0].restart_count = 2
+    gpu.restart_count = 1
+    bullet.restart_count = 0
     telemetry = coordinator.telemetry()
     assert telemetry["batch_occupancy"]["dual_independent"] > 0
     assert telemetry["counters"]["max_open_shards"] == 2
     assert telemetry["counters"]["max_active_window_tasks"] == 20
     assert telemetry["counters"]["max_active_unfinished_tasks"] == 20
     assert telemetry["counters"]["endpoint_actor_recycles"] > 0
+    assert telemetry["counters"]["endpoint_actor_restarts"] == 2
+    assert telemetry["counters"]["gpu_actor_restarts"] == 1
+    assert telemetry["counters"]["pybullet_actor_restarts"] == 0
     assert sum(actor.recycle_count for actor in endpoints) == telemetry["counters"][
         "endpoint_actor_recycles"
     ]
@@ -164,6 +170,10 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
         "gpu_collision_batch_size"
     ]
     assert telemetry["configuration"]["endpoint_recycle_jobs"] == 2
+    assert all(
+        "endpoint_actor_restarts" not in shard_stats
+        for _, _, _, shard_stats in published
+    )
 
 
 def test_streaming_rejects_more_than_one_planned_candidate_per_task(tmp_path):

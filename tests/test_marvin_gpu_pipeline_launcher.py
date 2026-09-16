@@ -251,8 +251,19 @@ def test_dual_candidates_cross_arm_pairs_but_single_arm_candidates_do_not():
 
 def test_pipeline_telemetry_is_written_beside_and_into_manifest(tmp_path):
     (tmp_path / "manifest.yaml").write_text("schema: test\n")
-    telemetry = {"schema": "telemetry/v1", "counters": {"accepted": 10}}
+    telemetry = {
+        "schema": "telemetry/v1",
+        "counters": {
+            "accepted": 10,
+            "endpoint_actor_restarts": 3,
+            "gpu_actor_restarts": 1,
+            "pybullet_actor_restarts": 0,
+        },
+    }
     _write_pipeline_telemetry(tmp_path, telemetry)
     assert yaml.safe_load((tmp_path / "pipeline_telemetry.yaml").read_text()) == telemetry
     manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
     assert manifest["pipeline_telemetry"] == telemetry
+    assert manifest["stats"]["endpoint_actor_restarts"] == 3
+    assert manifest["stats"]["gpu_actor_restarts"] == 1
+    assert manifest["stats"]["pybullet_actor_restarts"] == 0

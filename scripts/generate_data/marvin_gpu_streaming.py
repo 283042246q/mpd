@@ -528,11 +528,6 @@ class StreamingCoordinator:
             self.checkpoint_wall_seconds.append(
                 shard.stats["checkpoint_wall_milliseconds"] / 1000
             )
-            shard.stats["endpoint_actor_restarts"] = sum(
-                actor.restart_count for actor in self.endpoint_actors
-            )
-            shard.stats["gpu_actor_restarts"] = self.gpu_actor.restart_count
-            shard.stats["pybullet_actor_restarts"] = self.bullet_actor.restart_count
             self.publish(
                 shard.path, self.config, shard.start, paths, metadata, shard.stats
             )
@@ -604,6 +599,13 @@ class StreamingCoordinator:
         }
         counters = dict(self.global_stats)
         counters["pipeline_wall_milliseconds"] = round(1000 * wall)
+        # Restarts are launcher-lifetime actor facts, not per-shard counters.  If
+        # copied into every shard, the ordinary shard merge sums them repeatedly.
+        counters["endpoint_actor_restarts"] = sum(
+            actor.restart_count for actor in self.endpoint_actors
+        )
+        counters["gpu_actor_restarts"] = self.gpu_actor.restart_count
+        counters["pybullet_actor_restarts"] = self.bullet_actor.restart_count
         gpu_busy = counters.get("gpu_endpoint_audit_busy_milliseconds", 0) + counters.get(
             "gpu_plan_audit_busy_milliseconds", 0
         )

@@ -551,6 +551,13 @@ def _write_pipeline_telemetry(root, telemetry):
     manifest_path = Path(root) / "manifest.yaml"
     manifest = yaml.safe_load(manifest_path.read_text())
     manifest["pipeline_telemetry"] = telemetry
+    manifest.setdefault("stats", {})
+    for key in (
+        "endpoint_actor_restarts",
+        "gpu_actor_restarts",
+        "pybullet_actor_restarts",
+    ):
+        manifest["stats"][key] = int(telemetry.get("counters", {}).get(key, 0))
     temporary = manifest_path.with_name(f".{manifest_path.name}.tmp-{os.getpid()}")
     temporary.write_text(yaml.safe_dump(manifest, sort_keys=False))
     descriptor = os.open(temporary, os.O_RDONLY)
