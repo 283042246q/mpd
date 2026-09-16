@@ -14,6 +14,7 @@ import numpy as np
 
 def _actor_telemetry(role, worker):
     result = {
+        "role": role,
         "pid": os.getpid(),
         "host_peak_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
     }
@@ -155,7 +156,7 @@ def actor_main(role, config, requests, responses):
             handler = _pybullet_command
         else:
             raise ValueError(f"unsupported actor role: {role}")
-        responses.put({"ready": True, "role": role})
+        responses.put({"ready": True, "role": role, "pid": os.getpid()})
         while True:
             message = requests.get()
             if message is None:

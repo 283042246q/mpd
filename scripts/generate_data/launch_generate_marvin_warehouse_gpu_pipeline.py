@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 from dataclasses import asdict
+import json
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -50,6 +51,7 @@ class RestartableActor:
         timeout,
         max_consecutive_restarts,
         max_total_restarts,
+        on_start=None,
     ):
         self.context = context
         self.role = role
@@ -58,6 +60,7 @@ class RestartableActor:
         self.timeout = float(timeout)
         self.max_consecutive_restarts = int(max_consecutive_restarts)
         self.max_total_restarts = int(max_total_restarts)
+        self.on_start = on_start
         if (
             self.timeout <= 0
             or self.max_consecutive_restarts < 0
@@ -66,6 +69,8 @@ class RestartableActor:
             raise ValueError("actor timeout must be positive and restart count nonnegative")
         self.restart_count = 0
         self.consecutive_restart_count = 0
+        self.recycle_count = 0
+        self.start_history = []
         self.process = None
         self.requests = None
         self.responses = None
@@ -92,6 +97,24 @@ class RestartableActor:
                 f"{self.name} initialization failed: {ready.get('error_type')}: "
                 f"{ready.get('message')}\n{ready.get('traceback', '')}"
             )
+        pid = int(ready.get("pid", self.process.pid))
+        event = {
+            "name": self.name,
+            "role": self.role,
+            "pid": pid,
+            "start_index": len(self.start_history) + 1,
+            "automatic_restart_count": self.restart_count,
+            "proactive_recycle_count": self.recycle_count,
+            "started_at_unix_seconds": time.time(),
+        }
+        self.start_history.append(event)
+        print(f"[{self.name}] actor ready role={self.role} PID={pid}", flush=True)
+        if self.on_start is not None:
+            try:
+                self.on_start(dict(event))
+            except BaseException:
+                self._terminate(graceful=True)
+                raise
 
     def send(self, message):
         if self.pending is not None:
@@ -194,6 +217,7 @@ class RestartableActor:
         if self.pending is not None:
             raise RuntimeError(f"cannot recycle busy actor {self.name}")
         self._terminate(graceful=True)
+        self.recycle_count += 1
         self._start()
         self.consecutive_restart_count = 0
 
@@ -225,6 +249,15 @@ class RestartableActor:
 def _chunks(values, size):
     for begin in range(0, len(values), int(size)):
         yield values[begin : begin + int(size)]
+
+
+def _append_actor_process_event(root, event):
+    """Durably append one actor identity before generation work is dispatched."""
+    path = Path(root) / "actor_processes.jsonl"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(event, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def _dynamic_proposals(actors, jobs, idle_sleep=0.001):
@@ -668,6 +701,9 @@ def main(argv=None):
         total_restarts = int(
             config.get("gpu_pipeline_max_total_actor_restarts", 10)
         )
+        def record_actor_start(event):
+            _append_actor_process_event(root, event)
+
         for index in range(endpoint_workers):
             endpoint_actors.append(
                 RestartableActor(
@@ -678,6 +714,7 @@ def main(argv=None):
                     timeout,
                     consecutive_restarts,
                     total_restarts,
+                    record_actor_start,
                 )
             )
         gpu_actor = RestartableActor(
@@ -688,6 +725,7 @@ def main(argv=None):
             timeout,
             consecutive_restarts,
             total_restarts,
+            record_actor_start,
         )
         bullet_actor = RestartableActor(
             context,
@@ -697,6 +735,7 @@ def main(argv=None):
             timeout,
             consecutive_restarts,
             total_restarts,
+            record_actor_start,
         )
         contract = TaskContract(config, int(config["seed"]))
         spool = PartialTaskSpool(root, config)

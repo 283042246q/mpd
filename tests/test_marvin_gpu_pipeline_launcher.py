@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 
@@ -7,6 +8,7 @@ import yaml
 from scripts.generate_data.launch_generate_marvin_warehouse_gpu_pipeline import (
     DEFAULT_CONFIG,
     RestartableActor,
+    _append_actor_process_event,
     _candidate_waves,
     _factor_dual_candidates,
     _dynamic_proposals,
@@ -136,6 +138,15 @@ def test_actor_restart_limits_are_consecutive_and_lifetime():
     actor._restart_after_failure()
     with np.testing.assert_raises_regex(RuntimeError, "exceeded 1 consecutive"):
         actor._restart_after_failure()
+
+
+def test_actor_process_events_are_durably_journaled(tmp_path):
+    event = {"name": "gpu", "role": "gpu", "pid": 1234, "start_index": 1}
+    _append_actor_process_event(tmp_path, event)
+    _append_actor_process_event(tmp_path, {**event, "pid": 5678, "start_index": 2})
+
+    lines = (tmp_path / "actor_processes.jsonl").read_text().splitlines()
+    assert [json.loads(line)["pid"] for line in lines] == [1234, 5678]
 
 
 def test_checkpoint_keeps_mixed_contract_but_dispatches_homogeneous_batches():

@@ -642,12 +642,19 @@ class StreamingCoordinator:
 
     def telemetry(self):
         wall = time.perf_counter() - self.run_started
+        def actor_telemetry(actor):
+            result = dict(actor.request({"op": "telemetry"}))
+            result.setdefault("role", getattr(actor, "role", None))
+            result["name"] = getattr(actor, "name", result.get("role"))
+            result["start_history"] = list(getattr(actor, "start_history", []))
+            return result
+
         actors = {
             "endpoints": [
-                actor.request({"op": "telemetry"}) for actor in self.endpoint_actors
+                actor_telemetry(actor) for actor in self.endpoint_actors
             ],
-            "gpu": self.gpu_actor.request({"op": "telemetry"}),
-            "pybullet": self.bullet_actor.request({"op": "telemetry"}),
+            "gpu": actor_telemetry(self.gpu_actor),
+            "pybullet": actor_telemetry(self.bullet_actor),
         }
         counters = dict(self.global_stats)
         counters["pipeline_wall_milliseconds"] = round(1000 * wall)
