@@ -23,11 +23,11 @@ gpu_query_batch_size_dual: 12
 # while the per-task wavefront keeps only one planned candidate in flight.
 gpu_query_batch_size_left: 16
 gpu_query_batch_size_right: 16
-gpu_rrt_edges_per_query: 16
-gpu_rrt_nearest_chunk_size: 8192
+gpu_rrt_edges_per_query: 24
+gpu_rrt_nearest_chunk_size: 4096
 gpu_rrt_max_iterations: 4096
 gpu_rrt_goal_bias: 0.125
-gpu_collision_batch_size: 512
+gpu_collision_batch_size: 384
 gpu_shortcut_attempts: 64
 gpu_workers: 1
 gpu_worker_lifetime_trajectories: 100
