@@ -34,6 +34,7 @@ gpu_worker_lifetime_trajectories: 100
 # Dedicated multi-query pipeline. These settings are ignored by the original
 # CPU generate/launch entrypoints.
 gpu_pipeline_endpoint_workers: 4
+gpu_pipeline_endpoint_recycle_jobs: 150
 gpu_pipeline_active_unfinished_tasks: 80
 gpu_pipeline_max_open_shards: 16
 # Each proposer uses the CPU sphere model for sequential per-arm feedback, but

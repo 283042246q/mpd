@@ -100,6 +100,7 @@ class StreamingCoordinator:
             int(config.get("gpu_pipeline_max_open_shards", 16)),
         )
         self.endpoint_requests = {}
+        self.endpoint_jobs_since_recycle = [0] * len(self.endpoint_actors)
         self.gpu_request = None
         self.bullet_request = None
         self.completed_paths = []
@@ -212,6 +213,7 @@ class StreamingCoordinator:
                 actor.send(message)
                 self.endpoint_requests[index] = {
                     "task_id": task.task_id,
+                    "job_count": len(message["jobs"]),
                     "started": time.perf_counter(),
                 }
                 progressed = True
@@ -249,6 +251,17 @@ class StreamingCoordinator:
                 item = dict(item)
                 item["candidate_index"] = task.candidate_serial
                 task.add_candidate(item)
+            self.endpoint_jobs_since_recycle[index] += request["job_count"]
+            recycle_jobs = int(
+                self.config.get("gpu_pipeline_endpoint_recycle_jobs", 150)
+            )
+            if (
+                recycle_jobs > 0
+                and self.endpoint_jobs_since_recycle[index] >= recycle_jobs
+            ):
+                self.endpoint_actors[index].recycle()
+                self.endpoint_jobs_since_recycle[index] %= recycle_jobs
+                self.global_stats["endpoint_actor_recycles"] += 1
             progressed = True
         return progressed
 
@@ -622,6 +635,9 @@ class StreamingCoordinator:
                     self.config.get("gpu_pipeline_max_open_shards", 16)
                 ),
                 "endpoint_workers": len(self.endpoint_actors),
+                "endpoint_recycle_jobs": int(
+                    self.config.get("gpu_pipeline_endpoint_recycle_jobs", 150)
+                ),
                 "query_batch_size": {
                     mode: int(self.config.get(key, 1))
                     for mode, key in MODE_BATCH_CONFIG.items()

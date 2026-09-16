@@ -103,11 +103,13 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert config["gpu_query_batch_size_left"] == 16
     assert config["gpu_query_batch_size_right"] == 16
     assert config["gpu_pipeline_endpoint_workers"] == 4
+    assert config["gpu_pipeline_endpoint_recycle_jobs"] == 150
     config.update(
         gpu_pipeline_active_unfinished_tasks=20,
         gpu_pipeline_max_open_shards=2,
         gpu_pipeline_plan_batch_max_wait_seconds=0,
         gpu_pipeline_pybullet_recycle_trajectories=0,
+        gpu_pipeline_endpoint_recycle_jobs=2,
     )
     specs = [
         (start, 10, tmp_path / f"{start:09d}") for start in (0, 10)
@@ -147,6 +149,10 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert telemetry["counters"]["max_open_shards"] == 2
     assert telemetry["counters"]["max_active_window_tasks"] == 20
     assert telemetry["counters"]["max_active_unfinished_tasks"] == 20
+    assert telemetry["counters"]["endpoint_actor_recycles"] > 0
+    assert sum(actor.recycle_count for actor in endpoints) == telemetry["counters"][
+        "endpoint_actor_recycles"
+    ]
     assert telemetry["actors"]["gpu"]["host_peak_rss_kib"] == 1234
     assert telemetry["configuration"]["rrt_edges_per_query"] == config[
         "gpu_rrt_edges_per_query"
@@ -157,6 +163,7 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert telemetry["configuration"]["collision_batch_size"] == config[
         "gpu_collision_batch_size"
     ]
+    assert telemetry["configuration"]["endpoint_recycle_jobs"] == 2
 
 
 def test_streaming_rejects_more_than_one_planned_candidate_per_task(tmp_path):
