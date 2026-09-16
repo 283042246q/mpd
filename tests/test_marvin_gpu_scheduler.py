@@ -71,3 +71,19 @@ def test_active_window_opens_and_removes_independent_shards():
     opened = window.fill(shard)
     assert [item.start for item in opened] == [40, 50, 60]
     assert window.task_count == 40
+
+
+def test_active_window_refills_from_accepted_tasks_before_shards_complete():
+    specs = [(start, 10, Path(f"shard-{start}")) for start in range(0, 100, 10)]
+    window = ActiveShardWindow(specs, max_tasks=40, max_shards=6)
+    assert [item.start for item in window.fill(shard)] == [0, 10, 20, 30]
+
+    for open_shard in window.open.values():
+        for task in list(open_shard.tasks.values())[:3]:
+            task.accept(np.zeros((2, 14)), {"task_id": task.task_id})
+
+    assert window.task_count == 40
+    assert window.unfinished_task_count == 28
+    assert [item.start for item in window.fill(shard)] == [40]
+    assert window.task_count == 50
+    assert window.unfinished_task_count == 38

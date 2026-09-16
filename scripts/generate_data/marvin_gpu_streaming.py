@@ -91,8 +91,13 @@ class StreamingCoordinator:
         self.base_seed = int(config["seed"])
         self.window = ActiveShardWindow(
             specs,
-            int(config.get("gpu_pipeline_active_window_tasks", 80)),
-            int(config.get("gpu_pipeline_max_open_shards", 8)),
+            int(
+                config.get(
+                    "gpu_pipeline_active_unfinished_tasks",
+                    config.get("gpu_pipeline_active_window_tasks", 80),
+                )
+            ),
+            int(config.get("gpu_pipeline_max_open_shards", 16)),
         )
         self.endpoint_requests = {}
         self.gpu_request = None
@@ -542,6 +547,10 @@ class StreamingCoordinator:
             self.global_stats["max_active_window_tasks"] = max(
                 self.global_stats["max_active_window_tasks"], self.window.task_count
             )
+            self.global_stats["max_active_unfinished_tasks"] = max(
+                self.global_stats["max_active_unfinished_tasks"],
+                self.window.unfinished_task_count,
+            )
             progressed = False
             progressed |= self._poll_endpoints()
             progressed |= self._poll_gpu()
@@ -603,11 +612,14 @@ class StreamingCoordinator:
             "checkpoint_wall_seconds": self.checkpoint_wall_seconds,
             "actors": actors,
             "configuration": {
-                "active_window_tasks": int(
-                    self.config.get("gpu_pipeline_active_window_tasks", 80)
+                "active_unfinished_tasks": int(
+                    self.config.get(
+                        "gpu_pipeline_active_unfinished_tasks",
+                        self.config.get("gpu_pipeline_active_window_tasks", 80),
+                    )
                 ),
                 "max_open_shards": int(
-                    self.config.get("gpu_pipeline_max_open_shards", 8)
+                    self.config.get("gpu_pipeline_max_open_shards", 16)
                 ),
                 "endpoint_workers": len(self.endpoint_actors),
                 "query_batch_size": {

@@ -97,13 +97,14 @@ class ImmediateActor:
 
 def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_path):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
-    assert config["gpu_pipeline_active_window_tasks"] == 80
+    assert config["gpu_pipeline_active_unfinished_tasks"] == 80
+    assert config["gpu_pipeline_max_open_shards"] == 16
     assert config["gpu_query_batch_size_dual"] == 12
     assert config["gpu_query_batch_size_left"] == 16
     assert config["gpu_query_batch_size_right"] == 16
     assert config["gpu_pipeline_endpoint_workers"] == 4
     config.update(
-        gpu_pipeline_active_window_tasks=20,
+        gpu_pipeline_active_unfinished_tasks=20,
         gpu_pipeline_max_open_shards=2,
         gpu_pipeline_plan_batch_max_wait_seconds=0,
         gpu_pipeline_pybullet_recycle_trajectories=0,
@@ -145,6 +146,7 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert telemetry["batch_occupancy"]["dual_independent"] > 0
     assert telemetry["counters"]["max_open_shards"] == 2
     assert telemetry["counters"]["max_active_window_tasks"] == 20
+    assert telemetry["counters"]["max_active_unfinished_tasks"] == 20
     assert telemetry["actors"]["gpu"]["host_peak_rss_kib"] == 1234
     assert telemetry["configuration"]["rrt_edges_per_query"] == config[
         "gpu_rrt_edges_per_query"

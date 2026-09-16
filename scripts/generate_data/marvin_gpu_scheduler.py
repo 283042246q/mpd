@@ -170,7 +170,7 @@ class ShardState:
 
 
 class ActiveShardWindow:
-    """Bounded collection of independently publishable fixed task-id shards."""
+    """Bounded collection of shards refilled by unfinished-task capacity."""
 
     def __init__(self, specs, max_tasks, max_shards):
         self.pending = deque(specs)
@@ -184,12 +184,20 @@ class ActiveShardWindow:
     def task_count(self):
         return sum(shard.size for shard in self.open.values())
 
+    @property
+    def unfinished_task_count(self):
+        return sum(
+            task.status != TaskStatus.ACCEPTED
+            for shard in self.open.values()
+            for task in shard.tasks.values()
+        )
+
     def fill(self, factory):
         opened = []
         while self.pending and len(self.open) < self.max_shards:
             spec = self.pending[0]
             size = int(spec[1])
-            if self.open and self.task_count + size > self.max_tasks:
+            if self.open and self.unfinished_task_count + size > self.max_tasks:
                 break
             if not self.open and size > self.max_tasks:
                 raise ValueError("one shard is larger than the active task window")
