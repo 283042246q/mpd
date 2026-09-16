@@ -35,6 +35,22 @@ class CandidateState:
     stage: CandidateStage = CandidateStage.GPU_ENDPOINT
     queued_at: float = field(default_factory=time.perf_counter)
     rejection_reason: str | None = None
+    statistics: dict = field(default_factory=dict)
+
+    def release_payload(self):
+        """Drop trajectory/endpoint arrays while retaining compact diagnostics."""
+        for key in (
+            "batch_seconds",
+            "rrt_iterations",
+            "rrt_sampled_edges",
+            "rrt_checked_states",
+        ):
+            if key in self.payload:
+                value = self.payload[key]
+                self.statistics[key] = value.item() if hasattr(value, "item") else value
+        # Rebind instead of mutating: an in-flight request may still own the old
+        # dictionary and need its task_id for accounting when a stale result lands.
+        self.payload = {}
 
     def advance(self, stage):
         if self.stage in {CandidateStage.REJECTED, CandidateStage.STALE}:
@@ -45,9 +61,11 @@ class CandidateState:
     def reject(self, reason):
         self.stage = CandidateStage.REJECTED
         self.rejection_reason = str(reason)
+        self.release_payload()
 
     def stale(self):
         self.stage = CandidateStage.STALE
+        self.release_payload()
 
 
 @dataclass

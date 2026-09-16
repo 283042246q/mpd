@@ -53,6 +53,24 @@ def test_hard_attempt_limit_marks_task_failed():
     assert task.status == TaskStatus.HARD_FAILED
 
 
+def test_terminal_candidate_releases_arrays_but_keeps_diagnostics():
+    task = TaskState(definition(2), 0)
+    task.begin_attempt(3)
+    candidate = task.add_candidate(
+        {
+            "task_id": 2,
+            "path": np.zeros((128, 14)),
+            "rrt_iterations": np.int64(9),
+            "rrt_sampled_edges": 144,
+        }
+    )
+    candidate.reject("gpu_rrt")
+
+    assert candidate.payload == {}
+    assert candidate.rejection_reason == "gpu_rrt"
+    assert candidate.statistics == {"rrt_iterations": 9, "rrt_sampled_edges": 144}
+
+
 def test_active_window_opens_and_removes_independent_shards():
     specs = [(start, 10, Path(f"shard-{start}")) for start in range(0, 100, 10)]
     window = ActiveShardWindow(specs, max_tasks=40, max_shards=4)

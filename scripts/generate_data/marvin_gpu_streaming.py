@@ -482,6 +482,14 @@ class StreamingCoordinator:
                 candidate.advance(CandidateStage.PLAN)
             else:
                 path, metadata = _metadata(task.definition, candidate.payload)
+                rrt_statistics = {
+                    key: int(candidate.payload[key])
+                    for key in (
+                        "rrt_iterations",
+                        "rrt_sampled_edges",
+                        "rrt_checked_states",
+                    )
+                }
                 stale_count = max(0, len(task.live_candidates()) - 1)
                 if task.accept(path, metadata):
                     shard = self._shard(task.task_id)
@@ -491,15 +499,8 @@ class StreamingCoordinator:
                     self.global_stats["accepted"] += 1
                     self.global_stats[f"accepted/{task.definition.mode}"] += 1
                     self.global_stats["stale_candidates_discarded"] += stale_count
-                    shard.stats["rrt_iterations"] += int(
-                        candidate.payload["rrt_iterations"]
-                    )
-                    shard.stats["rrt_sampled_edges"] += int(
-                        candidate.payload["rrt_sampled_edges"]
-                    )
-                    shard.stats["rrt_checked_states"] += int(
-                        candidate.payload["rrt_checked_states"]
-                    )
+                    for key, value in rrt_statistics.items():
+                        shard.stats[key] += value
                     if self.spool is not None:
                         self.spool.save_task(task, shard.size)
                         self.spool.save_stats(shard)
