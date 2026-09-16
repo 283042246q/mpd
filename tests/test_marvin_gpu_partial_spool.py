@@ -66,6 +66,40 @@ def test_partial_spool_round_trip_and_cleanup(tmp_path):
     assert not (tmp_path / ".inflight/000000000").exists()
 
 
+def test_partial_spool_resumes_after_the_last_started_attempt(tmp_path):
+    config = {
+        "seed": 7,
+        "gpu_pipeline_endpoint_candidates_per_attempt": 8,
+    }
+    spool = PartialTaskSpool(tmp_path, config)
+    shard = make_shard(tmp_path)
+    task = shard.tasks[2]
+    assert task.begin_endpoint_chunk(100, 8, 2) == (1, [0, 1])
+    spool.save_progress(task, shard.size)
+
+    restored = make_shard(tmp_path)
+    assert spool.restore(restored) == []
+    task = restored.tasks[2]
+    assert task.attempt == 1
+    assert task.endpoint_candidate_cursor == 8
+    assert task.begin_endpoint_chunk(100, 8, 2) == (2, [0, 1])
+
+
+def test_saving_accepted_task_removes_attempt_progress(tmp_path):
+    config = {"seed": 7}
+    spool = PartialTaskSpool(tmp_path, config)
+    shard = make_shard(tmp_path)
+    task = shard.tasks[3]
+    task.begin_attempt(100)
+    spool.save_progress(task, shard.size)
+    task.finish_endpoint_work()
+    accept(task)
+    spool.save_task(task, shard.size)
+
+    progress = tmp_path / ".inflight/000000000/progress-000000003.yaml"
+    assert not progress.exists()
+
+
 def test_partial_spool_rejects_different_configuration(tmp_path):
     first = PartialTaskSpool(tmp_path, {"seed": 1})
     first.prepare_shard(0, 10)

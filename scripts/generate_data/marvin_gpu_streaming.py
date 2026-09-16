@@ -193,8 +193,14 @@ class StreamingCoordinator:
                 if reserved is None:
                     continue
                 attempt, indices = reserved
-                if task.endpoint_candidate_cursor == len(indices):
+                new_attempt = task.endpoint_candidate_cursor == len(indices)
+                if new_attempt:
                     self._count(task.task_id, "task_attempts")
+                if self.spool is not None:
+                    shard = self._shard(task.task_id)
+                    self.spool.save_progress(task, shard.size)
+                    if new_attempt:
+                        self.spool.save_stats(shard)
                 job = {
                     "task": asdict(task.definition),
                     "attempt": attempt,

@@ -14,6 +14,7 @@ import yaml
 
 
 SPOOL_SCHEMA = "marvin_gpu_partial_task/v1"
+PROGRESS_SCHEMA = "marvin_gpu_task_progress/v1"
 
 
 def _config_sha256(config):
@@ -45,6 +46,9 @@ class PartialTaskSpool:
         self.root = Path(root) / ".inflight"
         self.root.mkdir(parents=True, exist_ok=True)
         self.config_sha256 = _config_sha256(config)
+        self.candidates_per_attempt = int(
+            config.get("gpu_pipeline_endpoint_candidates_per_attempt", 8)
+        )
 
     def _directory(self, start):
         return self.root / f"{int(start):09d}"
@@ -104,7 +108,24 @@ class PartialTaskSpool:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        progress_path = directory / f"progress-{task.task_id:09d}.yaml"
+        if progress_path.exists():
+            progress_path.unlink()
         _fsync_directory(directory)
+
+    def save_progress(self, task, shard_size=10):
+        """Durably record a started attempt before its endpoint job is sent."""
+        if task.attempt < 1:
+            raise ValueError(f"task {task.task_id} has no started attempt")
+        directory = self.prepare_shard(task.shard_start, shard_size)
+        _atomic_yaml(
+            directory / f"progress-{task.task_id:09d}.yaml",
+            {
+                "schema": PROGRESS_SCHEMA,
+                "task_id": int(task.task_id),
+                "last_started_attempt": int(task.attempt),
+            },
+        )
 
     def save_stats(self, shard):
         directory = self.prepare_shard(shard.start, shard.size)
@@ -155,6 +176,24 @@ class PartialTaskSpool:
                 raise ValueError(f"nonfinite spooled trajectory: {path}")
             task.accept(trajectory, metadata)
             restored.append(task_id)
+        for path in sorted(directory.glob("progress-*.yaml")):
+            progress = yaml.safe_load(path.read_text())
+            if progress.get("schema") != PROGRESS_SCHEMA:
+                raise ValueError(f"partial task progress schema differs: {path}")
+            task_id = int(progress["task_id"])
+            if task_id not in shard.tasks:
+                raise ValueError(f"spooled task {task_id} is outside shard {shard.start}")
+            task = shard.tasks[task_id]
+            if task.accepted:
+                continue
+            attempt = int(progress["last_started_attempt"])
+            if attempt < 1:
+                raise ValueError(f"invalid spooled attempt in {path}")
+            task.attempt = attempt
+            # A restarted launcher deliberately skips the rest of the interrupted
+            # attempt so deterministic endpoint and RRT seeds are never replayed.
+            task.endpoint_candidate_cursor = self.candidates_per_attempt
+            task.endpoint_inflight = False
         shard.stats["accepted"] = len(restored)
         for mode in ("dual_independent", "left_only", "right_only"):
             shard.stats[f"accepted/{mode}"] = sum(
