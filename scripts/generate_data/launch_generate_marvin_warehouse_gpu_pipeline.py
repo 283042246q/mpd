@@ -41,14 +41,28 @@ MODE_BATCH_CONFIG = {
 class RestartableActor:
     """One-request-at-a-time spawned actor with bounded IPC and restart."""
 
-    def __init__(self, context, role, config, name, timeout, max_restarts):
+    def __init__(
+        self,
+        context,
+        role,
+        config,
+        name,
+        timeout,
+        max_consecutive_restarts,
+        max_total_restarts,
+    ):
         self.context = context
         self.role = role
         self.config = config
         self.name = name
         self.timeout = float(timeout)
-        self.max_restarts = int(max_restarts)
-        if self.timeout <= 0 or self.max_restarts < 0:
+        self.max_consecutive_restarts = int(max_consecutive_restarts)
+        self.max_total_restarts = int(max_total_restarts)
+        if (
+            self.timeout <= 0
+            or self.max_consecutive_restarts < 0
+            or self.max_total_restarts < 0
+        ):
             raise ValueError("actor timeout must be positive and restart count nonnegative")
         self.restart_count = 0
         self.consecutive_restart_count = 0
@@ -155,15 +169,21 @@ class RestartableActor:
         self._terminate()
         self.restart_count += 1
         self.consecutive_restart_count += 1
-        if self.consecutive_restart_count > self.max_restarts:
+        if self.restart_count > self.max_total_restarts:
             raise RuntimeError(
-                f"{self.name} exceeded {self.max_restarts} consecutive automatic "
+                f"{self.name} exceeded {self.max_total_restarts} total automatic "
+                f"restarts ({self.consecutive_restart_count} consecutive)"
+            )
+        if self.consecutive_restart_count > self.max_consecutive_restarts:
+            raise RuntimeError(
+                f"{self.name} exceeded {self.max_consecutive_restarts} consecutive "
+                f"automatic "
                 f"restarts ({self.restart_count} total)"
             )
         print(
             f"[{self.name}] actor exited or hung; restart "
-            f"{self.consecutive_restart_count}/{self.max_restarts} consecutive "
-            f"({self.restart_count} total)",
+            f"{self.consecutive_restart_count}/{self.max_consecutive_restarts} "
+            f"consecutive ({self.restart_count}/{self.max_total_restarts} total)",
             flush=True,
         )
         self.pending = None
@@ -639,16 +659,44 @@ def main(argv=None):
     try:
         context = mp.get_context("spawn")
         timeout = float(config.get("gpu_pipeline_actor_timeout_seconds", 600))
-        restarts = int(config.get("gpu_pipeline_max_actor_restarts", 3))
+        consecutive_restarts = int(
+            config.get(
+                "gpu_pipeline_max_consecutive_actor_restarts",
+                config.get("gpu_pipeline_max_actor_restarts", 3),
+            )
+        )
+        total_restarts = int(
+            config.get("gpu_pipeline_max_total_actor_restarts", 10)
+        )
         for index in range(endpoint_workers):
             endpoint_actors.append(
                 RestartableActor(
-                    context, "endpoint", config, f"endpoint-{index}", timeout, restarts
+                    context,
+                    "endpoint",
+                    config,
+                    f"endpoint-{index}",
+                    timeout,
+                    consecutive_restarts,
+                    total_restarts,
                 )
             )
-        gpu_actor = RestartableActor(context, "gpu", config, "gpu", timeout, restarts)
+        gpu_actor = RestartableActor(
+            context,
+            "gpu",
+            config,
+            "gpu",
+            timeout,
+            consecutive_restarts,
+            total_restarts,
+        )
         bullet_actor = RestartableActor(
-            context, "pybullet", config, "pybullet", timeout, restarts
+            context,
+            "pybullet",
+            config,
+            "pybullet",
+            timeout,
+            consecutive_restarts,
+            total_restarts,
         )
         contract = TaskContract(config, int(config["seed"]))
         spool = PartialTaskSpool(root, config)

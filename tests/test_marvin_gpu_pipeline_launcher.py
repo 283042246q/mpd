@@ -102,10 +102,11 @@ def test_gpu_launcher_import_does_not_eagerly_load_native_workers():
     subprocess.run([sys.executable, "-c", command], check=True)
 
 
-def test_actor_restart_limit_is_consecutive_but_total_is_lifetime():
+def test_actor_restart_limits_are_consecutive_and_lifetime():
     actor = object.__new__(RestartableActor)
     actor.name = "test-actor"
-    actor.max_restarts = 1
+    actor.max_consecutive_restarts = 3
+    actor.max_total_restarts = 2
     actor.restart_count = 0
     actor.consecutive_restart_count = 0
     actor.pending = {"op": "work"}
@@ -125,7 +126,15 @@ def test_actor_restart_limit_is_consecutive_but_total_is_lifetime():
     actor._restart_after_failure()
     assert actor.restart_count == 2
     assert actor.consecutive_restart_count == 1
-    with np.testing.assert_raises_regex(RuntimeError, "3 total"):
+    with np.testing.assert_raises_regex(RuntimeError, "exceeded 2 total"):
+        actor._restart_after_failure()
+
+    actor.restart_count = 0
+    actor.consecutive_restart_count = 0
+    actor.max_consecutive_restarts = 1
+    actor.max_total_restarts = 10
+    actor._restart_after_failure()
+    with np.testing.assert_raises_regex(RuntimeError, "exceeded 1 consecutive"):
         actor._restart_after_failure()
 
 
