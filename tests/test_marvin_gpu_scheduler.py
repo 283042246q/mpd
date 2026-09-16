@@ -38,10 +38,20 @@ def test_task_candidate_lifecycle_and_acceptance_stales_other_candidates():
     task.finish_endpoint_work()
     first.advance(CandidateStage.PYBULLET_ENDPOINT)
     second.reject("gpu_endpoint")
-    assert task.accept(np.zeros((2, 14)), {"task_id": 3})
+    assert task.retire_candidate(second)
+    assert task.accept(
+        np.zeros((2, 14)), {"task_id": 3}, accepted_candidate_id=first.candidate_id
+    )
+    assert task.retire_terminal_candidates() == 1
     assert task.status == TaskStatus.ACCEPTED
-    assert first.stage == CandidateStage.STALE
+    assert first.stage == CandidateStage.ACCEPTED
     assert second.stage == CandidateStage.REJECTED
+    assert task.candidates == {}
+    assert task.candidate_statistics == {
+        "terminal/rejected": 1,
+        "rejection/gpu_endpoint": 1,
+        "terminal/accepted": 1,
+    }
     assert not task.accept(None, None)
 
 
@@ -65,10 +75,18 @@ def test_terminal_candidate_releases_arrays_but_keeps_diagnostics():
         }
     )
     candidate.reject("gpu_rrt")
+    assert task.retire_candidate(candidate)
 
     assert candidate.payload == {}
     assert candidate.rejection_reason == "gpu_rrt"
     assert candidate.statistics == {"rrt_iterations": 9, "rrt_sampled_edges": 144}
+    assert task.candidates == {}
+    assert task.candidate_statistics == {
+        "terminal/rejected": 1,
+        "rejection/gpu_rrt": 1,
+        "diagnostic/rrt_iterations": 9,
+        "diagnostic/rrt_sampled_edges": 144,
+    }
 
 
 def test_active_window_opens_and_removes_independent_shards():

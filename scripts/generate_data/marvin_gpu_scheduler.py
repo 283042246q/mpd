@@ -22,6 +22,7 @@ class CandidateStage(str, Enum):
     PYBULLET_ENDPOINT = "pybullet_endpoint"
     PLAN = "plan"
     PYBULLET_TRAJECTORY = "pybullet_trajectory"
+    ACCEPTED = "accepted"
     REJECTED = "rejected"
     STALE = "stale"
 
@@ -36,6 +37,14 @@ class CandidateState:
     queued_at: float = field(default_factory=time.perf_counter)
     rejection_reason: str | None = None
     statistics: dict = field(default_factory=dict)
+
+    @property
+    def terminal(self):
+        return self.stage in {
+            CandidateStage.ACCEPTED,
+            CandidateStage.REJECTED,
+            CandidateStage.STALE,
+        }
 
     def release_payload(self):
         """Drop trajectory/endpoint arrays while retaining compact diagnostics."""
@@ -53,7 +62,7 @@ class CandidateState:
         self.payload = {}
 
     def advance(self, stage):
-        if self.stage in {CandidateStage.REJECTED, CandidateStage.STALE}:
+        if self.terminal:
             raise RuntimeError(f"terminal candidate {self.candidate_id} cannot advance")
         self.stage = CandidateStage(stage)
         self.queued_at = time.perf_counter()
@@ -67,6 +76,10 @@ class CandidateState:
         self.stage = CandidateStage.STALE
         self.release_payload()
 
+    def succeed(self):
+        self.stage = CandidateStage.ACCEPTED
+        self.release_payload()
+
 
 @dataclass
 class TaskState:
@@ -78,6 +91,7 @@ class TaskState:
     endpoint_candidate_cursor: int = 0
     candidate_serial: int = 0
     candidates: dict[int, CandidateState] = field(default_factory=dict)
+    candidate_statistics: Counter = field(default_factory=Counter)
     accepted_path: object | None = None
     accepted_metadata: dict | None = None
     started_at: float = field(default_factory=time.perf_counter)
@@ -135,10 +149,33 @@ class TaskState:
         return candidate
 
     def live_candidates(self):
-        terminal = {CandidateStage.REJECTED, CandidateStage.STALE}
-        return [item for item in self.candidates.values() if item.stage not in terminal]
+        return [item for item in self.candidates.values() if not item.terminal]
 
-    def accept(self, path, metadata):
+    def retire_candidate(self, candidate):
+        """Aggregate compact terminal diagnostics, then drop task ownership."""
+        current = self.candidates.get(candidate.candidate_id)
+        if current is not candidate:
+            return False
+        if not candidate.terminal:
+            raise RuntimeError(f"candidate {candidate.candidate_id} is not terminal")
+        self.candidate_statistics[f"terminal/{candidate.stage.value}"] += 1
+        if candidate.rejection_reason is not None:
+            self.candidate_statistics[
+                f"rejection/{candidate.rejection_reason}"
+            ] += 1
+        for key, value in candidate.statistics.items():
+            self.candidate_statistics[f"diagnostic/{key}"] += value
+        del self.candidates[candidate.candidate_id]
+        return True
+
+    def retire_terminal_candidates(self):
+        retired = 0
+        for candidate in list(self.candidates.values()):
+            if candidate.terminal and self.retire_candidate(candidate):
+                retired += 1
+        return retired
+
+    def accept(self, path, metadata, accepted_candidate_id=None):
         if self.status == TaskStatus.ACCEPTED:
             return False
         self.status = TaskStatus.ACCEPTED
@@ -146,7 +183,10 @@ class TaskState:
         self.accepted_metadata = metadata
         self.endpoint_inflight = False
         for candidate in self.live_candidates():
-            candidate.stale()
+            if candidate.candidate_id == accepted_candidate_id:
+                candidate.succeed()
+            else:
+                candidate.stale()
         return True
 
     def defer(self):

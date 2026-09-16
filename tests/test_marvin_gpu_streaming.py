@@ -153,6 +153,12 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     dual_batches = [task_ids for mode, task_ids in gpu.plan_batches if mode == "dual_independent"]
     assert any(min(task_ids) < 10 <= max(task_ids) for task_ids in dual_batches)
     assert all(len(paths) == len(metadata) == 10 for _, paths, metadata, _ in published)
+    assert sum(
+        stats["candidates/terminal/accepted"] for _, _, _, stats in published
+    ) == 20
+    assert sum(
+        stats["candidates/terminal/rejected"] for _, _, _, stats in published
+    ) > 0
     expected_dual_queries = sum(
         len(task_ids)
         for mode, task_ids in gpu.plan_batches

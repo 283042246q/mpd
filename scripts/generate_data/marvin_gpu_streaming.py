@@ -207,6 +207,9 @@ class StreamingCoordinator:
             )
             self.global_stats[f"queue_wait_items/{stage}"] += len(waits)
 
+    def _retire_candidate(self, candidate):
+        return self._task(candidate.task_id).retire_candidate(candidate)
+
     def _endpoint_eligible(self):
         active = [
             task
@@ -433,11 +436,13 @@ class StreamingCoordinator:
             for candidate, valid in zip(request["candidates"], result):
                 if self._task(candidate.task_id).accepted:
                     candidate.stale()
+                    self._retire_candidate(candidate)
                 elif valid:
                     candidate.advance(CandidateStage.PYBULLET_ENDPOINT)
                 else:
                     candidate.reject("gpu_endpoint")
                     self._count(candidate.task_id, "endpoint_gpu_rejected")
+                    self._retire_candidate(candidate)
             return True
         mode = request["mode"]
         self.global_stats[f"gpu_plan_batches/{mode}"] += 1
@@ -451,11 +456,13 @@ class StreamingCoordinator:
             candidate.payload.update(plan)
             if self._task(candidate.task_id).accepted:
                 candidate.stale()
+                self._retire_candidate(candidate)
             elif plan["path"] is None:
                 reason = plan["rejection_reason"]
                 candidate.reject(f"gpu_{reason}")
                 self._count(candidate.task_id, f"gpu_rejected/{reason}")
                 self.global_stats[f"gpu_rejected/{mode}/{reason}"] += 1
+                self._retire_candidate(candidate)
             else:
                 candidate.advance(CandidateStage.PYBULLET_TRAJECTORY)
         return True
@@ -514,6 +521,7 @@ class StreamingCoordinator:
             task = self._task(candidate.task_id)
             if task.accepted:
                 candidate.stale()
+                self._retire_candidate(candidate)
                 self._count(task.task_id, "stale_candidates_discarded")
             elif not valid:
                 reason = (
@@ -523,6 +531,7 @@ class StreamingCoordinator:
                 )
                 candidate.reject(reason)
                 self._count(task.task_id, f"rejected/{reason}")
+                self._retire_candidate(candidate)
             elif request["op"] == "endpoints":
                 candidate.advance(CandidateStage.PLAN)
             else:
@@ -536,7 +545,8 @@ class StreamingCoordinator:
                     )
                 }
                 stale_count = max(0, len(task.live_candidates()) - 1)
-                if task.accept(path, metadata):
+                if task.accept(path, metadata, candidate.candidate_id):
+                    task.retire_terminal_candidates()
                     shard = self._shard(task.task_id)
                     shard.stats["accepted"] += 1
                     shard.stats[f"accepted/{task.definition.mode}"] += 1
@@ -566,6 +576,9 @@ class StreamingCoordinator:
         for start, shard in list(sorted(self.window.open.items())):
             if not shard.complete:
                 continue
+            for task in shard.tasks.values():
+                for key, value in task.candidate_statistics.items():
+                    shard.stats[f"candidates/{key}"] += value
             paths, metadata = shard.ordered_results()
             shard.stats["checkpoint_wall_milliseconds"] = round(
                 1000 * (time.perf_counter() - shard.opened_at)
