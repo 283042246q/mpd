@@ -71,6 +71,7 @@ def test_gpu_multi_query_rrt_plans_independent_requests_and_freezes_joints():
         max_iterations=30,
         extension_range=0.3,
         collision_step=0.05,
+        nearest_chunk_size=1,
         seed=17,
     )
     starts = torch.tensor(
@@ -97,6 +98,16 @@ def test_gpu_multi_query_rrt_plans_independent_requests_and_freezes_joints():
         np.testing.assert_array_equal(
             result.path[:, [1, 3]],
             np.repeat(starts[query, [1, 3]][None].numpy(), len(result.path), axis=0),
+        )
+
+
+def test_gpu_rrt_rejects_invalid_nearest_chunk_size():
+    with np.testing.assert_raises_regex(ValueError, "nearest_chunk_size"):
+        GpuMultiQueryRRTConnect(
+            lambda states: torch.zeros(len(states), dtype=torch.bool),
+            torch.tensor([-1.0]),
+            torch.tensor([1.0]),
+            nearest_chunk_size=0,
         )
 
 

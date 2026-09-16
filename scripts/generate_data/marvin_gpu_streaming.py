@@ -614,5 +614,14 @@ class StreamingCoordinator:
                     mode: int(self.config.get(key, 1))
                     for mode, key in MODE_BATCH_CONFIG.items()
                 },
+                "rrt_edges_per_query": int(
+                    self.config.get("gpu_rrt_edges_per_query", 16)
+                ),
+                "rrt_nearest_chunk_size": int(
+                    self.config.get("gpu_rrt_nearest_chunk_size", 4096)
+                ),
+                "collision_batch_size": int(
+                    self.config.get("gpu_collision_batch_size", 256)
+                ),
             },
         }

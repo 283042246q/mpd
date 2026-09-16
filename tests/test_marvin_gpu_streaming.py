@@ -146,6 +146,15 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert telemetry["counters"]["max_open_shards"] == 2
     assert telemetry["counters"]["max_active_window_tasks"] == 20
     assert telemetry["actors"]["gpu"]["host_peak_rss_kib"] == 1234
+    assert telemetry["configuration"]["rrt_edges_per_query"] == config[
+        "gpu_rrt_edges_per_query"
+    ]
+    assert telemetry["configuration"]["rrt_nearest_chunk_size"] == config[
+        "gpu_rrt_nearest_chunk_size"
+    ]
+    assert telemetry["configuration"]["collision_batch_size"] == config[
+        "gpu_collision_batch_size"
+    ]
 
 
 def test_streaming_rejects_more_than_one_planned_candidate_per_task(tmp_path):

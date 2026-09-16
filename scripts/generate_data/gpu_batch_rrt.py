@@ -143,10 +143,13 @@ class GpuBatchRRTConnect:
         extension_range=0.35,
         collision_step=0.025,
         goal_bias=0.125,
+        nearest_chunk_size=4096,
         seed=0,
     ):
-        if batch_size < 1 or max_iterations < 1:
-            raise ValueError("batch_size and max_iterations must be positive")
+        if batch_size < 1 or max_iterations < 1 or nearest_chunk_size < 1:
+            raise ValueError(
+                "batch_size, max_iterations and nearest_chunk_size must be positive"
+            )
         if extension_range <= 0 or collision_step <= 0:
             raise ValueError("extension_range and collision_step must be positive")
         if not 0 <= goal_bias <= 1:
@@ -161,6 +164,7 @@ class GpuBatchRRTConnect:
         self.extension_range = float(extension_range)
         self.collision_step = float(collision_step)
         self.goal_bias = float(goal_bias)
+        self.nearest_chunk_size = int(nearest_chunk_size)
         self.generator = torch.Generator(device=self.joint_low.device)
         self.generator.manual_seed(int(seed))
 
@@ -171,8 +175,10 @@ class GpuBatchRRTConnect:
             (len(targets),), torch.inf, dtype=targets.dtype, device=targets.device
         )
         best_index = torch.zeros(len(targets), dtype=torch.long, device=targets.device)
-        for begin in range(0, len(nodes), 4096):
-            distance = torch.cdist(targets, nodes[begin : begin + 4096])
+        for begin in range(0, len(nodes), self.nearest_chunk_size):
+            distance = torch.cdist(
+                targets, nodes[begin : begin + self.nearest_chunk_size]
+            )
             value, index = distance.min(dim=1)
             update = value < best_distance
             best_distance = torch.where(update, value, best_distance)
@@ -491,7 +497,9 @@ class GpuMultiQueryRRTConnect(GpuBatchRRTConnect):
                 else (goal_tree, start_tree)
             )
             targets = self._sample_targets_batch(tree_b, generators)
-            parent_a, distance_a = tree_a.nearest(targets)
+            parent_a, distance_a = tree_a.nearest(
+                targets, chunk_size=self.nearest_chunk_size
+            )
             starts_a = tree_a.gather(parent_a)
             goals_a = self._steer(
                 starts_a.reshape(-1, starts_a.shape[-1]),
@@ -510,7 +518,9 @@ class GpuMultiQueryRRTConnect(GpuBatchRRTConnect):
             checked_states += checked.astype(np.int64, copy=False)
             indices_a = tree_a.add(last_a, parent_a, accepted_a)
 
-            parent_b, distance_b = tree_b.nearest(last_a)
+            parent_b, distance_b = tree_b.nearest(
+                last_a, chunk_size=self.nearest_chunk_size
+            )
             starts_b = tree_b.gather(parent_b)
             goals_b = self._steer(
                 starts_b.reshape(-1, starts_b.shape[-1]),

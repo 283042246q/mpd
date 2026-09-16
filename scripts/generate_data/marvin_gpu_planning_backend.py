@@ -251,6 +251,9 @@ class MarvinGpuPlanningBackend:
                 )
             ),
             goal_bias=float(self.config.get("gpu_rrt_goal_bias", 0.125)),
+            nearest_chunk_size=int(
+                self.config.get("gpu_rrt_nearest_chunk_size", 4096)
+            ),
             seed=int(query_seeds[0]) if query_seeds else 0,
         )
         torch.cuda.synchronize(self.robot.q_pos_min.device)

@@ -104,6 +104,35 @@ validated spline 为真，left/right-only inactive arm 最大漂移为 0。完�
 打开 80-task 窗口后，重点看 12/16/16 occupancy 是否提高，而不是继续盲目增加 CPU 进程。
 telemetry 的全局 plan query 与最终 shard 原始计数逐 mode 完全一致。
 
+### 100 条满窗参数扫描：collision batch 与 edges/query
+
+2026-09-16 使用相同 task seed、80-task active window、4 个 endpoint actors 扫描了 collision
+batch 256/384/512，以及 collision=384 下的 edges/query 16/24/32。除第一轮 512 有约 4 GB
+外部推理显存占用外，其余轮次基本独占 GPU。
+
+| collision | edges | 外部负载 | 总 wall | 秒/条 | GPU plan/audit | queries | CUDA peak allocated/reserved | NVML peak / min free |
+|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| 256 | 16 | 无 | 359.67 s | 3.597 | 338.74 s | 208 | 3.69 / 4.10 GiB | 6,672 / 17,401 MiB |
+| 384 | 16 | 无 | **357.38 s** | **3.574** | **336.40 s** | 208 | 5.48 / 6.07 GiB | 7,302 / 16,771 MiB |
+| 512 | 16 | 无 | 359.75 s | 3.598 | 338.69 s | 208 | 7.28 / 17.32 GiB | 18,874 / 5,199 MiB |
+| 512 | 16 | 推理约 4 GB | 358.29 s | 3.583 | 336.59 s | 211 | 7.28 / 17.32 GiB | 23,985 / 87 MiB |
+| 384 | 24 | 无 | 345.68 s | 3.457 | 302.65 s | 209 | 5.53 / 6.07 GiB | 7,345 / 16,727 MiB |
+| 384 | 32 | 无 | **345.10 s** | **3.451** | **300.52 s** | 193 | 5.58 / 6.07 GiB | 7,299 / 16,774 MiB |
+
+在 edges=16 的严格对照中，256、384、独占 512 的 100 个最终 endpoint 与路径长度完全
+一致；wall 最大差异仅 0.7%，因此没有证据说明 collision=512 更快。512 的 allocated 只比
+384 多约 1.8 GiB，但 allocator reserved 跳到 17.32 GiB；与 4 GB 推理共跑时只剩 87 MiB，
+不适合作为共享 GPU 默认值。384 是可用折中，不过 256 的吞吐几乎相同且显存最安全。
+
+在 collision=384 下，edges 16→24/32 让 GPU plan/audit 缩短约 10.0%/10.7%，端到端缩短
+3.3%/3.4%；24 与 32 的 0.17% wall 差异属于噪声量级。更大的 edge batch 会改变 RRT 搜索
+和最终 endpoint：相对 edges=16，24 有 82 个相同 endpoint，32 有 74 个。RRT 拒绝数从
+82 降到 75/58，但 spline audit 拒绝从 22 升到 32/31；100 条全部最终通过。当前路径长度
+没有显示 edges=32 退化，但仍需更大的 paired quality 回归后才能把它作为稳定默认值。
+
+新增 `gpu_rrt_nearest_chunk_size` 后，下一档可在 collision=384、edges=32 上比较
+4096/8192；该参数只改变每次 `torch.cdist` 覆盖的 tree nodes，不改变 query/edge 数。
+
 ### 旧同步 multi-query 100 条：dual=8、left/right=16、3 endpoint actors
 
 2026-09-14 在 RTX 4090 D 上完成 100/100，进程 wall 为 1,392.58 s，即 13.93 s/条。
