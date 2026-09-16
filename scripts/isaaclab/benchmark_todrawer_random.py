@@ -102,7 +102,7 @@ CATEGORY_DESCRIPTIONS = {
     "simultaneous_multi": "匀加速与曲线物体近同时穿越两条通道",
     "fast_crossing": "1--2 个小型物体高速且平滑变速穿越",
     "inflated_dense": "3 个较大高膨胀物体依次穿越，混合多种运动",
-    "safe_control": "物体在测试时段保持远离任务通道",
+    "safe_control": "物体在机械臂运动时穿越低冲突工作区通道",
     "accelerating_crossing": "2 个匀加速物体错峰穿越",
     "curved_crossing": "2 个正弦曲线物体近同时穿越并保留第三通道",
     "uncertain_motion": "2 个带速度/加速度方差的物体错峰穿越",
@@ -111,10 +111,26 @@ CATEGORY_DESCRIPTIONS = {
 BASE_CROSSINGS = (
     ((-0.68831415, -1.22503140, 0.65347225), (0.61993897, 0.78465003, 0.0)),
     ((-0.02146948, 0.40876295, 0.46108561), (0.99858189, -0.05323737, 0.0)),
-    ((-0.2, -0.16, 0.5), (0.0, 0.0, 1.0)),
+    # Keep the vertical crossing in the arm workspace, but move its x/y line
+    # away from link0. The old (-0.20, -0.16) line swept large boxes through
+    # the fixed robot base and created collisions no arm motion could avoid.
+    ((-0.50, -0.30, 0.5), (0.0, 0.0, 1.0)),
+)
+SAFE_CONTROL_CROSSINGS = (
+    ((0.55, -0.40, 0.55), (0.0, 1.0, 0.0)),
+    ((0.45, -0.55, 0.70), (1.0, 0.0, 0.0)),
 )
 PREDICTION_HORIZON_S = 15.0
 DESIGN_EPISODE_DURATION_S = 35.0
+# Scenario time is triggered when the controller accepts its first trajectory.
+# Historical F3-C runs take at least 3.20 s from that event to the goal, so all
+# objects arrive inside this conservative common arm-motion window.
+ARM_OPERATION_ARRIVAL_WINDOW_S = (0.9, 3.0)
+GENERATION_REVISION = "execution-synced-workspace-arrival-v4"
+# Conservative AABB of FR3 link0.stl plus 3 cm clearance on every side.
+ROBOT_BASE_EXCLUSION_MIN = (-0.183, -0.125, -0.030)
+ROBOT_BASE_EXCLUSION_MAX = (0.101, 0.125, 0.171)
+BASE_SAFETY_SAMPLE_DT_S = 0.05
 REPORT_FIELDS = (
     "scenario_id",
     "category",
@@ -224,6 +240,123 @@ def _bounded_acceleration(
     return rng.uniform(lower, upper)
 
 
+def object_position_at(item: dict[str, Any], elapsed_s: float) -> list[float]:
+    """Evaluate motion with the same equations as the ROS world publisher."""
+
+    relative_time = elapsed_s - float(item["crossing_time_s"])
+    motion = item["motion"]
+    motion_type = motion["type"]
+    displacement = float(item["speed_m_s"]) * relative_time
+    if motion_type == "constant_acceleration":
+        displacement += (
+            0.5
+            * float(motion["longitudinal_acceleration_m_s2"])
+            * relative_time**2
+        )
+    if motion_type in {"smooth_speed_variation", "curved_speed_variation"}:
+        amplitude = float(motion["speed_variation_amplitude_m_s"])
+        frequency = float(motion["speed_variation_angular_frequency_rad_s"])
+        phase = float(motion["speed_variation_phase_rad"])
+        displacement += amplitude / frequency * (
+            math.sin(frequency * relative_time + phase) - math.sin(phase)
+        )
+    position = [
+        anchor + direction * displacement
+        for anchor, direction in zip(item["anchor_position"], item["direction"])
+    ]
+    if motion_type in {"sinusoidal_curve", "curved_speed_variation"}:
+        amplitude = float(motion["lateral_amplitude_m"])
+        frequency = float(motion["lateral_angular_frequency_rad_s"])
+        phase = float(motion["lateral_phase_rad"])
+        lateral = amplitude * (
+            math.sin(frequency * relative_time + phase) - math.sin(phase)
+        )
+        position = [
+            value + direction * lateral
+            for value, direction in zip(position, motion["lateral_direction"])
+        ]
+    return position
+
+
+def minimum_robot_base_clearance(item: dict[str, Any]) -> float:
+    """Return sampled AABB clearance to link0 over the complete episode."""
+
+    size = item["local_sdf"]["size_xyz"]
+    padding = float(item["inflation"]["base_m"])
+    half_extent = [0.5 * float(value) + padding for value in size]
+    minimum = math.inf
+    sample_count = math.ceil(DESIGN_EPISODE_DURATION_S / BASE_SAFETY_SAMPLE_DT_S)
+    sample_times = [
+        DESIGN_EPISODE_DURATION_S * index / sample_count
+        for index in range(sample_count + 1)
+    ]
+    sample_times.append(float(item["crossing_time_s"]))
+    for elapsed_s in sample_times:
+        position = object_position_at(item, elapsed_s)
+        squared_clearance = 0.0
+        for axis in range(3):
+            object_min = position[axis] - half_extent[axis]
+            object_max = position[axis] + half_extent[axis]
+            gap = max(
+                ROBOT_BASE_EXCLUSION_MIN[axis] - object_max,
+                object_min - ROBOT_BASE_EXCLUSION_MAX[axis],
+                0.0,
+            )
+            squared_clearance += gap * gap
+        clearance = math.sqrt(squared_clearance)
+        if clearance <= 0.0:
+            return 0.0
+        minimum = min(minimum, clearance)
+    return minimum
+
+
+def _arrival_schedule(
+    rng: random.Random,
+    category: str,
+    object_count: int,
+) -> list[float]:
+    """Create category-specific arrivals wholly inside the arm motion window."""
+
+    if category == "single_crossing":
+        times = [rng.uniform(1.5, 2.4)]
+    elif category in {"staggered_multi", "inflated_dense"}:
+        if object_count == 2:
+            start, spacing = rng.uniform(1.00, 1.15), rng.uniform(1.30, 1.50)
+        else:
+            start, spacing = rng.uniform(0.93, 0.97), rng.uniform(0.95, 0.99)
+        times = [
+            start + spacing * index + rng.uniform(-0.015, 0.015)
+            for index in range(object_count)
+        ]
+    elif category in {"simultaneous_multi", "curved_crossing"}:
+        center = rng.uniform(1.7, 2.2)
+        times = [center + rng.uniform(-0.15, 0.15) for _ in range(object_count)]
+    elif category in {
+        "fast_crossing",
+        "accelerating_crossing",
+        "uncertain_motion",
+    }:
+        if object_count == 1:
+            times = [rng.uniform(1.5, 2.4)]
+        else:
+            start = rng.uniform(1.00, 1.20)
+            times = [start, start + rng.uniform(1.30, 1.55)]
+    elif category == "safe_control":
+        center = rng.uniform(1.7, 2.2)
+        times = [center + rng.uniform(-0.20, 0.20) for _ in range(object_count)]
+    else:
+        center = rng.uniform(1.4, 1.7)
+        times = [
+            center + rng.uniform(-0.12, 0.12),
+            center + rng.uniform(-0.12, 0.12),
+            center + rng.uniform(1.10, 1.20),
+        ]
+    lower, upper = ARM_OPERATION_ARRIVAL_WINDOW_S
+    if len(times) != object_count or any(not lower <= value <= upper for value in times):
+        raise RuntimeError(f"invalid {category} arrival schedule: {times}")
+    return times
+
+
 def _random_object(
     rng: random.Random,
     *,
@@ -234,7 +367,8 @@ def _random_object(
     crossing_time_s: float,
     motion_type: str,
 ) -> dict[str, Any]:
-    anchor_base, direction_base = BASE_CROSSINGS[corridor_index]
+    crossing_specs = BASE_CROSSINGS + SAFE_CONTROL_CROSSINGS
+    anchor_base, direction_base = crossing_specs[corridor_index]
     anchor_jitter = 0.015 if category != "inflated_dense" else 0.02
     anchor = [value + rng.uniform(-anchor_jitter, anchor_jitter) for value in anchor_base]
     direction = _rotate_xy(direction_base, rng.uniform(-0.18, 0.18))
@@ -294,7 +428,7 @@ def _random_object(
             speed_variation_std_m_s=amplitude / math.sqrt(2.0),
             acceleration_variation_std_m_s2=(amplitude * frequency / math.sqrt(2.0)),
         )
-    return {
+    item = {
         "id": f"random-{scenario_index:03d}-{object_index:02d}",
         "corridor_id": f"path-crossing-{corridor_index}",
         "motion_model": motion_type,
@@ -322,6 +456,13 @@ def _random_object(
             "horizon_rate_m_s": horizon_rate,
         },
     }
+    base_clearance = minimum_robot_base_clearance(item)
+    if base_clearance <= 0.0:
+        raise RuntimeError(
+            f"generated object {item['id']} intersects the robot-base exclusion volume"
+        )
+    item["minimum_robot_base_clearance_m"] = base_clearance
+    return item
 
 
 def generate_suite(count: int, seed: int) -> dict[str, Any]:
@@ -332,16 +473,11 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
     for index in range(count):
         category = CATEGORIES[index % len(CATEGORIES)]
         if category == "single_crossing":
-            object_count, crossing_times = 1, [rng.uniform(10.0, 19.0)]
+            object_count = 1
             motion_types = ["constant_velocity"]
             feasibility_design = "one occupied crossing corridor"
         elif category == "staggered_multi":
             object_count = rng.randint(2, 3)
-            start = rng.uniform(9.0, 12.0)
-            spacing = rng.uniform(5.0, 7.0)
-            crossing_times = [
-                start + spacing * item + rng.uniform(-0.25, 0.25) for item in range(object_count)
-            ]
             motion_types = [
                 rng.choice(("constant_velocity", "constant_acceleration"))
                 for _ in range(object_count)
@@ -349,23 +485,14 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
             feasibility_design = "distinct corridors with separated crossing windows"
         elif category == "simultaneous_multi":
             object_count = 2
-            center = rng.uniform(11.0, 18.0)
-            crossing_times = [center + rng.uniform(-0.6, 0.6) for _ in range(object_count)]
             motion_types = ["constant_acceleration", "sinusoidal_curve"]
             feasibility_design = "two occupied corridors with one reserved corridor"
         elif category == "fast_crossing":
             object_count = rng.randint(1, 2)
-            start = rng.uniform(10.0, 15.0)
-            crossing_times = [start]
-            if object_count == 2:
-                crossing_times.append(start + rng.uniform(5.0, 8.0))
             motion_types = ["smooth_speed_variation"] * object_count
             feasibility_design = "small fast objects with separated crossing windows"
         elif category == "inflated_dense":
             object_count = 3
-            start = rng.uniform(8.5, 11.0)
-            spacing = rng.uniform(6.0, 8.0)
-            crossing_times = [start + spacing * item for item in range(object_count)]
             motion_types = [
                 "constant_velocity",
                 "constant_acceleration",
@@ -374,42 +501,37 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
             feasibility_design = "three uncertain objects crossing one at a time"
         elif category == "safe_control":
             object_count = rng.randint(1, 2)
-            crossing_times = [rng.uniform(55.0, 70.0) for _ in range(object_count)]
             motion_types = ["constant_velocity"] * object_count
-            feasibility_design = "objects remain outside the task corridor during the episode"
+            feasibility_design = "objects cross low-conflict workspace lanes during arm motion"
         elif category == "accelerating_crossing":
             object_count = 2
-            start = rng.uniform(9.0, 13.0)
-            crossing_times = [start, start + rng.uniform(4.5, 7.0)]
             motion_types = ["constant_acceleration"] * object_count
             feasibility_design = "accelerating objects use staggered crossing windows"
         elif category == "curved_crossing":
             object_count = 2
-            center = rng.uniform(11.0, 17.0)
-            crossing_times = [center + rng.uniform(-0.7, 0.7) for _ in range(2)]
             motion_types = ["sinusoidal_curve"] * object_count
             feasibility_design = "two curved paths occupy distinct corridors"
         elif category == "uncertain_motion":
             object_count = 2
-            start = rng.uniform(9.0, 14.0)
-            crossing_times = [start, start + rng.uniform(4.0, 7.0)]
             motion_types = ["smooth_speed_variation"] * object_count
             feasibility_design = "speed-varying objects use staggered crossing windows"
         else:
             object_count = 3
-            center = rng.uniform(10.0, 15.0)
-            crossing_times = [
-                center + rng.uniform(-0.5, 0.5),
-                center + rng.uniform(-0.5, 0.5),
-                center + rng.uniform(6.0, 9.0),
-            ]
             motion_types = [
                 "constant_acceleration",
                 "sinusoidal_curve",
                 "curved_speed_variation",
             ]
             feasibility_design = "two mixed motions cross together and a third follows later"
-        corridor_indices = rng.sample(range(len(BASE_CROSSINGS)), object_count)
+        crossing_times = _arrival_schedule(rng, category, object_count)
+        if category == "safe_control":
+            first_control = len(BASE_CROSSINGS)
+            corridor_indices = rng.sample(
+                range(first_control, first_control + len(SAFE_CONTROL_CROSSINGS)),
+                object_count,
+            )
+        else:
+            corridor_indices = rng.sample(range(len(BASE_CROSSINGS)), object_count)
         objects = [
             _random_object(
                 rng,
@@ -431,6 +553,16 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
                 "difficulty": DIFFICULTY_BY_CATEGORY[category],
                 "frame_id": "fr3_link0",
                 "feasibility_design": feasibility_design,
+                "motion_clock": {
+                    "mode": "first_execution_accepted",
+                    "trigger_topics": [
+                        "/mpd_dynamic_replanner/execution_started",
+                        "/mpd_space_time_replanner/execution_started",
+                    ],
+                },
+                "arm_operation_arrival_window_s": list(
+                    ARM_OPERATION_ARRIVAL_WINDOW_S
+                ),
                 "reserved_corridors": [
                     f"path-crossing-{corridor}"
                     for corridor in sorted(set(range(len(BASE_CROSSINGS))) - set(corridor_indices))
@@ -440,7 +572,7 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
         )
     return {
         "schema": "mpd_todrawer_random_suite",
-        "schema_version": 2,
+        "schema_version": 3,
         "suite_seed": seed,
         "scenario_count": count,
         "categories": list(CATEGORIES),
@@ -452,6 +584,8 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
             for category in CATEGORIES
         },
         "generation_policy": {
+            "revision": GENERATION_REVISION,
+            "motion_clock": "first_execution_accepted",
             "motion_models": [
                 "constant_velocity",
                 "constant_acceleration",
@@ -460,6 +594,13 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
                 "curved_speed_variation",
             ],
             "vertical_crossings_retained": True,
+            "arm_operation_arrival_window_s": list(
+                ARM_OPERATION_ARRIVAL_WINDOW_S
+            ),
+            "robot_base_exclusion_aabb": {
+                "minimum_xyz": list(ROBOT_BASE_EXCLUSION_MIN),
+                "maximum_xyz": list(ROBOT_BASE_EXCLUSION_MAX),
+            },
             "speed_range_m_s": [0.08, 0.32],
             "prediction_horizon_s": PREDICTION_HORIZON_S,
             "maximum_inflation_at_prediction_horizon_m": 0.23,
@@ -475,9 +616,15 @@ def materialize_suite(output_dir: Path, count: int, seed: int) -> dict[str, Any]
     suite_path = output_dir / "suite.json"
     if suite_path.is_file():
         suite = _read_json(suite_path)
-        if suite.get("suite_seed") != seed or suite.get("scenario_count") != count:
+        if (
+            suite.get("suite_seed") != seed
+            or suite.get("scenario_count") != count
+            or suite.get("generation_policy", {}).get("revision")
+            != GENERATION_REVISION
+        ):
             raise ValueError(
-                "existing suite.json does not match --suite-seed/--scenario-count; use a new output directory"
+                "existing suite.json does not match the requested seed/count/generation revision; "
+                "use a new output directory"
             )
         return suite
     suite = generate_suite(count, seed)

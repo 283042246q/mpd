@@ -30,6 +30,7 @@ if SCRIPT_REPO_ROOT.as_posix() not in sys.path:
 from scripts.isaaclab.benchmark_todrawer_random import (
     CATEGORIES,
     DEFAULT_FACTORIZED_C_CHECKPOINT,
+    GENERATION_REVISION,
     REPO_ROOT,
     generate_suite,
 )
@@ -224,9 +225,15 @@ def _materialize_suite(output_dir: Path, suite_seed: int) -> dict[str, Any]:
     suite_path = output_dir / "suite.json"
     if suite_path.is_file():
         suite = json.loads(suite_path.read_text(encoding="utf-8"))
-        if suite.get("suite_seed") != suite_seed or suite.get("scenario_count") != len(CATEGORIES):
+        if (
+            suite.get("suite_seed") != suite_seed
+            or suite.get("scenario_count") != len(CATEGORIES)
+            or suite.get("generation_policy", {}).get("revision")
+            != GENERATION_REVISION
+        ):
             raise ValueError(
-                "existing suite.json does not match the requested seed/category count; "
+                "existing suite.json does not match the requested seed/category count/"
+                "generation revision; "
                 "choose a new output directory"
             )
         return suite

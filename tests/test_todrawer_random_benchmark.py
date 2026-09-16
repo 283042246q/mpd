@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
+    ARM_OPERATION_ARRIVAL_WINDOW_S,
     CATEGORIES,
     DEFAULT_FACTORIZED_C_CHECKPOINT,
     DEFAULT_FACTORIZED_TAU_R_CHECKPOINT,
@@ -21,6 +22,8 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     extract_run_metrics,
     generate_suite,
     main,
+    minimum_robot_base_clearance,
+    object_position_at,
     write_reports,
 )
 
@@ -31,7 +34,7 @@ def test_random_suite_is_deterministic_and_covers_categories():
 
     assert first == second
     assert [item["category"] for item in first["scenarios"]] == list(CATEGORIES)
-    assert first["schema_version"] == 2
+    assert first["schema_version"] == 3
     assert all(1 <= len(item["objects"]) <= 3 for item in first["scenarios"])
     assert all(item["schema"] == "mpd_todrawer_dynamic_scenario" for item in first["scenarios"])
 
@@ -69,16 +72,17 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
         if scenario["category"] in {"simultaneous_multi", "curved_crossing"}:
             assert len(objects) == 2
             assert len(scenario["reserved_corridors"]) == 1
-        if scenario["category"] in {
-            "staggered_multi",
-            "inflated_dense",
-            "accelerating_crossing",
-        }:
+        if scenario["category"] in {"staggered_multi", "inflated_dense"}:
             assert all(
-                second - first >= 4.5 for first, second in zip(crossing_times, crossing_times[1:])
+                second - first >= 0.9
+                for first, second in zip(crossing_times, crossing_times[1:])
             )
-        if scenario["category"] == "safe_control":
-            assert min(crossing_times) >= 55.0
+        if scenario["category"] in {
+            "fast_crossing",
+            "accelerating_crossing",
+            "uncertain_motion",
+        } and len(objects) == 2:
+            assert crossing_times[1] - crossing_times[0] >= 1.30
     assert vertical_crossings > 0
     assert motion_types == {
         "constant_velocity",
@@ -87,6 +91,59 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
         "smooth_speed_variation",
         "curved_speed_variation",
     }
+
+
+def test_every_object_reaches_its_workspace_anchor_during_arm_motion():
+    suite = generate_suite(10 * len(CATEGORIES), 9271)
+    lower, upper = ARM_OPERATION_ARRIVAL_WINDOW_S
+
+    for scenario in suite["scenarios"]:
+        assert scenario["arm_operation_arrival_window_s"] == [lower, upper]
+        assert scenario["motion_clock"]["mode"] == "first_execution_accepted"
+        for item in scenario["objects"]:
+            assert lower <= item["crossing_time_s"] <= upper
+            assert object_position_at(item, item["crossing_time_s"]) == pytest.approx(
+                item["anchor_position"], abs=1.0e-12
+            )
+
+
+def test_arrival_patterns_preserve_simultaneous_and_staggered_semantics():
+    suite = generate_suite(20 * len(CATEGORIES), 7319)
+
+    for scenario in suite["scenarios"]:
+        times = sorted(item["crossing_time_s"] for item in scenario["objects"])
+        category = scenario["category"]
+        if category in {"simultaneous_multi", "curved_crossing"}:
+            assert times[-1] - times[0] <= 0.36 + 1.0e-12
+        elif category in {"staggered_multi", "inflated_dense"}:
+            assert all(
+                second - first >= 0.9
+                for first, second in zip(times, times[1:])
+            )
+        elif category == "mixed_motion_multi":
+            assert times[1] - times[0] <= 0.32 + 1.0e-12
+            assert times[2] - times[1] >= 0.68
+
+
+def test_generated_objects_never_enter_robot_base_exclusion_volume():
+    suite = generate_suite(20 * len(CATEGORIES), 8113)
+
+    for scenario in suite["scenarios"]:
+        for item in scenario["objects"]:
+            clearance = minimum_robot_base_clearance(item)
+            assert clearance > 0.0
+            assert item["minimum_robot_base_clearance_m"] == pytest.approx(clearance)
+
+
+def test_same_category_arrivals_have_bounded_random_variation():
+    suite = generate_suite(20 * len(CATEGORIES), 6197)
+    arrivals_by_category = {category: [] for category in CATEGORIES}
+    for scenario in suite["scenarios"]:
+        arrivals_by_category[scenario["category"]].append(
+            tuple(round(item["crossing_time_s"], 6) for item in scenario["objects"])
+        )
+
+    assert all(len(set(arrivals)) > 1 for arrivals in arrivals_by_category.values())
 
 
 def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
