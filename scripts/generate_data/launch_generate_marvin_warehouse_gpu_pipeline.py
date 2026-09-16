@@ -587,6 +587,11 @@ def main(argv=None):
     count = int(args.num_trajectories or config.get("num_trajectories", 1000))
     endpoint_workers = int(config.get("gpu_pipeline_endpoint_workers", 2))
     checkpoint_size = int(config.get("gpu_pipeline_checkpoint_size", 10))
+    active_unfinished = config.get(
+        "gpu_pipeline_active_unfinished_tasks",
+        config.get("gpu_pipeline_active_window_tasks", checkpoint_size),
+    )
+    max_open_shards = config.get("gpu_pipeline_max_open_shards", 16)
     if count <= 0 or count % checkpoint_size or checkpoint_size % 10:
         raise ValueError("trajectory count/checkpoint size must preserve ten-task blocks")
     if endpoint_workers < 1 or endpoint_workers > 8:
@@ -597,7 +602,7 @@ def main(argv=None):
     print(
         f"GPU pipeline: {count} trajectories, {endpoint_workers} endpoint actors, "
         f"1 GPU actor, 1 PyBullet actor, checkpoint={checkpoint_size}, "
-        f"active_window={config.get('gpu_pipeline_active_window_tasks', checkpoint_size)} "
+        f"active_unfinished={active_unfinished}, max_open_shards={max_open_shards} "
         f"-> {root}",
         flush=True,
     )

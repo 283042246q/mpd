@@ -161,7 +161,7 @@ def test_checkpoint_keeps_mixed_contract_but_dispatches_homogeneous_batches():
     assert stats["pybullet_trajectory_audit_wall_milliseconds"] >= 0
 
 
-def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path):
+def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path, capsys):
     assert main(
         [
             "--num-trajectories",
@@ -172,6 +172,9 @@ def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path):
         ]
     ) == 0
     assert not (tmp_path / "dry").exists()
+    output = capsys.readouterr().out
+    assert "active_unfinished=80" in output
+    assert "max_open_shards=16" in output
 
 
 def test_endpoint_jobs_are_dynamically_refilled_one_at_a_time():

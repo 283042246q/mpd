@@ -403,6 +403,9 @@ class StreamingCoordinator:
         self.global_stats[f"gpu_plan_batch_size/{mode}/{len(result)}"] += 1
         for candidate, plan in zip(request["candidates"], result):
             self._count(candidate.task_id, f"gpu_plan_queries/{mode}")
+            # Attach the result before any terminal transition so compact RRT
+            # diagnostics survive even when this query is rejected or stale.
+            candidate.payload.update(plan)
             if self._task(candidate.task_id).accepted:
                 candidate.stale()
             elif plan["path"] is None:
@@ -411,7 +414,6 @@ class StreamingCoordinator:
                 self._count(candidate.task_id, f"gpu_rejected/{reason}")
                 self.global_stats[f"gpu_rejected/{mode}/{reason}"] += 1
             else:
-                candidate.payload.update(plan)
                 candidate.advance(CandidateStage.PYBULLET_TRAJECTORY)
         return True
 
