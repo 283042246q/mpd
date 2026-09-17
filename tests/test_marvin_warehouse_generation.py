@@ -941,8 +941,33 @@ def test_shard_layout_uses_workers_without_breaking_ten_task_quotas():
     assert build_shards(20, 10, 3) == [(0, 10), (10, 10)]
     assert build_shards(1000, 500, 3) == [(0, 340), (340, 330), (670, 330)]
     assert build_shards(1500, 500, 3) == [(0, 500), (500, 500), (1000, 500)]
+    assert build_shards(100, 30, 2, start_task_id=200) == [
+        (200, 30),
+        (230, 30),
+        (260, 20),
+        (280, 20),
+    ]
     for start, count in build_shards(1010, 500, 3):
         assert start % 10 == 0 and count % 10 == 0 and 0 < count <= 500
+
+
+def test_cpu_launcher_uses_start_to_exclusive_end_task_ids(tmp_path, capsys):
+    from scripts.generate_data.launch_generate_marvin_warehouse_bimanual import main
+
+    assert main(
+        [
+            "--start-task-id",
+            "20",
+            "--num-trajectories",
+            "50",
+            "--output-dir",
+            str(tmp_path / "range"),
+            "--dry-run",
+        ]
+    ) == 0
+    assert not (tmp_path / "range").exists()
+    output = capsys.readouterr().out
+    assert "30 trajectories for task IDs [20, 50)" in output
 
 
 def test_shard_scheduler_rolls_a_fresh_process_without_waiting_for_other_slots(tmp_path):

@@ -625,7 +625,22 @@ def _write_pipeline_telemetry(root, telemetry):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--num-trajectories", type=int)
+    parser.add_argument(
+        "--num-trajectories",
+        type=int,
+        help="Exclusive ending task ID, rather than a count.",
+    )
+    parser.add_argument(
+        "--start-task-id",
+        "--start-shard",
+        dest="start_task_id",
+        type=int,
+        default=0,
+        help=(
+            "First task ID to generate; --start-shard refers to the numeric "
+            "start ID used in the shard directory name."
+        ),
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--endpoint-workers", type=int)
     parser.add_argument("--gpu-device")
@@ -637,7 +652,13 @@ def main(argv=None):
         config["gpu_device"] = args.gpu_device
     if args.endpoint_workers is not None:
         config["gpu_pipeline_endpoint_workers"] = args.endpoint_workers
-    count = int(args.num_trajectories or config.get("num_trajectories", 1000))
+    end_task_id = int(
+        args.num_trajectories
+        if args.num_trajectories is not None
+        else config.get("num_trajectories", 1000)
+    )
+    start_task_id = int(args.start_task_id)
+    count = end_task_id - start_task_id
     endpoint_workers = int(config.get("gpu_pipeline_endpoint_workers", 2))
     checkpoint_size = int(config.get("gpu_pipeline_checkpoint_size", 10))
     active_unfinished = config.get(
@@ -645,15 +666,25 @@ def main(argv=None):
         config.get("gpu_pipeline_active_window_tasks", checkpoint_size),
     )
     max_open_shards = config.get("gpu_pipeline_max_open_shards", 16)
-    if count <= 0 or count % checkpoint_size or checkpoint_size % 10:
-        raise ValueError("trajectory count/checkpoint size must preserve ten-task blocks")
+    if (
+        start_task_id < 0
+        or end_task_id <= start_task_id
+        or start_task_id % checkpoint_size
+        or end_task_id % checkpoint_size
+        or checkpoint_size % 10
+    ):
+        raise ValueError(
+            "start/end task IDs must align to the checkpoint size and preserve "
+            "ten-task blocks"
+        )
     if endpoint_workers < 1 or endpoint_workers > 8:
         raise ValueError("endpoint worker count must lie in [1, 8]")
     if config.get("pre_rrt_filter", "none") != "none":
         raise ValueError("the GPU pipeline currently requires pre_rrt_filter=none")
     root = args.output_dir or Path(config["output_dir"])
     print(
-        f"GPU pipeline: {count} trajectories, {endpoint_workers} endpoint actors, "
+        f"GPU pipeline: {count} trajectories for task IDs "
+        f"[{start_task_id}, {end_task_id}), {endpoint_workers} endpoint actors, "
         f"1 GPU actor, 1 PyBullet actor, checkpoint={checkpoint_size}, "
         f"active_unfinished={active_unfinished}, max_open_shards={max_open_shards} "
         f"-> {root}",
@@ -672,7 +703,10 @@ def main(argv=None):
         shard_complete,
     )
 
-    checkpoints = [(start, checkpoint_size) for start in range(0, count, checkpoint_size)]
+    checkpoints = [
+        (start, checkpoint_size)
+        for start in range(start_task_id, end_task_id, checkpoint_size)
+    ]
     completed = []
     pending = []
     for start, size in checkpoints:

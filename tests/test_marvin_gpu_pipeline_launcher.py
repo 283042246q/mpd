@@ -197,6 +197,23 @@ def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path, capsys):
     assert "max_open_shards=8" in output
 
 
+def test_gpu_launcher_uses_start_to_exclusive_end_task_ids(tmp_path, capsys):
+    assert main(
+        [
+            "--start-shard",
+            "20",
+            "--num-trajectories",
+            "50",
+            "--output-dir",
+            str(tmp_path / "range"),
+            "--dry-run",
+        ]
+    ) == 0
+    assert not (tmp_path / "range").exists()
+    output = capsys.readouterr().out
+    assert "30 trajectories for task IDs [20, 50)" in output
+
+
 def test_endpoint_jobs_are_dynamically_refilled_one_at_a_time():
     actors = [FakeEndpointActor(), FakeEndpointActor()]
     jobs = [

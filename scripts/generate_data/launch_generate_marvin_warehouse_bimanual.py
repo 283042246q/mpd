@@ -251,7 +251,7 @@ def run_shards_resilient(
     return [completed[start] for start, _ in shards]
 
 
-def build_shards(num_trajectories, max_shard_size, workers):
+def build_shards(num_trajectories, max_shard_size, workers, start_task_id=0):
     """Build quota-safe shards while keeping available workers occupied.
 
     Every shard is a multiple of ten and global task IDs select directions, so
@@ -266,7 +266,7 @@ def build_shards(num_trajectories, max_shard_size, workers):
     if any(count <= 0 or count > max_shard_size for count in counts):
         raise ValueError("could not construct positive quota-safe shards within the requested maximum")
     starts = []
-    start = 0
+    start = int(start_task_id)
     for count in counts:
         starts.append((start, count))
         start += count
@@ -331,7 +331,22 @@ def _shard_first_task_id(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--num-trajectories", type=int)
+    parser.add_argument(
+        "--num-trajectories",
+        type=int,
+        help="Exclusive ending task ID, rather than a count.",
+    )
+    parser.add_argument(
+        "--start-task-id",
+        "--start-shard",
+        dest="start_task_id",
+        type=int,
+        default=0,
+        help=(
+            "First task ID to generate; --start-shard refers to the numeric "
+            "start ID used in the shard directory name."
+        ),
+    )
     parser.add_argument("--workers", type=int)
     parser.add_argument("--tasks-per-shard", type=int)
     parser.add_argument(
@@ -360,7 +375,13 @@ def main(argv=None):
     if args.pre_rrt_filter:
         config["pre_rrt_filter"] = args.pre_rrt_filter
     validate_config(config)
-    n = args.num_trajectories if args.num_trajectories is not None else config["num_trajectories"]
+    end_task_id = int(
+        args.num_trajectories
+        if args.num_trajectories is not None
+        else config["num_trajectories"]
+    )
+    start_task_id = int(args.start_task_id)
+    trajectory_count = end_task_id - start_task_id
     gpu_planner = config.get("planner", "RRTConnect") == "GpuBatchRRTConnect"
     workers = args.workers if args.workers is not None else config.get(
         "gpu_workers" if gpu_planner else "workers", 1 if gpu_planner else 3
@@ -380,8 +401,10 @@ def main(argv=None):
         else config.get("max_worker_restarts_per_shard", 3)
     )
     if (
-        n <= 0
-        or n % 10
+        start_task_id < 0
+        or end_task_id <= start_task_id
+        or start_task_id % 10
+        or end_task_id % 10
         or shard_size <= 0
         or shard_size % 10
         or worker_lifetime <= 0
@@ -389,7 +412,10 @@ def main(argv=None):
         or workers < 1
         or max_restarts < 0
     ):
-        raise ValueError("counts/shard/worker lifetime must be positive multiples of 10; workers >= 1; restarts >= 0")
+        raise ValueError(
+            "start/end task IDs and shard/worker lifetime must preserve positive "
+            "multiples of 10; workers >= 1; restarts >= 0"
+        )
     if gpu_planner and workers != 1:
         raise ValueError(
             "GpuBatchRRTConnect uses one persistent process per CUDA device; "
@@ -397,11 +423,17 @@ def main(argv=None):
         )
     root = args.output_dir or Path(config["output_dir"])
     effective_shard_size = min(shard_size, worker_lifetime)
-    shards = build_shards(n, effective_shard_size, workers)
+    shards = build_shards(
+        trajectory_count,
+        effective_shard_size,
+        workers,
+        start_task_id=start_task_id,
+    )
     active_workers = min(workers, len(shards))
     print(
         f"{config['sampler']}, pre_rrt_filter={config.get('pre_rrt_filter', 'none')}: "
-        f"planner={config.get('planner', 'RRTConnect')}, {n} trajectories, "
+        f"planner={config.get('planner', 'RRTConnect')}, {trajectory_count} trajectories "
+        f"for task IDs [{start_task_id}, {end_task_id}), "
         f"{active_workers}/{workers} active {'GPU' if gpu_planner else 'CPU'} workers, "
         f"{len(shards)} fresh-worker shards (size <= {effective_shard_size}) -> {root}",
         flush=True,
