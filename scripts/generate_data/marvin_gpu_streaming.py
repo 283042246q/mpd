@@ -80,6 +80,8 @@ class StreamingCoordinator:
         bullet_actor,
         publish,
         spool=None,
+        segment_seconds=0,
+        segment_max_accepted_tasks=0,
     ):
         self.config = dict(config)
         self.contract = contract
@@ -105,10 +107,16 @@ class StreamingCoordinator:
         self.bullet_request = None
         self.completed_paths = []
         self.total_accepted = 0
+        self.session_accepted = 0
         self.published_since_recycle = 0
         self.global_stats = Counter()
         self.checkpoint_wall_seconds = []
         self.run_started = time.perf_counter()
+        self.segment_seconds = float(segment_seconds)
+        self.segment_max_accepted_tasks = int(segment_max_accepted_tasks)
+        if self.segment_seconds < 0 or self.segment_max_accepted_tasks < 0:
+            raise ValueError("segment limits must be nonnegative")
+        self.segment_stop_reason = None
         self.stats_flush_accepted = int(
             config.get("gpu_pipeline_stats_flush_accepted", 10)
         )
@@ -560,6 +568,7 @@ class StreamingCoordinator:
                     if self.spool is not None:
                         self.spool.save_task(task, shard.size)
                     self.total_accepted += 1
+                    self.session_accepted += 1
                     print(
                         f"[gpu pipeline] accepted total={self.total_accepted} "
                         f"task={task.task_id} mode={task.definition.mode} "
@@ -614,8 +623,51 @@ class StreamingCoordinator:
             if task.status == TaskStatus.HARD_FAILED
         ]
 
+    def _segment_limit_reason(self):
+        if (
+            self.segment_max_accepted_tasks > 0
+            and self.session_accepted >= self.segment_max_accepted_tasks
+        ):
+            return "accepted_tasks"
+        if (
+            self.segment_seconds > 0
+            and time.perf_counter() - self.run_started >= self.segment_seconds
+        ):
+            return "elapsed_seconds"
+        return None
+
+    def _inflight(self):
+        return bool(
+            self.endpoint_requests
+            or self.gpu_request is not None
+            or self.bullet_request is not None
+        )
+
+    def _discard_segment_candidates(self):
+        """Drop non-durable candidate payloads at a clean process boundary.
+
+        Started attempts are already in the partial spool, so the next launcher
+        advances to a fresh deterministic attempt instead of replaying these
+        candidates. Accepted trajectories are never discarded here: they are
+        durably spooled before ``session_accepted`` is incremented.
+        """
+        discarded = 0
+        for task in self.window.active_tasks():
+            if task.endpoint_inflight:
+                raise RuntimeError(
+                    f"task {task.task_id} still has endpoint work while draining"
+                )
+            for candidate in list(task.live_candidates()):
+                candidate.stale()
+                task.retire_candidate(candidate)
+                self._count(task.task_id, "segment_candidates_discarded")
+                discarded += 1
+        self.global_stats["segment_drain_discarded_candidates"] += discarded
+        return discarded
+
     def run(self):
         self.window.fill(self._open_shard)
+        draining = False
         try:
             while not self.window.finished:
                 self.global_stats["max_open_shards"] = max(
@@ -634,10 +686,32 @@ class StreamingCoordinator:
                 progressed |= self._poll_bullet()
                 progressed |= self._flush_due_stats()
                 progressed |= self._publish_complete()
-                self.window.fill(self._open_shard)
-                progressed |= self._dispatch_endpoints()
-                progressed |= self._dispatch_gpu()
-                progressed |= self._dispatch_bullet()
+                if not draining:
+                    reason = self._segment_limit_reason()
+                    if reason is not None and not self.window.finished:
+                        draining = True
+                        self.segment_stop_reason = reason
+                        self.global_stats[f"segment_stop/{reason}"] += 1
+                        print(
+                            f"[gpu pipeline] segment limit reached ({reason}); "
+                            "draining in-flight actor requests",
+                            flush=True,
+                        )
+                if draining:
+                    if not self._inflight():
+                        discarded = self._discard_segment_candidates()
+                        print(
+                            f"[gpu pipeline] segment drained; accepted "
+                            f"{self.session_accepted} new task(s), discarded "
+                            f"{discarded} non-durable candidate(s)",
+                            flush=True,
+                        )
+                        break
+                else:
+                    self.window.fill(self._open_shard)
+                    progressed |= self._dispatch_endpoints()
+                    progressed |= self._dispatch_gpu()
+                    progressed |= self._dispatch_bullet()
                 failures = self._hard_failures()
                 productive = any(
                     task.status in {TaskStatus.ACTIVE, TaskStatus.DEFERRED}
@@ -706,6 +780,10 @@ class StreamingCoordinator:
             "checkpoint_wall_seconds": self.checkpoint_wall_seconds,
             "actors": actors,
             "configuration": {
+                "segment_seconds": self.segment_seconds,
+                "segment_max_accepted_tasks": self.segment_max_accepted_tasks,
+                "segment_stop_reason": self.segment_stop_reason,
+                "session_accepted": self.session_accepted,
                 "active_unfinished_tasks": int(
                     self.config.get(
                         "gpu_pipeline_active_unfinished_tasks",

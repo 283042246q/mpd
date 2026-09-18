@@ -65,6 +65,28 @@ python scripts/generate_data/launch_generate_marvin_warehouse_gpu_pipeline.py \
   --output-dir /path/to/output
 ```
 
+长时间正式生成建议显式启用外层短进程监督。下面每个子 launcher 在约 10 分钟后停止派发，
+等待当时正在执行的 actor 请求结束，将最终通过审核的 task 保存在 partial spool，然后正常
+退出；常驻的轻量 supervisor 随后启动一个全新的 launcher，因此 CUDA context、Pinocchio、
+CPU Torch 和 PyBullet native library 都会随子进程树释放：
+
+```bash
+python scripts/generate_data/launch_generate_marvin_warehouse_gpu_pipeline.py \
+  --gpu-device cuda:0 \
+  --start-task-id 0 \
+  --num-trajectories 100000 \
+  --output-dir /path/to/output \
+  --supervised-short-processes \
+  --segment-seconds 600
+```
+
+也可以增加 `--segment-max-accepted-tasks 100`，时间或新接受 task 数任一先达到即开始
+drain。分段边界不会发布不完整 shard：已接受 task 从 `.inflight` 恢复，已经开始但未完成的
+attempt 在下一个子进程从下一 attempt 继续。正常的中间段用专用退出码 75 通知 supervisor
+重启；其他非零退出码视为真实错误并停止自动重启。每段 telemetry 保存在
+`pipeline_segments/`，父子进程和退出码写入 `supervisor_segments.jsonl`。不带
+`--supervised-short-processes` 时行为保持原样，原 CPU generator/launcher 不受影响。
+
 该入口会在 manifest 中写入 `GpuMultiQueryRRTConnect`。原 YAML 的 `planner: RRTConnect`
 未修改，原 `generate_marvin_warehouse_bimanual.py` 和
 `launch_generate_marvin_warehouse_bimanual.py` 也没有接入这些 actors。新增的

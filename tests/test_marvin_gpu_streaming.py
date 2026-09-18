@@ -99,6 +99,7 @@ class RecordingSpool:
     def __init__(self):
         self.progress = []
         self.stats = []
+        self.tasks = []
 
     def restore(self, shard):
         return []
@@ -108,6 +109,12 @@ class RecordingSpool:
 
     def save_stats(self, shard):
         self.stats.append(dict(shard.stats))
+
+    def save_task(self, task, shard_size):
+        self.tasks.append((task.task_id, shard_size))
+
+    def clear_shard(self, start):
+        raise AssertionError(f"incomplete segment unexpectedly cleared shard {start}")
 
 
 def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_path):
@@ -253,3 +260,51 @@ def test_attempt_progress_is_saved_once_and_stats_are_debounced(tmp_path):
     coordinator.stats_dirty.add(shard.start)
     assert coordinator._flush_due_stats()
     assert len(spool.stats) == 1
+
+
+def test_segment_task_limit_drains_and_spools_without_publishing_shard(tmp_path):
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config.update(
+        gpu_pipeline_active_unfinished_tasks=10,
+        gpu_pipeline_max_open_shards=1,
+        gpu_pipeline_endpoint_workers=1,
+        gpu_pipeline_endpoint_candidates_per_attempt=1,
+        gpu_pipeline_endpoint_candidate_chunk_size=1,
+        gpu_pipeline_gpu_endpoint_batch_size=1,
+        gpu_pipeline_pybullet_endpoint_batch_size=1,
+        gpu_pipeline_pybullet_trajectory_batch_size=1,
+        gpu_query_batch_size_dual=1,
+        gpu_query_batch_size_left=1,
+        gpu_query_batch_size_right=1,
+        gpu_pipeline_plan_batch_max_wait_seconds=0,
+        gpu_pipeline_pybullet_recycle_trajectories=0,
+    )
+    spool = RecordingSpool()
+    published = []
+    coordinator = StreamingCoordinator(
+        config,
+        [(0, 10, tmp_path / "000000000")],
+        TaskContract(config, config["seed"]),
+        [ImmediateActor("endpoint")],
+        ImmediateActor("gpu"),
+        ImmediateActor("pybullet"),
+        lambda *args: published.append(args),
+        spool,
+        segment_max_accepted_tasks=1,
+    )
+
+    completed, stats = coordinator.run()
+
+    assert completed == []
+    assert published == []
+    assert coordinator.segment_stop_reason == "accepted_tasks"
+    assert coordinator.session_accepted == 1
+    assert spool.tasks == [(0, 10)]
+    assert stats["segment_stop/accepted_tasks"] == 1
+    assert coordinator.gpu_request is None
+    assert coordinator.bullet_request is None
+    assert coordinator.endpoint_requests == {}
+    assert all(
+        not task.live_candidates() and not task.endpoint_inflight
+        for task in coordinator.window.active_tasks()
+    )

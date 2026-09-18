@@ -8,11 +8,13 @@ import yaml
 from scripts.generate_data.launch_generate_marvin_warehouse_gpu_pipeline import (
     DEFAULT_CONFIG,
     RestartableActor,
+    SEGMENT_INCOMPLETE_EXIT_CODE,
     _append_actor_process_event,
     _candidate_waves,
     _factor_dual_candidates,
     _dynamic_proposals,
     _write_pipeline_telemetry,
+    _supervise_short_processes,
     generate_checkpoint,
     main,
 )
@@ -195,6 +197,64 @@ def test_gpu_launcher_dry_run_does_not_start_actors(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "active_unfinished=80" in output
     assert "max_open_shards=8" in output
+
+
+def test_supervised_dry_run_reports_segment_limits_without_spawning(tmp_path, capsys):
+    assert main(
+        [
+            "--num-trajectories",
+            "10",
+            "--output-dir",
+            str(tmp_path / "dry"),
+            "--supervised-short-processes",
+            "--segment-seconds",
+            "720",
+            "--segment-max-accepted-tasks",
+            "50",
+            "--dry-run",
+        ]
+    ) == 0
+    assert not (tmp_path / "dry").exists()
+    output = capsys.readouterr().out
+    assert "supervised_short_processes=True" in output
+    assert "segment_seconds=720" in output
+    assert "segment_tasks=50" in output
+
+
+def test_outer_supervisor_relaunches_only_clean_incomplete_segments(
+    tmp_path, monkeypatch
+):
+    returncodes = iter((SEGMENT_INCOMPLETE_EXIT_CODE, 0))
+    commands = []
+
+    class FakeProcess:
+        def __init__(self, command):
+            commands.append(command)
+            self.pid = 1000 + len(commands)
+            self.returncode = next(returncodes)
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", FakeProcess)
+
+    assert _supervise_short_processes(
+        ["--supervised-short-processes", "--num-trajectories", "10"],
+        tmp_path,
+        segment_seconds=600,
+        segment_tasks=0,
+        delay=0,
+    ) == 0
+    assert len(commands) == 2
+    assert all(command[-1] == "--segment-child" for command in commands)
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "supervisor_segments.jsonl").read_text().splitlines()
+    ]
+    assert [event["returncode"] for event in events if event["event"] == "segment_exited"] == [
+        SEGMENT_INCOMPLETE_EXIT_CODE,
+        0,
+    ]
 
 
 def test_gpu_launcher_uses_start_to_exclusive_end_task_ids(tmp_path, capsys):

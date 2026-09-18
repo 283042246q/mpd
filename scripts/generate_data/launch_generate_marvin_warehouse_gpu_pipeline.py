@@ -10,6 +10,8 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 from queue import Empty
+import subprocess
+import sys
 import time
 
 for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
@@ -37,6 +39,7 @@ MODE_BATCH_CONFIG = {
     "left_only": "gpu_query_batch_size_left",
     "right_only": "gpu_query_batch_size_right",
 }
+SEGMENT_INCOMPLETE_EXIT_CODE = 75
 
 
 class RestartableActor:
@@ -622,7 +625,120 @@ def _write_pipeline_telemetry(root, telemetry):
     fsync_parent(manifest_path)
 
 
+def _append_supervisor_event(root, event):
+    path = Path(root) / "supervisor_segments.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "unix_seconds": time.time(),
+        "wall_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        **event,
+    }
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _write_pipeline_segment_telemetry(root, telemetry):
+    directory = Path(root) / "pipeline_segments"
+    directory.mkdir(parents=True, exist_ok=True)
+    name = f"segment-{time.time_ns()}-{os.getpid()}.yaml"
+    path = directory / name
+    temporary = directory / f".{name}.tmp"
+    temporary.write_text(yaml.safe_dump(telemetry, sort_keys=False))
+    descriptor = os.open(temporary, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
+
+
+def _supervise_short_processes(raw_argv, root, segment_seconds, segment_tasks, delay):
+    if segment_seconds <= 0 and segment_tasks <= 0:
+        raise ValueError(
+            "supervised short processes require a positive time or task limit"
+        )
+    if delay < 0:
+        raise ValueError("segment restart delay must be nonnegative")
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *raw_argv,
+        "--segment-child",
+    ]
+    segment = 0
+    while True:
+        segment += 1
+        process = subprocess.Popen(command)
+        print(
+            f"[gpu supervisor] segment={segment} child PID={process.pid} "
+            f"seconds={segment_seconds:g} accepted_tasks={segment_tasks}",
+            flush=True,
+        )
+        _append_supervisor_event(
+            root,
+            {
+                "event": "segment_started",
+                "segment": segment,
+                "child_pid": process.pid,
+                "segment_seconds": segment_seconds,
+                "segment_max_accepted_tasks": segment_tasks,
+            },
+        )
+        try:
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            process.terminate()
+            process.wait()
+            _append_supervisor_event(
+                root,
+                {
+                    "event": "supervisor_interrupted",
+                    "segment": segment,
+                    "child_pid": process.pid,
+                },
+            )
+            return 130
+        _append_supervisor_event(
+            root,
+            {
+                "event": "segment_exited",
+                "segment": segment,
+                "child_pid": process.pid,
+                "returncode": returncode,
+            },
+        )
+        if returncode == 0:
+            print(
+                f"[gpu supervisor] generation completed after {segment} segment(s)",
+                flush=True,
+            )
+            return 0
+        if returncode != SEGMENT_INCOMPLETE_EXIT_CODE:
+            print(
+                f"[gpu supervisor] child failed with return code {returncode}; "
+                "not restarting",
+                flush=True,
+            )
+            return returncode
+        print(
+            f"[gpu supervisor] segment={segment} ended cleanly; "
+            f"restarting after {delay:g}s",
+            flush=True,
+        )
+        if delay:
+            time.sleep(delay)
+
+
 def main(argv=None):
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
@@ -644,8 +760,35 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--endpoint-workers", type=int)
     parser.add_argument("--gpu-device")
+    parser.add_argument(
+        "--supervised-short-processes",
+        action="store_true",
+        help=(
+            "Run generation in cleanly terminating child launchers so CUDA and "
+            "all native libraries are periodically released."
+        ),
+    )
+    parser.add_argument(
+        "--segment-seconds",
+        type=float,
+        default=600.0,
+        help="Begin a clean child-process drain after this many seconds (0 disables).",
+    )
+    parser.add_argument(
+        "--segment-max-accepted-tasks",
+        type=int,
+        default=0,
+        help="Also drain after this many newly accepted tasks (0 disables).",
+    )
+    parser.add_argument(
+        "--segment-restart-delay-seconds",
+        type=float,
+        default=2.0,
+        help="Outer-supervisor delay between clean launcher segments.",
+    )
+    parser.add_argument("--segment-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
     config = yaml.safe_load(args.config.read_text())
     config["planner"] = "GpuMultiQueryRRTConnect"
     if args.gpu_device:
@@ -687,7 +830,9 @@ def main(argv=None):
         f"[{start_task_id}, {end_task_id}), {endpoint_workers} endpoint actors, "
         f"1 GPU actor, 1 PyBullet actor, checkpoint={checkpoint_size}, "
         f"active_unfinished={active_unfinished}, max_open_shards={max_open_shards} "
-        f"-> {root}",
+        f"supervised_short_processes={args.supervised_short_processes}, "
+        f"segment_seconds={args.segment_seconds:g}, "
+        f"segment_tasks={args.segment_max_accepted_tasks} -> {root}",
         flush=True,
     )
     if args.dry_run:
@@ -696,6 +841,14 @@ def main(argv=None):
         raise FileExistsError(root / "dataset_merged.hdf5")
     root.mkdir(parents=True, exist_ok=True)
     (root / "shards").mkdir(exist_ok=True)
+    if args.supervised_short_processes and not args.segment_child:
+        return _supervise_short_processes(
+            raw_argv,
+            root,
+            args.segment_seconds,
+            args.segment_max_accepted_tasks,
+            args.segment_restart_delay_seconds,
+        )
 
     # Dynamic imports keep all native OMPL setup out of spawned actor modules.
     from scripts.generate_data.launch_generate_marvin_warehouse_bimanual import (
@@ -723,6 +876,7 @@ def main(argv=None):
     gpu_actor = None
     bullet_actor = None
     telemetry = None
+    coordinator = None
     try:
         context = mp.get_context("spawn")
         timeout = float(config.get("gpu_pipeline_actor_timeout_seconds", 600))
@@ -784,6 +938,10 @@ def main(argv=None):
             bullet_actor,
             _publish_checkpoint,
             spool,
+            segment_seconds=args.segment_seconds if args.segment_child else 0,
+            segment_max_accepted_tasks=(
+                args.segment_max_accepted_tasks if args.segment_child else 0
+            ),
         )
         generated, _ = coordinator.run()
         completed.extend(generated)
@@ -795,6 +953,20 @@ def main(argv=None):
             gpu_actor.close()
         if bullet_actor is not None:
             bullet_actor.close()
+    if args.segment_child and telemetry is not None:
+        telemetry_path = _write_pipeline_segment_telemetry(root, telemetry)
+        _append_supervisor_event(
+            root,
+            {
+                "event": "segment_telemetry_written",
+                "child_pid": os.getpid(),
+                "path": str(telemetry_path),
+                "stop_reason": coordinator.segment_stop_reason,
+                "session_accepted": coordinator.session_accepted,
+            },
+        )
+    if coordinator is not None and coordinator.segment_stop_reason is not None:
+        return SEGMENT_INCOMPLETE_EXIT_CODE
     merge_shards(root, completed, config)
     if telemetry is not None:
         _write_pipeline_telemetry(root, telemetry)
