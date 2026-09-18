@@ -419,6 +419,13 @@ cd "$MPD_ROOT"
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   scripts/isaaclab/export_replay_static_scene.py \
   --profile "$PROFILE" --output "$STATIC_SCENE"
+if [[ -n "$WORLD_SCENARIO_FILE" ]]; then
+  env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+    scripts/isaaclab/validate_todrawer_random_suite.py \
+    --scenario "$WORLD_SCENARIO_FILE" \
+    --static-scene "$STATIC_SCENE" \
+    --output "${OUTPUT_DIR}/scenario-preflight.json"
+fi
 
 printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
 printf '  runtime socket: %s\n' "$SOCKET_PATH"

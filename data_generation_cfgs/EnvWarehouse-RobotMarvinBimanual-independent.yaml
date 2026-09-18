@@ -30,7 +30,7 @@ gpu_rrt_goal_bias: 0.125
 gpu_collision_batch_size: 256
 # Stream the 375,482 exact fine-sphere self-collision pairs instead of
 # materializing every pair for all collision states at once.
-gpu_self_collision_pair_chunk_size: 32768
+gpu_self_collision_pair_chunk_size: 65636
 gpu_shortcut_attempts: 64
 gpu_workers: 1
 gpu_worker_lifetime_trajectories: 100

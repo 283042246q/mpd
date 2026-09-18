@@ -57,6 +57,28 @@ def test_summary_reports_phase_ratio_and_continuous_switches():
     assert sum(summary["phase_ratios"].values()) == pytest.approx(1.0)
 
 
+def test_summary_reports_world_relative_first_plan_timing_and_warmup():
+    plan = _plan("first", 2.0, 2.2, 8.0, 0.5, status="accepted")
+    plan["phase_timing"]["initial_world_warmup_observations"] = 5
+    plan["phase_timing"]["initial_world_warmup_age_s"] = 0.4
+    summary = summarize_manifest(
+        {
+            "world_start_unix_ns": 10_000_000_000,
+            "episode_start_unix_ns": 10_100_000_000,
+            "plans": [plan],
+            "events": [],
+        }
+    )
+
+    assert summary["world_start_unix_s"] == pytest.approx(10.0)
+    assert summary["first_planning_submit_from_world_s"] == pytest.approx(0.6)
+    assert summary["first_command_start_from_world_s"] == pytest.approx(2.1)
+    assert summary["first_bridge_start_from_world_s"] == pytest.approx(2.1)
+    assert summary["first_handoff_from_world_s"] == pytest.approx(2.3)
+    assert summary["initial_world_warmup_observations"] == 5
+    assert summary["initial_world_warmup_age_s"] == pytest.approx(0.4)
+
+
 def test_summary_exposes_command_gap_and_brake():
     summary = summarize_manifest(
         {

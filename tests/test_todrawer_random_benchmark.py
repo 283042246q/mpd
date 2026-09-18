@@ -6,26 +6,30 @@ import numpy as np
 import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
-    ARM_OPERATION_ARRIVAL_WINDOW_S,
+    BASE_CROSSINGS,
     CATEGORIES,
     DEFAULT_FACTORIZED_C_CHECKPOINT,
     DEFAULT_FACTORIZED_TAU_R_CHECKPOINT,
     DEFAULT_MODES,
     DIFFICULTIES,
+    GENERATION_REVISION,
+    MAX_GENERATION_RESAMPLE_ATTEMPTS,
     MODE_SPECS,
     PREDICTION_HORIZON_S,
     _existing_rows,
     _normalize_metrics,
     _paired_summary,
+    _parse_ros_log,
     _parser,
     _trajectory_segment_metrics,
     extract_run_metrics,
     generate_suite,
     main,
-    minimum_robot_base_clearance,
     object_position_at,
     write_reports,
 )
+from scripts.isaaclab.todrawer_scenario_validation import trajectory_clearances
+from scripts.isaaclab.validate_todrawer_random_suite import validate_suite
 
 
 def test_random_suite_is_deterministic_and_covers_categories():
@@ -34,18 +38,19 @@ def test_random_suite_is_deterministic_and_covers_categories():
 
     assert first == second
     assert [item["category"] for item in first["scenarios"]] == list(CATEGORIES)
-    assert first["schema_version"] == 3
+    assert first["schema_version"] == 4
+    assert first["generation_policy"]["revision"] == GENERATION_REVISION
     assert all(1 <= len(item["objects"]) <= 3 for item in first["scenarios"])
     assert all(item["schema"] == "mpd_todrawer_dynamic_scenario" for item in first["scenarios"])
+    assert all(item["schema_version"] == 3 for item in first["scenarios"])
+    assert "first_execution_accepted" not in json.dumps(first)
 
 
 def test_random_suite_uses_stratified_motion_and_structural_feasibility():
     suite = generate_suite(5 * len(CATEGORIES), 1234)
 
     assert suite["generation_policy"]["maximum_simultaneous_crossings"] == 2
-    assert suite["generation_policy"]["vertical_crossings_retained"] is True
     motion_types = set()
-    vertical_crossings = 0
     for scenario in suite["scenarios"]:
         assert scenario["difficulty"] in DIFFICULTIES
         objects = scenario["objects"]
@@ -53,37 +58,18 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
         assert len(corridor_ids) == len(set(corridor_ids))
         for item in objects:
             motion_types.add(item["motion_model"])
-            vertical_crossings += abs(item["direction"][2]) > 0.9
             assert 0.08 <= item["speed_m_s"] <= 0.32
+            assert item["anchor_id"] == item["corridor_id"]
+            assert item["schedule_role"]
             if item["motion_model"] == "constant_acceleration":
                 acceleration = item["motion"]["longitudinal_acceleration_m_s2"]
                 for elapsed in (0.0, 35.0):
-                    velocity = item["speed_m_s"] + acceleration * (
-                        elapsed - item["crossing_time_s"]
-                    )
+                    velocity = item["speed_m_s"] + acceleration * (elapsed - item["crossing_time_s"])
                     assert 0.04 - 1.0e-12 <= velocity <= 0.38 + 1.0e-12
             inflation = item["inflation"]
-            horizon_inflation = (
-                inflation["base_m"] + PREDICTION_HORIZON_S * inflation["horizon_rate_m_s"]
-            )
+            horizon_inflation = inflation["base_m"] + PREDICTION_HORIZON_S * inflation["horizon_rate_m_s"]
             assert horizon_inflation <= 0.23 + 1.0e-12
 
-        crossing_times = sorted(item["crossing_time_s"] for item in objects)
-        if scenario["category"] in {"simultaneous_multi", "curved_crossing"}:
-            assert len(objects) == 2
-            assert len(scenario["reserved_corridors"]) == 1
-        if scenario["category"] in {"staggered_multi", "inflated_dense"}:
-            assert all(
-                second - first >= 0.9
-                for first, second in zip(crossing_times, crossing_times[1:])
-            )
-        if scenario["category"] in {
-            "fast_crossing",
-            "accelerating_crossing",
-            "uncertain_motion",
-        } and len(objects) == 2:
-            assert crossing_times[1] - crossing_times[0] >= 1.30
-    assert vertical_crossings > 0
     assert motion_types == {
         "constant_velocity",
         "constant_acceleration",
@@ -95,13 +81,14 @@ def test_random_suite_uses_stratified_motion_and_structural_feasibility():
 
 def test_every_object_reaches_its_workspace_anchor_during_arm_motion():
     suite = generate_suite(10 * len(CATEGORIES), 9271)
-    lower, upper = ARM_OPERATION_ARRIVAL_WINDOW_S
 
     for scenario in suite["scenarios"]:
-        assert scenario["arm_operation_arrival_window_s"] == [lower, upper]
-        assert scenario["motion_clock"]["mode"] == "first_execution_accepted"
+        assert scenario["primary_crossing_window_s"] == [4.0, 6.5]
+        assert scenario["motion_clock"] == {
+            "mode": "first_robot_state_after_scenario_load",
+            "independent_of_execution": True,
+        }
         for item in scenario["objects"]:
-            assert lower <= item["crossing_time_s"] <= upper
             assert object_position_at(item, item["crossing_time_s"]) == pytest.approx(
                 item["anchor_position"], abs=1.0e-12
             )
@@ -114,15 +101,22 @@ def test_arrival_patterns_preserve_simultaneous_and_staggered_semantics():
         times = sorted(item["crossing_time_s"] for item in scenario["objects"])
         category = scenario["category"]
         if category in {"simultaneous_multi", "curved_crossing"}:
-            assert times[-1] - times[0] <= 0.36 + 1.0e-12
-        elif category in {"staggered_multi", "inflated_dense"}:
-            assert all(
-                second - first >= 0.9
-                for first, second in zip(times, times[1:])
-            )
+            assert times[-1] - times[0] <= 0.20 + 1.0e-12
+        elif category in {"staggered_multi", "accelerating_crossing"}:
+            assert all(0.70 <= second - first <= 1.10 for first, second in zip(times, times[1:]))
+        elif category == "inflated_dense":
+            assert all(0.74 <= second - first <= 1.06 for first, second in zip(times, times[1:]))
+        elif category == "fast_crossing" and len(times) == 2:
+            assert 0.60 <= times[1] - times[0] <= 0.90
+        elif category == "uncertain_motion":
+            assert 0.65 <= times[1] - times[0] <= 1.00
         elif category == "mixed_motion_multi":
-            assert times[1] - times[0] <= 0.32 + 1.0e-12
-            assert times[2] - times[1] >= 0.68
+            by_role = {role: [] for role in ("simultaneous", "delayed")}
+            for item in scenario["objects"]:
+                by_role[item["schedule_role"]].append(item["crossing_time_s"])
+            assert max(by_role["simultaneous"]) - min(by_role["simultaneous"]) <= 0.20
+            center = sum(by_role["simultaneous"]) / 2.0
+            assert 0.90 <= by_role["delayed"][0] - center <= 1.20
 
 
 def test_generated_objects_never_enter_robot_base_exclusion_volume():
@@ -130,9 +124,53 @@ def test_generated_objects_never_enter_robot_base_exclusion_volume():
 
     for scenario in suite["scenarios"]:
         for item in scenario["objects"]:
-            clearance = minimum_robot_base_clearance(item)
-            assert clearance > 0.0
-            assert item["minimum_robot_base_clearance_m"] == pytest.approx(clearance)
+            clearance = trajectory_clearances(item)
+            assert clearance.robot_base_m > 0.0
+            assert item["minimum_robot_base_clearance_m"] == pytest.approx(clearance.robot_base_m)
+            assert item["minimum_static_environment_clearance_m"] == pytest.approx(clearance.static_environment_m)
+
+
+def test_suite_contract_validator_and_anchor_jitter():
+    suite = generate_suite(10 * len(CATEGORIES), 2081)
+    validate_suite(suite)
+    anchors = {item["id"]: item["anchor"] for item in BASE_CROSSINGS}
+    for scenario in suite["scenarios"]:
+        if scenario["category"] == "safe_control":
+            assert {item["anchor_id"] for item in scenario["objects"]} <= {"S0", "S1"}
+            continue
+        limit = 0.020 if scenario["category"] == "inflated_dense" else 0.015
+        for item in scenario["objects"]:
+            assert all(
+                abs(actual - nominal) <= limit + 1e-12
+                for actual, nominal in zip(item["anchor_position"], anchors[item["anchor_id"]])
+            )
+
+
+def test_dense_and_mixed_motion_models_are_not_bound_to_temporal_role():
+    suite = generate_suite(100 * len(CATEGORIES), 3187)
+    roles = {category: {} for category in ("inflated_dense", "mixed_motion_multi")}
+    for scenario in suite["scenarios"]:
+        if scenario["category"] not in roles:
+            continue
+        for item in scenario["objects"]:
+            roles[scenario["category"]].setdefault(item["motion_model"], set()).add(item["schedule_role"])
+    assert all(len(values) >= 2 for category in roles.values() for values in category.values())
+
+
+def test_generation_has_bounded_resampling(monkeypatch):
+    import scripts.isaaclab.benchmark_todrawer_random as benchmark
+
+    calls = 0
+
+    def reject(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise ValueError("forced invalid geometry")
+
+    monkeypatch.setattr(benchmark, "validate_trajectory_clearance", reject)
+    with pytest.raises(RuntimeError, match="after 50 attempts"):
+        benchmark.generate_suite(1, 9)
+    assert calls == MAX_GENERATION_RESAMPLE_ATTEMPTS
 
 
 def test_same_category_arrivals_have_bounded_random_variation():
@@ -162,6 +200,24 @@ def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     assert MODE_SPECS["f3_tau_r"] == ("factorized", None)
     assert args.factorized_c_checkpoint == DEFAULT_FACTORIZED_C_CHECKPOINT
     assert args.factorized_tau_r_checkpoint == DEFAULT_FACTORIZED_TAU_R_CHECKPOINT
+
+
+def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
+    path = tmp_path / "ros.log"
+    path.write_text(
+        "scenario world clock started unix_ns=12300000000 mode=first_joint_state\n"
+        "initial dynamic-world warm-up complete and first planning submitted "
+        "unix_ns=12800000000 from_world_s=0.500000 observations=5 "
+        "track_age_s=0.400000\n",
+        encoding="utf-8",
+    )
+
+    parsed = _parse_ros_log(path)
+
+    assert parsed["world_start_unix_s"] == pytest.approx(12.3)
+    assert parsed["first_planning_submit_from_world_s"] == pytest.approx(0.5)
+    assert parsed["initial_world_warmup_observations"] == 5
+    assert parsed["initial_world_warmup_age_s"] == pytest.approx(0.4)
 
 
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
@@ -320,6 +376,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "规划轨迹时长 mean s" in report
     assert "Phase 5 / Factorized 梯度裁剪诊断" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
+    assert json.loads((tmp_path / "report" / "summary.json").read_text())["schema_version"] == 5
 
 
 def test_missing_manifest_dds_startup_is_infrastructure_failure(tmp_path):
@@ -471,21 +528,24 @@ def test_factorized_dry_run_writes_paired_commands_with_explicit_basis(tmp_path)
     output = tmp_path / "benchmark"
     selected = ("phase4", "phase4_aligned", "joint", "f1", "f2", "f3")
 
-    assert main(
-        [
-            "--output-dir",
-            str(output),
-            "--scenario-count",
-            "1",
-            "--repeats",
-            "1",
-            "--modes",
-            *selected,
-            "--factorized-timing-checkpoint",
-            str(checkpoint),
-            "--dry-run",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--output-dir",
+                str(output),
+                "--scenario-count",
+                "1",
+                "--repeats",
+                "1",
+                "--modes",
+                *selected,
+                "--factorized-timing-checkpoint",
+                str(checkpoint),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
 
     specs = {}
     for mode in selected:
@@ -514,39 +574,34 @@ def test_c_and_tau_r_factorized_modes_run_together_with_best_defaults(tmp_path):
         "f3_tau_r",
     )
 
-    assert main(
-        [
-            "--output-dir",
-            str(output),
-            "--scenario-count",
-            "1",
-            "--repeats",
-            "1",
-            "--modes",
-            *selected,
-            "--dry-run",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--output-dir",
+                str(output),
+                "--scenario-count",
+                "1",
+                "--repeats",
+                "1",
+                "--modes",
+                *selected,
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
 
     seeds = set()
     for mode in selected:
-        path = next(
-            (output / "runs" / "scenario-000" / "repeat-00" / mode).glob(
-                "*/run-spec.json"
-            )
-        )
+        path = next((output / "runs" / "scenario-000" / "repeat-00" / mode).glob("*/run-spec.json"))
         spec = json.loads(path.read_text(encoding="utf-8"))
         seeds.add(spec["planner_seed"])
         if mode.endswith("_c"):
             assert spec["factorized_representation"] == "c"
-            assert spec["factorized_timing_checkpoint"] == (
-                DEFAULT_FACTORIZED_C_CHECKPOINT.resolve().as_posix()
-            )
+            assert spec["factorized_timing_checkpoint"] == (DEFAULT_FACTORIZED_C_CHECKPOINT.resolve().as_posix())
         elif mode.endswith("_tau_r"):
             assert spec["factorized_representation"] == "tau_r"
-            assert spec["factorized_timing_checkpoint"] == (
-                DEFAULT_FACTORIZED_TAU_R_CHECKPOINT.resolve().as_posix()
-            )
+            assert spec["factorized_timing_checkpoint"] == (DEFAULT_FACTORIZED_TAU_R_CHECKPOINT.resolve().as_posix())
         if mode.startswith("f"):
             assert spec["factorized_method"] == mode.split("_")[0]
     assert seeds == {20260829}
@@ -558,9 +613,7 @@ def test_existing_rows_keep_historical_infrastructure_attempt_count(tmp_path):
     second = root / "attempt-002"
     first.mkdir(parents=True)
     second.mkdir()
-    (first / "ros-replan.log").write_text(
-        "rmw_create_node: failed to create domain\n", encoding="utf-8"
-    )
+    (first / "ros-replan.log").write_text("rmw_create_node: failed to create domain\n", encoding="utf-8")
     common = {"scenario_id": "scenario-000", "repeat": 0, "mode": "joint"}
     (first / "run-metrics.json").write_text(
         json.dumps(
@@ -609,3 +662,5 @@ def test_benchmark_rejects_invalid_explicit_ros_domain():
 
     assert result.returncode != 0
     assert "ros-domain-id must lie in [0, 232]" in result.stderr
+    GENERATION_REVISION,
+    MAX_GENERATION_RESAMPLE_ATTEMPTS,

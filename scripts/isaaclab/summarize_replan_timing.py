@@ -10,9 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-EXECUTED_STATUSES = frozenset(
-    ("accepted", "superseded", "interrupted_before_handoff", "interrupted")
-)
+EXECUTED_STATUSES = frozenset(("accepted", "superseded", "interrupted_before_handoff", "interrupted"))
 PENDING_STATUSES = frozenset(("scheduled",))
 TERMINAL_CLIP_TOLERANCE_S = 1.0e-3
 
@@ -34,9 +32,12 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     pending_plan_count = 0
     terminal_clipped_plan_count = 0
     duration_value = payload.get("duration_s")
-    manifest_duration = (
-        None if duration_value is None else _finite(duration_value, "manifest.duration_s")
-    )
+    manifest_duration = None if duration_value is None else _finite(duration_value, "manifest.duration_s")
+    episode_start_ns = payload.get("episode_start_unix_ns")
+    world_start_ns = payload.get("world_start_unix_ns")
+    world_offset_s = 0.0
+    if episode_start_ns is not None and world_start_ns is not None:
+        world_offset_s = (int(episode_start_ns) - int(world_start_ns)) * 1e-9
     for index, plan in enumerate(plans):
         if not isinstance(plan, dict):
             continue
@@ -118,6 +119,11 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
                     timing.get("controller_reference_jump_rad", 0.0),
                     f"plans[{index}].phase_timing.controller_reference_jump_rad",
                 ),
+                "initial_world_warmup_observations": int(timing.get("initial_world_warmup_observations", 0)),
+                "initial_world_warmup_age_s": _finite(
+                    timing.get("initial_world_warmup_age_s", 0.0),
+                    f"plans[{index}].phase_timing.initial_world_warmup_age_s",
+                ),
             }
         )
     executed.sort(key=lambda item: item["bridge_start_s"])
@@ -150,9 +156,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "latest_mpd_nominal_s": sum(item["latest_mpd_nominal_s"] for item in executed),
         "guarded_terminal_hold_s": sum(item["guarded_terminal_hold_s"] for item in executed),
     }
-    ratio_denominator = (
-        totals["old_continuation_s"] + totals["quintic_bridge_s"] + totals["latest_mpd_realized_s"]
-    )
+    ratio_denominator = totals["old_continuation_s"] + totals["quintic_bridge_s"] + totals["latest_mpd_realized_s"]
     ratios = {
         key: (value / ratio_denominator if ratio_denominator > 0.0 else 0.0)
         for key, value in (
@@ -162,10 +166,8 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         )
     }
     maximum_uncovered_gap = max((item["gap_s"] for item in gaps), default=0.0)
-    reference_jumps = [
-        {"plan_id": item["id"], "jump_rad": item["controller_reference_jump_rad"]}
-        for item in executed
-    ]
+    reference_jumps = [{"plan_id": item["id"], "jump_rad": item["controller_reference_jump_rad"]} for item in executed]
+    first = executed[0] if executed else None
     return {
         "executed_plan_count": len(executed),
         "pending_plan_count": pending_plan_count,
@@ -175,9 +177,7 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "maximum_uncovered_command_gap_s": maximum_uncovered_gap,
         "uncovered_command_gaps": gaps,
         "guarded_terminal_hold_s": totals["guarded_terminal_hold_s"],
-        "maximum_controller_reference_jump_rad": max(
-            (item["jump_rad"] for item in reference_jumps), default=0.0
-        ),
+        "maximum_controller_reference_jump_rad": max((item["jump_rad"] for item in reference_jumps), default=0.0),
         "controller_reference_jumps": reference_jumps,
         # Compatibility aliases for existing 50x5x5 result readers.
         "maximum_command_gap_s": maximum_uncovered_gap,
@@ -185,6 +185,15 @@ def summarize_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "phase_totals": totals,
         "phase_ratios": ratios,
         "plans": executed,
+        "world_start_unix_s": (None if world_start_ns is None else int(world_start_ns) * 1e-9),
+        "first_planning_submit_from_world_s": (
+            None if first is None else world_offset_s + first["planning_submitted_s"]
+        ),
+        "first_command_start_from_world_s": (None if first is None else world_offset_s + first["command_start_s"]),
+        "first_bridge_start_from_world_s": (None if first is None else world_offset_s + first["bridge_start_s"]),
+        "first_handoff_from_world_s": (None if first is None else world_offset_s + first["handoff_s"]),
+        "initial_world_warmup_observations": (None if first is None else first["initial_world_warmup_observations"]),
+        "initial_world_warmup_age_s": (None if first is None else first["initial_world_warmup_age_s"]),
     }
 
 
@@ -204,11 +213,7 @@ def main() -> int:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
-    maximum_gap_s = (
-        args.maximum_uncovered_gap_s
-        if args.maximum_uncovered_gap_s is not None
-        else args.maximum_gap_s
-    )
+    maximum_gap_s = args.maximum_uncovered_gap_s if args.maximum_uncovered_gap_s is not None else args.maximum_gap_s
     if maximum_gap_s is not None and summary["maximum_uncovered_command_gap_s"] > maximum_gap_s:
         return 2
     if args.require_no_brake and summary["brake_event_count"]:

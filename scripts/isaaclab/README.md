@@ -198,6 +198,29 @@ run this 29-to-21 checkpoint/config pair. Within each representation, F1/F2/F3 s
 checkpoint so the comparison isolates sampler design. The generic legacy modes
 `f1/f2/f3` remain available with `--factorized-timing-checkpoint`.
 
+To run the ten scenario categories sequentially and retry each category until it reaches
+the goal without an earlier controlled brake, use the until-success runner. Select one
+of `phase4`, `phase4_aligned`, `joint`, `f1_c`, `f2_c`, `f3_c`, `f1_tau_r`,
+`f2_tau_r`, or `f3_tau_r`; `f3_c` remains the default:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/run_todrawer_f3c_until_success.py \
+  --mode joint \
+  --output-dir scripts/isaaclab/logs/todrawer-until-success-joint \
+  --duration-sec 35 \
+  --plan-rate-hz 1.0 \
+  --skip-build
+```
+
+Planner and anchor seeds change deterministically on every retry. Every attempt with a
+replay manifest is rendered, whether it passes or fails, under
+`runs/<scenario>/<mode>/attempt-NNN/replay.mp4`. Only a passing attempt advances to the
+next category. Successful replay copies are indexed under `videos/<mode>/`, while exact
+scenario JSON, seeds, assessment, screenshot, and replay summary remain in the attempt
+directory. Infrastructure failures that produce no replay manifest are recorded but
+cannot be rendered.
+
 Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
 planner-seed repeats x 8 modes = 640 paired runs):
 

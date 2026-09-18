@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import math
@@ -20,14 +21,21 @@ from typing import Any
 import numpy as np
 
 from scripts.isaaclab.summarize_replan_timing import summarize_manifest
+from scripts.isaaclab.todrawer_scenario_validation import (
+    DESIGN_EPISODE_DURATION_S,
+    ROBOT_BASE_EXCLUSION_MAX,
+    ROBOT_BASE_EXCLUSION_MIN,
+    load_static_environment_boxes,
+    object_position_at,
+    validate_trajectory_clearance,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE = REPO_ROOT / "scripts" / "isaaclab" / "run_dynamic_demo_pipeline.sh"
 DEFAULT_AIRUNTIME_ROOT = Path("/home/eric/Projects/physical_ai_runtime")
 DEFAULT_FACTORIZED_C_CHECKPOINT = (
-    REPO_ROOT
-    / "data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt"
+    REPO_ROOT / "data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt"
 )
 DEFAULT_FACTORIZED_TAU_R_CHECKPOINT = (
     REPO_ROOT
@@ -68,8 +76,7 @@ DEFAULT_MODES = (
     "joint",
 )
 MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {
-    mode: ("--factorized-method", method)
-    for mode, (method, _representation) in FACTORIZED_MODE_SPECS.items()
+    mode: ("--factorized-method", method) for mode, (method, _representation) in FACTORIZED_MODE_SPECS.items()
 }
 CATEGORIES = (
     "single_crossing",
@@ -109,28 +116,61 @@ CATEGORY_DESCRIPTIONS = {
     "mixed_motion_multi": "匀加速、曲线、曲线变速三物体，两近同时一延后",
 }
 BASE_CROSSINGS = (
-    ((-0.68831415, -1.22503140, 0.65347225), (0.61993897, 0.78465003, 0.0)),
-    ((-0.02146948, 0.40876295, 0.46108561), (0.99858189, -0.05323737, 0.0)),
-    # Keep the vertical crossing in the arm workspace, but move its x/y line
-    # away from link0. The old (-0.20, -0.16) line swept large boxes through
-    # the fixed robot base and created collisions no arm motion could avoid.
-    ((-0.50, -0.30, 0.5), (0.0, 0.0, 1.0)),
+    {
+        "id": "A0",
+        "name": "early",
+        "anchor": (0.280, 0.060, 0.620),
+        "direction": (1.0, 0.0, 0.0),
+        "nominal_time_s": 4.35,
+    },
+    {
+        "id": "A1",
+        "name": "middle",
+        "anchor": (0.050, 0.120, 0.580),
+        "direction": (1.0, 0.0, 0.0),
+        "nominal_time_s": 5.25,
+    },
+    {
+        "id": "A2",
+        "name": "drawer_approach",
+        "anchor": (-0.180, 0.220, 0.560),
+        "direction": (1.0, 0.0, 0.0),
+        "nominal_time_s": 6.15,
+    },
 )
 SAFE_CONTROL_CROSSINGS = (
-    ((0.55, -0.40, 0.55), (0.0, 1.0, 0.0)),
-    ((0.45, -0.55, 0.70), (1.0, 0.0, 0.0)),
+    {
+        "id": "S0",
+        "name": "safe_lateral",
+        "anchor": (0.55, -0.40, 0.55),
+        "direction": (0.0, 1.0, 0.0),
+        "nominal_time_s": 5.20,
+    },
+    {
+        "id": "S1",
+        "name": "safe_front",
+        "anchor": (0.45, -0.55, 0.70),
+        "direction": (1.0, 0.0, 0.0),
+        "nominal_time_s": 5.20,
+    },
 )
 PREDICTION_HORIZON_S = 15.0
-DESIGN_EPISODE_DURATION_S = 35.0
-# Scenario time is triggered when the controller accepts its first trajectory.
-# Historical F3-C runs take at least 3.20 s from that event to the goal, so all
-# objects arrive inside this conservative common arm-motion window.
-ARM_OPERATION_ARRIVAL_WINDOW_S = (0.9, 3.0)
-GENERATION_REVISION = "execution-synced-workspace-arrival-v4"
-# Conservative AABB of FR3 link0.stl plus 3 cm clearance on every side.
-ROBOT_BASE_EXCLUSION_MIN = (-0.183, -0.125, -0.030)
-ROBOT_BASE_EXCLUSION_MAX = (0.101, 0.125, 0.171)
-BASE_SAFETY_SAMPLE_DT_S = 0.05
+SCENARIO_TIME_JITTER_S = 0.15
+OBJECT_TIME_JITTER_S = 0.10
+PRIMARY_CROSSING_WINDOW_S = (4.0, 6.5)
+MAX_GENERATION_RESAMPLE_ATTEMPTS = 50
+DEFAULT_ANCHOR_JITTER_M = 0.015
+DENSE_ANCHOR_JITTER_M = 0.020
+GENERATION_REVISION = "world-clock-robot-aware-crossings-v1"
+
+
+@dataclass(frozen=True)
+class CrossingAssignment:
+    corridor_index: int
+    crossing_time_s: float
+    role: str
+
+
 REPORT_FIELDS = (
     "scenario_id",
     "category",
@@ -147,6 +187,16 @@ REPORT_FIELDS = (
     "infrastructure_failure_attempts",
     "goal_reached",
     "goal_time_s",
+    "world_start_unix_s",
+    "first_planning_submit_from_world_s",
+    "first_command_start_from_world_s",
+    "first_bridge_start_from_world_s",
+    "first_handoff_from_world_s",
+    "initial_world_warmup_observations",
+    "initial_world_warmup_age_s",
+    "scheduled_crossing_time_min_s",
+    "scheduled_crossing_time_max_s",
+    "minimum_static_environment_clearance_m",
     "brake_count",
     "guard_dynamic_collision_rejections",
     "accepted_nonpositive_clearance_count",
@@ -240,121 +290,96 @@ def _bounded_acceleration(
     return rng.uniform(lower, upper)
 
 
-def object_position_at(item: dict[str, Any], elapsed_s: float) -> list[float]:
-    """Evaluate motion with the same equations as the ROS world publisher."""
-
-    relative_time = elapsed_s - float(item["crossing_time_s"])
-    motion = item["motion"]
-    motion_type = motion["type"]
-    displacement = float(item["speed_m_s"]) * relative_time
-    if motion_type == "constant_acceleration":
-        displacement += (
-            0.5
-            * float(motion["longitudinal_acceleration_m_s2"])
-            * relative_time**2
-        )
-    if motion_type in {"smooth_speed_variation", "curved_speed_variation"}:
-        amplitude = float(motion["speed_variation_amplitude_m_s"])
-        frequency = float(motion["speed_variation_angular_frequency_rad_s"])
-        phase = float(motion["speed_variation_phase_rad"])
-        displacement += amplitude / frequency * (
-            math.sin(frequency * relative_time + phase) - math.sin(phase)
-        )
-    position = [
-        anchor + direction * displacement
-        for anchor, direction in zip(item["anchor_position"], item["direction"])
-    ]
-    if motion_type in {"sinusoidal_curve", "curved_speed_variation"}:
-        amplitude = float(motion["lateral_amplitude_m"])
-        frequency = float(motion["lateral_angular_frequency_rad_s"])
-        phase = float(motion["lateral_phase_rad"])
-        lateral = amplitude * (
-            math.sin(frequency * relative_time + phase) - math.sin(phase)
-        )
-        position = [
-            value + direction * lateral
-            for value, direction in zip(position, motion["lateral_direction"])
-        ]
-    return position
-
-
-def minimum_robot_base_clearance(item: dict[str, Any]) -> float:
-    """Return sampled AABB clearance to link0 over the complete episode."""
-
-    size = item["local_sdf"]["size_xyz"]
-    padding = float(item["inflation"]["base_m"])
-    half_extent = [0.5 * float(value) + padding for value in size]
-    minimum = math.inf
-    sample_count = math.ceil(DESIGN_EPISODE_DURATION_S / BASE_SAFETY_SAMPLE_DT_S)
-    sample_times = [
-        DESIGN_EPISODE_DURATION_S * index / sample_count
-        for index in range(sample_count + 1)
-    ]
-    sample_times.append(float(item["crossing_time_s"]))
-    for elapsed_s in sample_times:
-        position = object_position_at(item, elapsed_s)
-        squared_clearance = 0.0
-        for axis in range(3):
-            object_min = position[axis] - half_extent[axis]
-            object_max = position[axis] + half_extent[axis]
-            gap = max(
-                ROBOT_BASE_EXCLUSION_MIN[axis] - object_max,
-                object_min - ROBOT_BASE_EXCLUSION_MAX[axis],
-                0.0,
-            )
-            squared_clearance += gap * gap
-        clearance = math.sqrt(squared_clearance)
-        if clearance <= 0.0:
-            return 0.0
-        minimum = min(minimum, clearance)
-    return minimum
-
-
 def _arrival_schedule(
     rng: random.Random,
     category: str,
     object_count: int,
-) -> list[float]:
-    """Create category-specific arrivals wholly inside the arm motion window."""
+) -> list[CrossingAssignment]:
+    """Return an explicit robot-phase corridor/time assignment."""
+
+    global_jitter = rng.uniform(-SCENARIO_TIME_JITTER_S, SCENARIO_TIME_JITTER_S)
+
+    def adjacent_pair() -> list[int]:
+        start = rng.randrange(2)
+        return [start, start + 1]
+
+    def nominal(indices: list[int], local_jitter: float = OBJECT_TIME_JITTER_S):
+        return [
+            CrossingAssignment(
+                corridor,
+                float(BASE_CROSSINGS[corridor]["nominal_time_s"])
+                + global_jitter
+                + rng.uniform(-local_jitter, local_jitter),
+                role,
+            )
+            for corridor, role in zip(
+                indices,
+                ("single",) if len(indices) == 1 else ("earliest", "middle", "latest")[: len(indices)],
+            )
+        ]
 
     if category == "single_crossing":
-        times = [rng.uniform(1.5, 2.4)]
-    elif category in {"staggered_multi", "inflated_dense"}:
-        if object_count == 2:
-            start, spacing = rng.uniform(1.00, 1.15), rng.uniform(1.30, 1.50)
-        else:
-            start, spacing = rng.uniform(0.93, 0.97), rng.uniform(0.95, 0.99)
-        times = [
-            start + spacing * index + rng.uniform(-0.015, 0.015)
-            for index in range(object_count)
-        ]
+        assignments = nominal([rng.randrange(3)])
+    elif category in {"staggered_multi", "accelerating_crossing"}:
+        assignments = nominal(adjacent_pair() if object_count == 2 else [0, 1, 2])
     elif category in {"simultaneous_multi", "curved_crossing"}:
-        center = rng.uniform(1.7, 2.2)
-        times = [center + rng.uniform(-0.15, 0.15) for _ in range(object_count)]
-    elif category in {
-        "fast_crossing",
-        "accelerating_crossing",
-        "uncertain_motion",
-    }:
-        if object_count == 1:
-            times = [rng.uniform(1.5, 2.4)]
-        else:
-            start = rng.uniform(1.00, 1.20)
-            times = [start, start + rng.uniform(1.30, 1.55)]
-    elif category == "safe_control":
-        center = rng.uniform(1.7, 2.2)
-        times = [center + rng.uniform(-0.20, 0.20) for _ in range(object_count)]
-    else:
-        center = rng.uniform(1.4, 1.7)
-        times = [
-            center + rng.uniform(-0.12, 0.12),
-            center + rng.uniform(-0.12, 0.12),
-            center + rng.uniform(1.10, 1.20),
+        pair = adjacent_pair()
+        center = (4.80 if pair[0] == 0 else 5.70) + global_jitter
+        assignments = [
+            CrossingAssignment(corridor, center + rng.uniform(-0.10, 0.10), "simultaneous") for corridor in pair
         ]
-    lower, upper = ARM_OPERATION_ARRIVAL_WINDOW_S
-    if len(times) != object_count or any(not lower <= value <= upper for value in times):
-        raise RuntimeError(f"invalid {category} arrival schedule: {times}")
-    return times
+    elif category == "fast_crossing":
+        if object_count == 1:
+            assignments = nominal([rng.randrange(3)])
+        else:
+            pair = adjacent_pair()
+            first = float(BASE_CROSSINGS[pair[0]]["nominal_time_s"]) + global_jitter + rng.uniform(-0.075, 0.075)
+            assignments = [
+                CrossingAssignment(pair[0], first, "earliest"),
+                CrossingAssignment(pair[1], first + rng.uniform(0.60, 0.90), "latest"),
+            ]
+    elif category == "inflated_dense":
+        for _ in range(MAX_GENERATION_RESAMPLE_ATTEMPTS):
+            assignments = [
+                CrossingAssignment(
+                    index,
+                    float(BASE_CROSSINGS[index]["nominal_time_s"]) + rng.uniform(-0.18, 0.18),
+                    role,
+                )
+                for index, role in enumerate(("earliest", "middle", "latest"))
+            ]
+            if all(0.74 <= b.crossing_time_s - a.crossing_time_s <= 1.06 for a, b in zip(assignments, assignments[1:])):
+                break
+        else:
+            raise RuntimeError("failed to sample inflated_dense timing contract")
+    elif category == "safe_control":
+        center = rng.uniform(4.60, 5.80)
+        indices = rng.sample(range(2), object_count)
+        assignments = [
+            CrossingAssignment(index + len(BASE_CROSSINGS), center + rng.uniform(-0.20, 0.20), "control")
+            for index in indices
+        ]
+    elif category == "uncertain_motion":
+        pair = adjacent_pair()
+        first = float(BASE_CROSSINGS[pair[0]]["nominal_time_s"]) + global_jitter + rng.uniform(-0.0875, 0.0875)
+        assignments = [
+            CrossingAssignment(pair[0], first, "earliest"),
+            CrossingAssignment(pair[1], first + rng.uniform(0.65, 1.00), "latest"),
+        ]
+    elif category == "mixed_motion_multi":
+        center = 4.80 + global_jitter
+        near_times = [center + rng.uniform(-0.10, 0.10) for _ in range(2)]
+        realized_center = sum(near_times) / len(near_times)
+        assignments = [
+            CrossingAssignment(0, near_times[0], "simultaneous"),
+            CrossingAssignment(1, near_times[1], "simultaneous"),
+            CrossingAssignment(2, realized_center + rng.uniform(0.90, 1.20), "delayed"),
+        ]
+    else:
+        raise ValueError(f"unsupported category {category!r}")
+    if len(assignments) != object_count:
+        raise RuntimeError(f"invalid {category} assignment count")
+    return assignments
 
 
 def _random_object(
@@ -365,11 +390,18 @@ def _random_object(
     corridor_index: int,
     category: str,
     crossing_time_s: float,
+    schedule_role: str,
     motion_type: str,
 ) -> dict[str, Any]:
     crossing_specs = BASE_CROSSINGS + SAFE_CONTROL_CROSSINGS
-    anchor_base, direction_base = crossing_specs[corridor_index]
-    anchor_jitter = 0.015 if category != "inflated_dense" else 0.02
+    crossing_spec = crossing_specs[corridor_index]
+    anchor_base = crossing_spec["anchor"]
+    direction_base = crossing_spec["direction"]
+    anchor_jitter = (
+        DENSE_ANCHOR_JITTER_M
+        if category == "inflated_dense"
+        else DEFAULT_ANCHOR_JITTER_M
+    )
     anchor = [value + rng.uniform(-anchor_jitter, anchor_jitter) for value in anchor_base]
     direction = _rotate_xy(direction_base, rng.uniform(-0.18, 0.18))
     if rng.random() < 0.5:
@@ -430,7 +462,11 @@ def _random_object(
         )
     item = {
         "id": f"random-{scenario_index:03d}-{object_index:02d}",
-        "corridor_id": f"path-crossing-{corridor_index}",
+        "corridor_id": str(crossing_spec["id"]),
+        "anchor_id": str(crossing_spec["id"]),
+        "anchor_name": str(crossing_spec["name"]),
+        "schedule_role": schedule_role,
+        "nominal_crossing_time_s": float(crossing_spec["nominal_time_s"]),
         "motion_model": motion_type,
         "motion": motion,
         "local_sdf": {"type": "box", "size_xyz": size},
@@ -456,12 +492,6 @@ def _random_object(
             "horizon_rate_m_s": horizon_rate,
         },
     }
-    base_clearance = minimum_robot_base_clearance(item)
-    if base_clearance <= 0.0:
-        raise RuntimeError(
-            f"generated object {item['id']} intersects the robot-base exclusion volume"
-        )
-    item["minimum_robot_base_clearance_m"] = base_clearance
     return item
 
 
@@ -469,6 +499,7 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
     if count < 1:
         raise ValueError("scenario count must be positive")
     rng = random.Random(seed)
+    static_boxes = load_static_environment_boxes()
     scenarios = []
     for index in range(count):
         category = CATEGORIES[index % len(CATEGORIES)]
@@ -478,14 +509,12 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
             feasibility_design = "one occupied crossing corridor"
         elif category == "staggered_multi":
             object_count = rng.randint(2, 3)
-            motion_types = [
-                rng.choice(("constant_velocity", "constant_acceleration"))
-                for _ in range(object_count)
-            ]
+            motion_types = [rng.choice(("constant_velocity", "constant_acceleration")) for _ in range(object_count)]
             feasibility_design = "distinct corridors with separated crossing windows"
         elif category == "simultaneous_multi":
             object_count = 2
             motion_types = ["constant_acceleration", "sinusoidal_curve"]
+            rng.shuffle(motion_types)
             feasibility_design = "two occupied corridors with one reserved corridor"
         elif category == "fast_crossing":
             object_count = rng.randint(1, 2)
@@ -498,6 +527,7 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
                 "constant_acceleration",
                 "curved_speed_variation",
             ]
+            rng.shuffle(motion_types)
             feasibility_design = "three uncertain objects crossing one at a time"
         elif category == "safe_control":
             object_count = rng.randint(1, 2)
@@ -522,57 +552,72 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
                 "sinusoidal_curve",
                 "curved_speed_variation",
             ]
+            rng.shuffle(motion_types)
             feasibility_design = "two mixed motions cross together and a third follows later"
-        crossing_times = _arrival_schedule(rng, category, object_count)
-        if category == "safe_control":
-            first_control = len(BASE_CROSSINGS)
-            corridor_indices = rng.sample(
-                range(first_control, first_control + len(SAFE_CONTROL_CROSSINGS)),
-                object_count,
-            )
-        else:
-            corridor_indices = rng.sample(range(len(BASE_CROSSINGS)), object_count)
-        objects = [
-            _random_object(
-                rng,
-                scenario_index=index,
-                object_index=object_index,
-                corridor_index=corridor_indices[object_index],
-                category=category,
-                crossing_time_s=crossing_times[object_index],
-                motion_type=motion_types[object_index],
-            )
-            for object_index in range(object_count)
-        ]
+        assignments = _arrival_schedule(rng, category, object_count)
+        objects = []
+        for object_index, (assignment, motion_type) in enumerate(zip(assignments, motion_types)):
+            last_error: Exception | None = None
+            for attempt in range(1, MAX_GENERATION_RESAMPLE_ATTEMPTS + 1):
+                item = _random_object(
+                    rng,
+                    scenario_index=index,
+                    object_index=object_index,
+                    corridor_index=assignment.corridor_index,
+                    category=category,
+                    crossing_time_s=assignment.crossing_time_s,
+                    schedule_role=assignment.role,
+                    motion_type=motion_type,
+                )
+                try:
+                    clearance = validate_trajectory_clearance(item, static_boxes=static_boxes)
+                except ValueError as error:
+                    last_error = error
+                    continue
+                item["minimum_robot_base_clearance_m"] = clearance.robot_base_m
+                item["minimum_static_environment_clearance_m"] = clearance.static_environment_m
+                item["generation_resample_attempts"] = attempt
+                objects.append(item)
+                break
+            else:
+                raise RuntimeError(
+                    f"failed to generate {category} object {object_index} after "
+                    f"{MAX_GENERATION_RESAMPLE_ATTEMPTS} attempts: {last_error}"
+                )
+        corridor_indices = [assignment.corridor_index for assignment in assignments]
+        primary_corridors = set(range(len(BASE_CROSSINGS)))
         scenarios.append(
             {
                 "schema": "mpd_todrawer_dynamic_scenario",
-                "schema_version": 2,
+                "schema_version": 3,
                 "id": f"scenario-{index:03d}",
                 "category": category,
                 "difficulty": DIFFICULTY_BY_CATEGORY[category],
                 "frame_id": "fr3_link0",
                 "feasibility_design": feasibility_design,
                 "motion_clock": {
-                    "mode": "first_execution_accepted",
-                    "trigger_topics": [
-                        "/mpd_dynamic_replanner/execution_started",
-                        "/mpd_space_time_replanner/execution_started",
-                    ],
+                    "mode": "first_robot_state_after_scenario_load",
+                    "independent_of_execution": True,
                 },
-                "arm_operation_arrival_window_s": list(
-                    ARM_OPERATION_ARRIVAL_WINDOW_S
-                ),
+                "primary_crossing_window_s": list(PRIMARY_CROSSING_WINDOW_S),
                 "reserved_corridors": [
-                    f"path-crossing-{corridor}"
-                    for corridor in sorted(set(range(len(BASE_CROSSINGS))) - set(corridor_indices))
+                    str(BASE_CROSSINGS[corridor]["id"])
+                    for corridor in sorted(primary_corridors - set(corridor_indices))
+                ],
+                "anchor_schedule": [
+                    {
+                        "anchor_id": objects[object_index]["anchor_id"],
+                        "schedule_role": assignment.role,
+                        "crossing_time_s": assignment.crossing_time_s,
+                    }
+                    for object_index, assignment in enumerate(assignments)
                 ],
                 "objects": objects,
             }
         )
     return {
         "schema": "mpd_todrawer_random_suite",
-        "schema_version": 3,
+        "schema_version": 4,
         "suite_seed": seed,
         "scenario_count": count,
         "categories": list(CATEGORIES),
@@ -585,7 +630,10 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
         },
         "generation_policy": {
             "revision": GENERATION_REVISION,
-            "motion_clock": "first_execution_accepted",
+            "motion_clock": {
+                "mode": "first_robot_state_after_scenario_load",
+                "independent_of_execution": True,
+            },
             "motion_models": [
                 "constant_velocity",
                 "constant_acceleration",
@@ -593,10 +641,16 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
                 "smooth_speed_variation",
                 "curved_speed_variation",
             ],
-            "vertical_crossings_retained": True,
-            "arm_operation_arrival_window_s": list(
-                ARM_OPERATION_ARRIVAL_WINDOW_S
-            ),
+            "primary_crossing_window_s": list(PRIMARY_CROSSING_WINDOW_S),
+            "scenario_time_jitter_s": SCENARIO_TIME_JITTER_S,
+            "object_time_jitter_s": OBJECT_TIME_JITTER_S,
+            "anchor_jitter_per_axis_half_range_m": {
+                "default": DEFAULT_ANCHOR_JITTER_M,
+                "inflated_dense": DENSE_ANCHOR_JITTER_M,
+            },
+            "static_environment_intersection_policy": "allowed_and_reported",
+            "robot_base_intersection_policy": "hard_reject",
+            "maximum_generation_resample_attempts": MAX_GENERATION_RESAMPLE_ATTEMPTS,
             "robot_base_exclusion_aabb": {
                 "minimum_xyz": list(ROBOT_BASE_EXCLUSION_MIN),
                 "maximum_xyz": list(ROBOT_BASE_EXCLUSION_MAX),
@@ -619,8 +673,7 @@ def materialize_suite(output_dir: Path, count: int, seed: int) -> dict[str, Any]
         if (
             suite.get("suite_seed") != seed
             or suite.get("scenario_count") != count
-            or suite.get("generation_policy", {}).get("revision")
-            != GENERATION_REVISION
+            or suite.get("generation_policy", {}).get("revision") != GENERATION_REVISION
         ):
             raise ValueError(
                 "existing suite.json does not match the requested seed/count/generation revision; "
@@ -659,9 +712,7 @@ def _describe(values: list[Any]) -> dict[str, Any]:
     }
 
 
-def _trajectory_segment_metrics(
-    manifest_path: Path, plans: list[dict[str, Any]]
-) -> tuple[float, float]:
+def _trajectory_segment_metrics(manifest_path: Path, plans: list[dict[str, Any]]) -> tuple[float, float]:
     total_l2 = 0.0
     total_l1 = 0.0
     for plan in plans:
@@ -682,10 +733,7 @@ def _trajectory_segment_metrics(
         interior = (times > relative_start) & (times < relative_end)
         sample_times = np.concatenate(([relative_start], times[interior], [relative_end]))
         samples = np.column_stack(
-            [
-                np.interp(sample_times, times, positions[:, joint])
-                for joint in range(positions.shape[1])
-            ]
+            [np.interp(sample_times, times, positions[:, joint]) for joint in range(positions.shape[1])]
         )
         delta = np.diff(samples, axis=0)
         total_l2 += float(np.linalg.norm(delta, axis=1).sum())
@@ -715,12 +763,30 @@ def _parse_ros_log(path: Path) -> dict[str, Any]:
     reasons: dict[str, int] = {}
     for reason in re.findall(r'"reason":\s*"([^"]+)"', text):
         reasons[reason] = reasons.get(reason, 0) + 1
+    world_start_match = re.search(r"scenario world clock started unix_ns=(\d+)", text)
+    initial_submit_match = re.search(
+        r"initial dynamic-world warm-up complete and first planning submitted .*?"
+        r"from_world_s=([0-9.]+) observations=(\d+) track_age_s=([0-9.]+)",
+        text,
+    )
     return {
         "goal_reached": goal_match is not None,
         "goal_time_s": goal_time,
         "candidate_rejection_reasons": reasons,
         "no_valid_trajectory_count": text.count("NoValidTrajectoryError"),
         "jtc_error_count": len(re.findall(r"JTC dynamic plan .* entered", text)),
+        "world_start_unix_s": (
+            None if world_start_match is None else int(world_start_match.group(1)) * 1e-9
+        ),
+        "first_planning_submit_from_world_s": (
+            None if initial_submit_match is None else float(initial_submit_match.group(1))
+        ),
+        "initial_world_warmup_observations": (
+            None if initial_submit_match is None else int(initial_submit_match.group(2))
+        ),
+        "initial_world_warmup_age_s": (
+            None if initial_submit_match is None else float(initial_submit_match.group(3))
+        ),
     }
 
 
@@ -734,9 +800,7 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(metrics)
     attempt_value = normalized.get("attempt_dir")
     attempt_dir = Path(str(attempt_value)) if attempt_value else None
-    manifest_path = (
-        attempt_dir / "episode" / "replay-manifest.json" if attempt_dir is not None else None
-    )
+    manifest_path = attempt_dir / "episode" / "replay-manifest.json" if attempt_dir is not None else None
     manifest_available = bool(manifest_path is not None and manifest_path.is_file())
     normalized["manifest_available"] = manifest_available
     normalized.setdefault("pipeline_revalidated", False)
@@ -750,9 +814,7 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         normalized["failure_class"] = "dds_startup"
         return normalized
 
-    maximum_gap = normalized.get(
-        "maximum_uncovered_command_gap_s", normalized.get("maximum_command_gap_s")
-    )
+    maximum_gap = normalized.get("maximum_uncovered_command_gap_s", normalized.get("maximum_command_gap_s"))
     if maximum_gap is not None and float(maximum_gap) > 0.05:
         normalized["failure_class"] = "command_continuity"
         return normalized
@@ -770,9 +832,7 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         normalized["maximum_uncovered_command_gap_s"] = timing["maximum_uncovered_command_gap_s"]
         normalized["maximum_command_gap_s"] = timing["maximum_command_gap_s"]
         normalized["guarded_terminal_hold_s"] = timing["guarded_terminal_hold_s"]
-        normalized["maximum_controller_reference_jump_rad"] = timing[
-            "maximum_controller_reference_jump_rad"
-        ]
+        normalized["maximum_controller_reference_jump_rad"] = timing["maximum_controller_reference_jump_rad"]
         normalized["terminal_clipped_plan_count"] = timing["terminal_clipped_plan_count"]
         if timing["maximum_uncovered_command_gap_s"] <= 0.05:
             normalized["pipeline_completed"] = True
@@ -783,15 +843,11 @@ def _normalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         normalized["failure_class"] = "command_continuity"
         return normalized
 
-    normalized["failure_class"] = (
-        "pipeline_after_manifest" if manifest_available else "pipeline_startup"
-    )
+    normalized["failure_class"] = "pipeline_after_manifest" if manifest_available else "pipeline_startup"
     return normalized
 
 
-def extract_run_metrics(
-    attempt_dir: Path, run_spec: dict[str, Any], returncode: int
-) -> dict[str, Any]:
+def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode: int) -> dict[str, Any]:
     manifest_path = attempt_dir / "episode" / "replay-manifest.json"
     metrics: dict[str, Any] = {
         **run_spec,
@@ -809,6 +865,13 @@ def extract_run_metrics(
     events = manifest.get("events", [])
     timing_path = attempt_dir / "to_drawer-replan-timing.json"
     timing = _read_json(timing_path) if timing_path.is_file() else {}
+    scenario_path = Path(str(run_spec.get("scenario_file", "")))
+    scenario_payload = _read_json(scenario_path) if scenario_path.is_file() else {}
+    scenario_objects = scenario_payload.get("objects", [])
+    scheduled_crossings = _finite([item.get("crossing_time_s") for item in scenario_objects])
+    scenario_static_clearances = _finite(
+        [item.get("minimum_static_environment_clearance_m") for item in scenario_objects]
+    )
     ros = _parse_ros_log(attempt_dir / "ros-replan.log")
     joint_l2, joint_l1 = _trajectory_segment_metrics(manifest_path, executed)
     selected_clearance = _selected_clearance(executed)
@@ -821,23 +884,13 @@ def extract_run_metrics(
             continue
         if payload.get("status") == "success":
             result_payloads.append(payload)
-    inference_times = _finite(
-        [payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads]
-    )
-    guidance_payloads = [
-        payload.get("space_time_guidance", {}) for payload in result_payloads
-    ]
+    inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
+    guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
     guidance_steps = [
-        step
-        for guidance in guidance_payloads
-        for step in guidance.get("steps", [])
-        if isinstance(step, dict)
+        step for guidance in guidance_payloads for step in guidance.get("steps", []) if isinstance(step, dict)
     ]
     gradient_caps = _finite(
-        [
-            guidance.get("settings", {}).get("spatial_dynamic_max_grad_norm")
-            for guidance in guidance_payloads
-        ]
+        [guidance.get("settings", {}).get("spatial_dynamic_max_grad_norm") for guidance in guidance_payloads]
     )
     factorized_payloads = [
         payload.get("factorized", {})
@@ -863,38 +916,48 @@ def extract_run_metrics(
         values = _finite([step.get(name) for step in guidance_steps])
         return float(np.mean(values)) if values else None
 
-    planned_durations = _finite(
-        [plan.get("phase_timing", {}).get("mpd_suffix_s") for plan in executed]
-    )
+    planned_durations = _finite([plan.get("phase_timing", {}).get("mpd_suffix_s") for plan in executed])
     hard_clearance = _finite([item.get("hard_minimum_clearance_m") for item in selected_clearance])
-    common_clearance = _finite(
-        [item.get("common_window_minimum_clearance_m") for item in selected_clearance]
-    )
+    common_clearance = _finite([item.get("common_window_minimum_clearance_m") for item in selected_clearance])
     dense_environment = _finite(
-        [
-            payload.get("trajectory", {}).get("minimum_environment_clearance_m")
-            for payload in result_payloads
-        ]
+        [payload.get("trajectory", {}).get("minimum_environment_clearance_m") for payload in result_payloads]
     )
-    dense_self = _finite(
-        [
-            payload.get("trajectory", {}).get("minimum_self_clearance_m")
-            for payload in result_payloads
-        ]
-    )
+    dense_self = _finite([payload.get("trajectory", {}).get("minimum_self_clearance_m") for payload in result_payloads])
     metrics.update(
         goal_reached=ros["goal_reached"],
         goal_time_s=ros["goal_time_s"],
-        brake_count=sum(event.get("type") == "brake" for event in events),
-        guard_dynamic_collision_rejections=ros["candidate_rejection_reasons"].get(
-            "dynamic_collision", 0
+        world_start_unix_s=(
+            ros["world_start_unix_s"]
+            if ros["world_start_unix_s"] is not None
+            else timing.get("world_start_unix_s")
         ),
+        first_planning_submit_from_world_s=(
+            ros["first_planning_submit_from_world_s"]
+            if ros["first_planning_submit_from_world_s"] is not None
+            else timing.get("first_planning_submit_from_world_s")
+        ),
+        first_command_start_from_world_s=timing.get("first_command_start_from_world_s"),
+        first_bridge_start_from_world_s=timing.get("first_bridge_start_from_world_s"),
+        first_handoff_from_world_s=timing.get("first_handoff_from_world_s"),
+        initial_world_warmup_observations=(
+            ros["initial_world_warmup_observations"]
+            if ros["initial_world_warmup_observations"] is not None
+            else timing.get("initial_world_warmup_observations")
+        ),
+        initial_world_warmup_age_s=(
+            ros["initial_world_warmup_age_s"]
+            if ros["initial_world_warmup_age_s"] is not None
+            else timing.get("initial_world_warmup_age_s")
+        ),
+        scheduled_crossing_time_min_s=min(scheduled_crossings, default=None),
+        scheduled_crossing_time_max_s=max(scheduled_crossings, default=None),
+        minimum_static_environment_clearance_m=min(scenario_static_clearances, default=None),
+        brake_count=sum(event.get("type") == "brake" for event in events),
+        guard_dynamic_collision_rejections=ros["candidate_rejection_reasons"].get("dynamic_collision", 0),
         candidate_rejection_reasons=ros["candidate_rejection_reasons"],
         accepted_nonpositive_clearance_count=sum(value <= 0.0 for value in hard_clearance),
         episode_duration_s=float(manifest.get("duration_s", 0.0)),
-        execution_duration_s=sum(
-            float(plan["active_until_s"]) - float(plan["active_from_s"]) for plan in executed
-        ),
+        execution_duration_s=sum(float(plan["active_until_s"]) - float(plan["active_from_s"]) for plan in executed),
         executed_plan_count=len(executed),
         plan_record_count=len(plans),
         joint_l2_path_rad=joint_l2,
@@ -903,64 +966,38 @@ def extract_run_metrics(
         hard_minimum_clearance_m=min(hard_clearance, default=None),
         common_window_minimum_clearance_m=min(common_clearance, default=None),
         clearance_mean_cost=(
-            float(
-                np.mean(_finite([item.get("clearance_mean_cost") for item in selected_clearance]))
-            )
+            float(np.mean(_finite([item.get("clearance_mean_cost") for item in selected_clearance])))
             if _finite([item.get("clearance_mean_cost") for item in selected_clearance])
             else None
         ),
         clearance_cvar_cost=(
-            float(
-                np.mean(_finite([item.get("clearance_cvar_cost") for item in selected_clearance]))
-            )
+            float(np.mean(_finite([item.get("clearance_cvar_cost") for item in selected_clearance])))
             if _finite([item.get("clearance_cvar_cost") for item in selected_clearance])
             else None
         ),
         dense_environment_clearance_m=min(dense_environment, default=None),
         dense_self_clearance_m=min(dense_self, default=None),
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
-        inference_total_p95_s=(
-            float(np.percentile(inference_times, 95)) if inference_times else None
-        ),
+        inference_total_p95_s=(float(np.percentile(inference_times, 95)) if inference_times else None),
         factorized_representation=common_factorized_value("representation"),
-        factorized_timing_checkpoint_step=common_factorized_value(
-            "timing_checkpoint_step"
-        ),
-        factorized_timing_checkpoint_sha256=common_factorized_value(
-            "timing_checkpoint_sha256"
-        ),
-        factorized_spatial_basis_adapted=common_factorized_value(
-            "spatial_basis_adapted"
-        ),
-        factorized_space_nfe_mean=(
-            float(np.mean(factorized_space_nfe)) if factorized_space_nfe else None
-        ),
-        factorized_timing_nfe_mean=(
-            float(np.mean(factorized_timing_nfe)) if factorized_timing_nfe else None
-        ),
-        spatial_dynamic_grad_cap=(
-            float(np.mean(gradient_caps)) if gradient_caps else None
-        ),
+        factorized_timing_checkpoint_step=common_factorized_value("timing_checkpoint_step"),
+        factorized_timing_checkpoint_sha256=common_factorized_value("timing_checkpoint_sha256"),
+        factorized_spatial_basis_adapted=common_factorized_value("spatial_basis_adapted"),
+        factorized_space_nfe_mean=(float(np.mean(factorized_space_nfe)) if factorized_space_nfe else None),
+        factorized_timing_nfe_mean=(float(np.mean(factorized_timing_nfe)) if factorized_timing_nfe else None),
+        spatial_dynamic_grad_cap=(float(np.mean(gradient_caps)) if gradient_caps else None),
         spatial_clip_ratio=guidance_mean("spatial_clip_ratio"),
         timing_clip_ratio=guidance_mean("timing_clip_ratio"),
         spatial_gradient_norm_mean=guidance_mean("spatial_gradient_norm_mean"),
-        static_dynamic_gradient_cosine_mean=guidance_mean(
-            "static_dynamic_gradient_cosine_mean"
-        ),
-        static_dynamic_gradient_conflict_ratio=guidance_mean(
-            "static_dynamic_gradient_conflict_ratio"
-        ),
-        static_dynamic_gradient_cosine_valid_ratio=guidance_mean(
-            "static_dynamic_gradient_cosine_valid_ratio"
-        ),
+        static_dynamic_gradient_cosine_mean=guidance_mean("static_dynamic_gradient_cosine_mean"),
+        static_dynamic_gradient_conflict_ratio=guidance_mean("static_dynamic_gradient_conflict_ratio"),
+        static_dynamic_gradient_cosine_valid_ratio=guidance_mean("static_dynamic_gradient_cosine_valid_ratio"),
         maximum_uncovered_command_gap_s=timing.get(
             "maximum_uncovered_command_gap_s", timing.get("maximum_command_gap_s")
         ),
         guarded_terminal_hold_s=timing.get("guarded_terminal_hold_s"),
         maximum_controller_reference_jump_rad=timing.get("maximum_controller_reference_jump_rad"),
-        maximum_command_gap_s=timing.get(
-            "maximum_command_gap_s", timing.get("maximum_uncovered_command_gap_s")
-        ),
+        maximum_command_gap_s=timing.get("maximum_command_gap_s", timing.get("maximum_uncovered_command_gap_s")),
         no_valid_trajectory_count=ros["no_valid_trajectory_count"],
         jtc_error_count=ros["jtc_error_count"],
     )
@@ -973,15 +1010,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "runs": len(rows),
         "completed": sum(bool(row.get("pipeline_completed")) for row in rows),
         "manifest_runs": sum(bool(row.get("manifest_available")) for row in rows),
-        "infrastructure_failure_runs": sum(
-            int(row.get("infrastructure_failure_attempts") or 0) > 0 for row in rows
-        ),
-        "infrastructure_failure_attempts": sum(
-            int(row.get("infrastructure_failure_attempts") or 0) for row in rows
-        ),
-        "unresolved_infrastructure_failures": sum(
-            row.get("failure_class") == "dds_startup" for row in rows
-        ),
+        "infrastructure_failure_runs": sum(int(row.get("infrastructure_failure_attempts") or 0) > 0 for row in rows),
+        "infrastructure_failure_attempts": sum(int(row.get("infrastructure_failure_attempts") or 0) for row in rows),
+        "unresolved_infrastructure_failures": sum(row.get("failure_class") == "dds_startup" for row in rows),
         "goal_reached": sum(bool(row.get("goal_reached")) for row in rows),
         "brake_runs": sum(int(row.get("brake_count") or 0) > 0 for row in rows),
         "brake_events": sum(int(row.get("brake_count") or 0) for row in rows),
@@ -1001,39 +1032,36 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             int(row.get("accepted_nonpositive_clearance_count") or 0) for row in rows
         ),
         "goal_time_s": _describe([row.get("goal_time_s") for row in rows]),
+        "first_planning_submit_from_world_s": _describe(
+            [row.get("first_planning_submit_from_world_s") for row in rows]
+        ),
+        "first_command_start_from_world_s": _describe([row.get("first_command_start_from_world_s") for row in rows]),
+        "first_bridge_start_from_world_s": _describe([row.get("first_bridge_start_from_world_s") for row in rows]),
+        "first_handoff_from_world_s": _describe([row.get("first_handoff_from_world_s") for row in rows]),
+        "initial_world_warmup_observations": _describe([row.get("initial_world_warmup_observations") for row in rows]),
+        "initial_world_warmup_age_s": _describe([row.get("initial_world_warmup_age_s") for row in rows]),
+        "scheduled_crossing_time_min_s": _describe([row.get("scheduled_crossing_time_min_s") for row in rows]),
+        "scheduled_crossing_time_max_s": _describe([row.get("scheduled_crossing_time_max_s") for row in rows]),
+        "minimum_static_environment_clearance_m": _describe(
+            [row.get("minimum_static_environment_clearance_m") for row in rows]
+        ),
         "episode_duration_s": _describe([row.get("episode_duration_s") for row in rows]),
         "execution_duration_s": _describe([row.get("execution_duration_s") for row in rows]),
-        "successful_execution_duration_s": _describe(
-            [row.get("execution_duration_s") for row in successful]
-        ),
+        "successful_execution_duration_s": _describe([row.get("execution_duration_s") for row in successful]),
         "planned_duration_s": _describe([row.get("planned_duration_mean_s") for row in rows]),
         "joint_l2_path_rad": _describe([row.get("joint_l2_path_rad") for row in rows]),
         "joint_l1_travel_rad": _describe([row.get("joint_l1_travel_rad") for row in rows]),
-        "successful_joint_l2_path_rad": _describe(
-            [row.get("joint_l2_path_rad") for row in successful]
-        ),
-        "successful_joint_l1_travel_rad": _describe(
-            [row.get("joint_l1_travel_rad") for row in successful]
-        ),
-        "hard_minimum_clearance_m": _describe(
-            [row.get("hard_minimum_clearance_m") for row in rows]
-        ),
-        "common_window_minimum_clearance_m": _describe(
-            [row.get("common_window_minimum_clearance_m") for row in rows]
-        ),
+        "successful_joint_l2_path_rad": _describe([row.get("joint_l2_path_rad") for row in successful]),
+        "successful_joint_l1_travel_rad": _describe([row.get("joint_l1_travel_rad") for row in successful]),
+        "hard_minimum_clearance_m": _describe([row.get("hard_minimum_clearance_m") for row in rows]),
+        "common_window_minimum_clearance_m": _describe([row.get("common_window_minimum_clearance_m") for row in rows]),
         "clearance_mean_cost": _describe([row.get("clearance_mean_cost") for row in rows]),
         "clearance_cvar_cost": _describe([row.get("clearance_cvar_cost") for row in rows]),
-        "dense_environment_clearance_m": _describe(
-            [row.get("dense_environment_clearance_m") for row in rows]
-        ),
+        "dense_environment_clearance_m": _describe([row.get("dense_environment_clearance_m") for row in rows]),
         "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
         "factorized_representations": sorted(
-            {
-                str(row["factorized_representation"])
-                for row in rows
-                if row.get("factorized_representation") is not None
-            }
+            {str(row["factorized_representation"]) for row in rows if row.get("factorized_representation") is not None}
         ),
         "factorized_checkpoint_steps": sorted(
             {
@@ -1042,23 +1070,13 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 if isinstance(row.get("factorized_timing_checkpoint_step"), (int, float))
             }
         ),
-        "factorized_basis_adapted_runs": sum(
-            row.get("factorized_spatial_basis_adapted") is True for row in rows
-        ),
-        "factorized_space_nfe": _describe(
-            [row.get("factorized_space_nfe_mean") for row in rows]
-        ),
-        "factorized_timing_nfe": _describe(
-            [row.get("factorized_timing_nfe_mean") for row in rows]
-        ),
-        "spatial_dynamic_grad_cap": _describe(
-            [row.get("spatial_dynamic_grad_cap") for row in rows]
-        ),
+        "factorized_basis_adapted_runs": sum(row.get("factorized_spatial_basis_adapted") is True for row in rows),
+        "factorized_space_nfe": _describe([row.get("factorized_space_nfe_mean") for row in rows]),
+        "factorized_timing_nfe": _describe([row.get("factorized_timing_nfe_mean") for row in rows]),
+        "spatial_dynamic_grad_cap": _describe([row.get("spatial_dynamic_grad_cap") for row in rows]),
         "spatial_clip_ratio": _describe([row.get("spatial_clip_ratio") for row in rows]),
         "timing_clip_ratio": _describe([row.get("timing_clip_ratio") for row in rows]),
-        "spatial_gradient_norm_mean": _describe(
-            [row.get("spatial_gradient_norm_mean") for row in rows]
-        ),
+        "spatial_gradient_norm_mean": _describe([row.get("spatial_gradient_norm_mean") for row in rows]),
         "static_dynamic_gradient_cosine_mean": _describe(
             [row.get("static_dynamic_gradient_cosine_mean") for row in rows]
         ),
@@ -1070,10 +1088,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "maximum_command_gap_s": _describe([row.get("maximum_command_gap_s") for row in rows]),
         "maximum_uncovered_command_gap_s": _describe(
-            [
-                row.get("maximum_uncovered_command_gap_s", row.get("maximum_command_gap_s"))
-                for row in rows
-            ]
+            [row.get("maximum_uncovered_command_gap_s", row.get("maximum_command_gap_s")) for row in rows]
         ),
         "guarded_terminal_hold_s": _describe([row.get("guarded_terminal_hold_s") for row in rows]),
         "maximum_controller_reference_jump_rad": _describe(
@@ -1082,9 +1097,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _report_modes(
-    rows: list[dict[str, Any]], mode_names: tuple[str, ...] | list[str] | None = None
-) -> tuple[str, ...]:
+def _report_modes(rows: list[dict[str, Any]], mode_names: tuple[str, ...] | list[str] | None = None) -> tuple[str, ...]:
     if mode_names is not None:
         return tuple(dict.fromkeys(mode_names))
     present = {str(row.get("mode")) for row in rows if row.get("mode") is not None}
@@ -1104,16 +1117,11 @@ def _paired_summary(
         modes
         for modes in grouped.values()
         if modes_to_pair
-        and all(
-            mode in modes and bool(modes[mode].get("manifest_available"))
-            for mode in modes_to_pair
-        )
+        and all(mode in modes and bool(modes[mode].get("manifest_available")) for mode in modes_to_pair)
     ]
     return {
         "cell_count": len(complete_cells),
-        "by_mode": {
-            mode: _aggregate([cell[mode] for cell in complete_cells]) for mode in modes_to_pair
-        },
+        "by_mode": {mode: _aggregate([cell[mode] for cell in complete_cells]) for mode in modes_to_pair},
     }
 
 
@@ -1136,28 +1144,17 @@ def write_reports(
         writer = csv.DictWriter(stream, fieldnames=REPORT_FIELDS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-    by_mode = {
-        mode: _aggregate([row for row in rows if row.get("mode") == mode])
-        for mode in report_modes
-    }
+    by_mode = {mode: _aggregate([row for row in rows if row.get("mode") == mode]) for mode in report_modes}
     by_category = {
         category: {
-            mode: _aggregate(
-                [row for row in rows if row.get("category") == category and row.get("mode") == mode]
-            )
+            mode: _aggregate([row for row in rows if row.get("category") == category and row.get("mode") == mode])
             for mode in report_modes
         }
         for category in CATEGORIES
     }
     by_difficulty = {
         difficulty: {
-            mode: _aggregate(
-                [
-                    row
-                    for row in rows
-                    if row.get("difficulty") == difficulty and row.get("mode") == mode
-                ]
-            )
+            mode: _aggregate([row for row in rows if row.get("difficulty") == difficulty and row.get("mode") == mode])
             for mode in report_modes
         }
         for difficulty in DIFFICULTIES
@@ -1165,13 +1162,16 @@ def write_reports(
     paired = _paired_summary(rows, report_modes)
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
-        "schema_version": 4,
+        "schema_version": 5,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "run_count": len(rows),
         "modes": list(report_modes),
         "metric_semantics": {
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
+            "dynamic_object_vs_static_environment": (
+                "intersection is allowed by benchmark policy; minimum clearance is diagnostic only"
+            ),
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
             "clearance": "selected candidate guard clearance plus successful MPD DenseCheck clearance",
             "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
@@ -1196,6 +1196,7 @@ def write_reports(
         "## 指标口径",
         "",
         "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。uncovered command gap 只统计相邻实际命令区间没有任何 JTC goal 覆盖的时间；guarded terminal hold 是显式发送且经过动态 guard 验证的末端保持；controller reference jump 是切换时新 goal 首点与旧控制参考之间的最大关节位置差。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
+        "动态物体必须避开机器人底座；与柜体、抽屉或货架相交允许穿模。静态环境最小余量只作诊断与可视化，不作为场景失败条件。",
         "",
         "## 场景类型与难度",
         "",
@@ -1203,10 +1204,7 @@ def write_reports(
         "|---|---|---|",
     ]
     for category in CATEGORIES:
-        lines.append(
-            f"| {category} | {DIFFICULTY_BY_CATEGORY[category]} | "
-            f"{CATEGORY_DESCRIPTIONS[category]} |"
-        )
+        lines.append(f"| {category} | {DIFFICULTY_BY_CATEGORY[category]} | " f"{CATEGORY_DESCRIPTIONS[category]} |")
     lines.extend(
         [
             "",
@@ -1278,11 +1276,7 @@ def write_reports(
             f"{_fmt(data['static_dynamic_gradient_conflict_ratio']['mean'])} | "
             f"{_fmt(data['static_dynamic_gradient_cosine_valid_ratio']['mean'])} |"
         )
-    factorized_modes = {
-        mode: data
-        for mode, data in by_mode.items()
-        if mode in FACTORIZED_MODE_SPECS
-    }
+    factorized_modes = {mode: data for mode, data in by_mode.items() if mode in FACTORIZED_MODE_SPECS}
     if factorized_modes:
         lines.extend(
             [
@@ -1297,9 +1291,7 @@ def write_reports(
         )
         for mode, data in factorized_modes.items():
             representations = ", ".join(data["factorized_representations"]) or "—"
-            checkpoint_steps = ", ".join(
-                str(value) for value in data["factorized_checkpoint_steps"]
-            ) or "—"
+            checkpoint_steps = ", ".join(str(value) for value in data["factorized_checkpoint_steps"]) or "—"
             lines.append(
                 f"| {mode} | {representations} | {checkpoint_steps} | "
                 f"{data['factorized_basis_adapted_runs']} | "
@@ -1404,20 +1396,16 @@ def write_reports(
     if analyzable_modes:
         goal_best = max(
             analyzable_modes,
-            key=lambda mode: analyzable_modes[mode]["goal_reached"]
-            / analyzable_modes[mode]["manifest_runs"],
+            key=lambda mode: analyzable_modes[mode]["goal_reached"] / analyzable_modes[mode]["manifest_runs"],
         )
         brake_best = min(
             analyzable_modes,
-            key=lambda mode: analyzable_modes[mode]["brake_runs"]
-            / analyzable_modes[mode]["manifest_runs"],
+            key=lambda mode: analyzable_modes[mode]["brake_runs"] / analyzable_modes[mode]["manifest_runs"],
         )
         lines.append(f"- 当前样本目标到达率最高：`{goal_best}`。")
         lines.append(f"- 当前样本 brake run 比例最低：`{brake_best}`。")
         clearance_modes = {
-            mode: data
-            for mode, data in analyzable_modes.items()
-            if data["hard_minimum_clearance_m"]["min"] is not None
+            mode: data for mode, data in analyzable_modes.items() if data["hard_minimum_clearance_m"]["min"] is not None
         }
         if clearance_modes:
             clearance_best = max(
@@ -1445,9 +1433,7 @@ def _attempt_dir(output_dir: Path, scenario_id: str, repeat: int, mode: str) -> 
     return root / f"attempt-{len(existing) + 1:03d}"
 
 
-def _factorized_mode_contract(
-    args: argparse.Namespace, mode: str
-) -> tuple[str, str | None, Path]:
+def _factorized_mode_contract(args: argparse.Namespace, mode: str) -> tuple[str, str | None, Path]:
     method, representation = FACTORIZED_MODE_SPECS[mode]
     if representation == "c":
         checkpoint = args.factorized_c_checkpoint
@@ -1456,9 +1442,7 @@ def _factorized_mode_contract(
     else:
         checkpoint = args.factorized_timing_checkpoint
     if checkpoint is None:
-        raise ValueError(
-            f"mode {mode} requires --factorized-timing-checkpoint"
-        )
+        raise ValueError(f"mode {mode} requires --factorized-timing-checkpoint")
     return method, representation, checkpoint.resolve()
 
 
@@ -1523,10 +1507,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     available_categories = {scenario["category"] for scenario in suite["scenarios"]}
     missing_categories = selected_categories - available_categories
     if args.categories is not None and missing_categories:
-        raise ValueError(
-            "selected categories are absent from this suite: "
-            + ", ".join(sorted(missing_categories))
-        )
+        raise ValueError("selected categories are absent from this suite: " + ", ".join(sorted(missing_categories)))
 
     airuntime_root = Path(os.environ.get("AIRUNTIME_ROOT", DEFAULT_AIRUNTIME_ROOT)).resolve()
     if not args.skip_build:
@@ -1543,8 +1524,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     existing_rows = _existing_rows(output_dir)
     existing_by_key = {
-        (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode")): row
-        for row in existing_rows
+        (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode")): row for row in existing_rows
     }
     completed_keys = {
         (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode"))
@@ -1592,16 +1572,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "scenario_file": scenario_path.as_posix(),
                 }
                 if phase == "factorized":
-                    factorized_method, factorized_representation, factorized_checkpoint = (
-                        _factorized_mode_contract(args, mode)
+                    factorized_method, factorized_representation, factorized_checkpoint = _factorized_mode_contract(
+                        args, mode
                     )
                     run_spec.update(
                         factorized_method=factorized_method,
                         factorized_representation=factorized_representation,
                         factorized_timing_checkpoint=factorized_checkpoint.as_posix(),
-                        factorized_spatial_basis_adapted=(
-                            args.factorized_adapt_spatial_basis
-                        ),
+                        factorized_spatial_basis_adapted=(args.factorized_adapt_spatial_basis),
                     )
                 command = [
                     PIPELINE.as_posix(),
@@ -1667,12 +1645,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=REPO_ROOT
-        / "scripts"
-        / "isaaclab"
-        / "logs"
-        / "todrawer-random-benchmark"
-        / timestamp,
+        default=REPO_ROOT / "scripts" / "isaaclab" / "logs" / "todrawer-random-benchmark" / timestamp,
     )
     parser.add_argument(
         "--scenario-count",
@@ -1738,9 +1711,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Run only selected frozen environment categories",
     )
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument(
-        "--render", action="store_true", help="Render every episode; disabled by default"
-    )
+    parser.add_argument("--render", action="store_true", help="Render every episode; disabled by default")
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument(
@@ -1765,11 +1736,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
         raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
     generic_factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
-    if (
-        not args.report_only
-        and generic_factorized_selected
-        and args.factorized_timing_checkpoint is None
-    ):
+    if not args.report_only and generic_factorized_selected and args.factorized_timing_checkpoint is None:
         parser.error("--factorized-timing-checkpoint is required when f1/f2/f3 is selected")
     if not args.report_only:
         selected_checkpoints = []
