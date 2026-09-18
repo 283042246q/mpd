@@ -1,15 +1,32 @@
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 
 from scripts.generate_data.marvin_gpu_planning_backend import (
+    MarvinGpuPlanningBackend,
     batched_paths_collision_free,
     fit_marvin_spline,
     resample_path,
     shortcut_paths,
 )
+
+
+class RecordingSelfCollisionField:
+    def __init__(self):
+        self.calls = []
+
+    def compute_minimum_signed_distances(self, positions, pair_chunk_size):
+        self.calls.append((len(positions), pair_chunk_size))
+        return positions[:, 0, 0]
+
+
+class CollisionFreeObjectField:
+    def compute_cost(self, q, positions, field_type):
+        assert field_type == "occupancy"
+        return torch.zeros(len(q), dtype=torch.bool)
 
 
 def test_gpu_backend_module_does_not_import_ompl_or_pybullet():
@@ -21,6 +38,26 @@ def test_gpu_backend_module_does_not_import_ompl_or_pybullet():
         "assert 'pb_ompl.pb_ompl' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", command], check=True)
+
+
+def test_collision_mask_streams_exact_self_collision_pairs():
+    self_field = RecordingSelfCollisionField()
+    backend = object.__new__(MarvinGpuPlanningBackend)
+    backend.config = {"gpu_collision_batch_size": 2}
+    backend.self_collision_pair_chunk_size = 32768
+    backend.robot = SimpleNamespace(
+        tensor_args={"device": "cpu", "dtype": torch.float32},
+        q_pos_min=torch.full((14,), -1.0),
+        q_pos_max=torch.full((14,), 1.0),
+        df_collision_self=self_field,
+    )
+    backend.object_field = CollisionFreeObjectField()
+    backend.collision_positions = lambda q: q[:, None, :3]
+    states = torch.zeros((4, 14))
+    states[:, 0] = torch.tensor([-0.1, 0.0, 0.1, 2.0])
+
+    assert backend.collision_mask(states).tolist() == [True, False, False, True]
+    assert self_field.calls == [(2, 32768), (2, 32768)]
 
 
 def test_batched_path_audit_handles_variable_lengths():

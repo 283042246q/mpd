@@ -734,5 +734,8 @@ class StreamingCoordinator:
                 "collision_batch_size": int(
                     self.config.get("gpu_collision_batch_size", 256)
                 ),
+                "self_collision_pair_chunk_size": int(
+                    self.config.get("gpu_self_collision_pair_chunk_size", 32768)
+                ),
             },
         }

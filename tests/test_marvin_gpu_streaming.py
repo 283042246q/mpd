@@ -190,6 +190,9 @@ def test_streaming_window_batches_across_shards_and_publishes_independently(tmp_
     assert telemetry["configuration"]["collision_batch_size"] == config[
         "gpu_collision_batch_size"
     ]
+    assert telemetry["configuration"]["self_collision_pair_chunk_size"] == config[
+        "gpu_self_collision_pair_chunk_size"
+    ]
     assert telemetry["configuration"]["endpoint_recycle_jobs"] == 2
     assert all(
         "endpoint_actor_restarts" not in shard_stats

@@ -178,6 +178,11 @@ class MarvinGpuPlanningBackend:
             cutoff_margin=float(self.config.get("min_distance_robot_env", 0.02)),
             tensor_args=tensor_args,
         )
+        self.self_collision_pair_chunk_size = int(
+            self.config.get("gpu_self_collision_pair_chunk_size", 32768)
+        )
+        if self.self_collision_pair_chunk_size < 1:
+            raise ValueError("gpu_self_collision_pair_chunk_size must be positive")
 
     def collision_positions(self, q):
         parent_poses = torch.stack(
@@ -206,8 +211,12 @@ class MarvinGpuPlanningBackend:
                 (chunk < self.robot.q_pos_min) | (chunk > self.robot.q_pos_max)
             ).any(dim=1)
             positions = self.collision_positions(chunk)
-            self_collision = self.robot.df_collision_self.compute_cost(
-                chunk, positions, field_type="occupancy"
+            self_collision = (
+                self.robot.df_collision_self.compute_minimum_signed_distances(
+                    positions,
+                    pair_chunk_size=self.self_collision_pair_chunk_size,
+                )
+                < 0
             ).reshape(-1)
             object_collision = self.object_field.compute_cost(
                 chunk, positions, field_type="occupancy"
