@@ -7,10 +7,14 @@ import pytest
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     BASE_CROSSINGS,
+    BENCHMARK_GENERATION_REVISION,
     CATEGORIES,
+    DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY,
     DEFAULT_FACTORIZED_C_CHECKPOINT,
     DEFAULT_FACTORIZED_TAU_R_CHECKPOINT,
     DEFAULT_MODES,
+    DEFAULT_PLANNER_REPEATS,
+    DEFAULT_TIMING_PROTOCOL,
     DIFFICULTIES,
     GENERATION_REVISION,
     MAX_GENERATION_RESAMPLE_ATTEMPTS,
@@ -21,14 +25,21 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     _paired_summary,
     _parse_ros_log,
     _parser,
+    _timing_profile_mode,
     _trajectory_segment_metrics,
     extract_run_metrics,
+    generate_benchmark_suite,
     generate_suite,
     main,
+    materialize_scenario_for_mode,
     object_position_at,
     write_reports,
 )
-from scripts.isaaclab.todrawer_scenario_validation import trajectory_clearances
+from scripts.isaaclab.todrawer_scenario_validation import (
+    STARTUP_SAFE_ANCHOR_BOUNDS,
+    static_interaction_clearance,
+    trajectory_clearances,
+)
 from scripts.isaaclab.validate_todrawer_random_suite import validate_suite
 
 
@@ -187,8 +198,9 @@ def test_same_category_arrivals_have_bounded_random_variation():
 def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     args = _parser().parse_args([])
 
-    assert args.scenario_count == 50
-    assert args.repeats == 5
+    assert args.environment_count_per_category == DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY
+    assert args.planner_repeats == DEFAULT_PLANNER_REPEATS
+    assert args.timing_protocol == DEFAULT_TIMING_PROTOCOL == "motion_aligned"
     assert args.modes == list(DEFAULT_MODES)
     assert args.categories is None
     assert MODE_SPECS["phase4"] == ("phase4", None)
@@ -200,6 +212,89 @@ def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     assert MODE_SPECS["f3_tau_r"] == ("factorized", None)
     assert args.factorized_c_checkpoint == DEFAULT_FACTORIZED_C_CHECKPOINT
     assert args.factorized_tau_r_checkpoint == DEFAULT_FACTORIZED_TAU_R_CHECKPOINT
+
+
+def _shared_object_geometry(scenario):
+    return [
+        {
+            "anchor_position": item["anchor_position"],
+            "direction": item["direction"],
+            "speed_m_s": item["speed_m_s"],
+            "size_xyz": item["local_sdf"]["size_xyz"],
+            "motion": item["motion"],
+        }
+        for item in scenario["objects"]
+    ]
+
+
+def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry():
+    modes = ["phase4", "joint", "f3_c", "f3_tau_r"]
+    suite = generate_benchmark_suite(
+        1,
+        1234,
+        timing_protocol="motion_aligned",
+        modes=modes,
+    )
+
+    assert suite["schema_version"] == 5
+    assert suite["generation_policy"]["revision"] == BENCHMARK_GENERATION_REVISION
+    assert suite["scenario_count"] == len(CATEGORIES)
+    assert suite["environment_count_per_category"] == 1
+    assert suite["generation_policy"]["environment_randomized_fields"] == [
+        "anchor_position",
+        "direction",
+        "speed_m_s",
+        "local_sdf.size_xyz",
+        "motion_model",
+        "motion_parameters",
+        "crossing_time_s",
+    ]
+    assert [item["category"] for item in suite["scenarios"]] == list(CATEGORIES)
+    validate_suite(suite)
+
+    saw_mode_specific_crossing = False
+    for environment in suite["scenarios"]:
+        variants = [materialize_scenario_for_mode(environment, mode) for mode in modes]
+        assert all(_shared_object_geometry(variant) == _shared_object_geometry(variants[0]) for variant in variants[1:])
+        crossing_sets = {tuple(item["crossing_time_s"] for item in variant["objects"]) for variant in variants}
+        saw_mode_specific_crossing |= len(crossing_sets) > 1
+        for variant in variants:
+            for item in variant["objects"]:
+                lower, upper = STARTUP_SAFE_ANCHOR_BOUNDS[item["anchor_id"]]
+                assert all(low <= actual <= high for actual, low, high in zip(item["anchor_position"], lower, upper))
+                assert static_interaction_clearance(item) > 0.0
+                assert item["minimum_initial_franka_clearance_m"] > 0.005
+            if len(variant["objects"]) >= 2:
+                assert variant["attempt_sampling"]["direction_line_contract"]["satisfied"]
+    assert saw_mode_specific_crossing
+
+
+def test_absolute_world_time_shares_crossing_times_as_well_as_geometry():
+    modes = ["phase4", "joint", "f3_tau_r"]
+    suite = generate_benchmark_suite(
+        1,
+        4321,
+        timing_protocol="absolute_world_time",
+        modes=modes,
+    )
+
+    for environment in suite["scenarios"]:
+        variants = [materialize_scenario_for_mode(environment, mode) for mode in modes]
+        expected = [item["crossing_time_s"] for item in variants[0]["objects"]]
+        assert all([item["crossing_time_s"] for item in variant["objects"]] == expected for variant in variants[1:])
+
+
+@pytest.mark.parametrize(
+    ("mode", "profile"),
+    [
+        ("aligned_all", "phase4_aligned"),
+        ("aligned_no_dynamic_guidance", "phase4_aligned"),
+        ("phase5_all", "joint"),
+        ("phase5_no_deviation", "joint"),
+    ],
+)
+def test_ablation_modes_reuse_parent_timing_profiles(mode, profile):
+    assert _timing_profile_mode(mode) == profile
 
 
 def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
@@ -533,9 +628,9 @@ def test_factorized_dry_run_writes_paired_commands_with_explicit_basis(tmp_path)
             [
                 "--output-dir",
                 str(output),
-                "--scenario-count",
+                "--environment-count-per-category",
                 "1",
-                "--repeats",
+                "--planner-repeats",
                 "1",
                 "--modes",
                 *selected,
@@ -579,9 +674,9 @@ def test_c_and_tau_r_factorized_modes_run_together_with_best_defaults(tmp_path):
             [
                 "--output-dir",
                 str(output),
-                "--scenario-count",
+                "--environment-count-per-category",
                 "1",
-                "--repeats",
+                "--planner-repeats",
                 "1",
                 "--modes",
                 *selected,

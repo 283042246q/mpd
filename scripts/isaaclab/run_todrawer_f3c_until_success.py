@@ -55,6 +55,7 @@ from scripts.isaaclab.todrawer_scenario_validation import (
     STARTUP_SAFE_ANCHOR_BOUNDS,
     initial_franka_trajectory_clearance,
     load_static_environment_boxes,
+    static_interaction_clearance,
     validate_initial_franka_clearance,
     validate_trajectory_clearance,
 )
@@ -521,6 +522,7 @@ def resample_mode_attempt_scenario(
     mode: str,
     seed: int,
     goal_reserve_s: float = GOAL_CROSSING_RESERVE_S,
+    minimum_static_clearance_m: float | None = None,
 ) -> dict[str, Any]:
     """Create one mode-timed, startup-safe realization of a suite template."""
 
@@ -528,6 +530,8 @@ def resample_mode_attempt_scenario(
         raise ValueError(f"unsupported mode timing profile {mode!r}")
     if goal_reserve_s < 0.0:
         raise ValueError("goal reserve must be non-negative")
+    if minimum_static_clearance_m is not None and minimum_static_clearance_m < 0.0:
+        raise ValueError("minimum static clearance must be non-negative")
     profile = MODE_TIMING_PROFILES[mode]
     rng = random.Random(seed)
     sampled = copy.deepcopy(scenario)
@@ -617,6 +621,21 @@ def resample_mode_attempt_scenario(
                 clearance = validate_trajectory_clearance(
                     item, static_boxes=static_boxes
                 )
+                if minimum_static_clearance_m is not None:
+                    static_clearance = static_interaction_clearance(
+                        item,
+                        static_boxes=static_boxes,
+                    )
+                    if static_clearance <= minimum_static_clearance_m:
+                        raise ValueError(
+                            f"{item['id']} intersects or approaches static furniture "
+                            f"in its interaction window: "
+                            f"clearance={static_clearance:.6f}m <= "
+                            f"{minimum_static_clearance_m:.6f}m"
+                        )
+                    item["minimum_static_interaction_clearance_m"] = (
+                        static_clearance
+                    )
                 initial_clearance = validate_initial_franka_clearance(
                     item,
                     end_s=parked_franka_protection_until_s,
@@ -695,6 +714,7 @@ def resample_mode_attempt_scenario(
         "minimum_initial_franka_clearance_m": (
             MINIMUM_INITIAL_FRANKA_CLEARANCE_M
         ),
+        "minimum_static_environment_clearance_m": minimum_static_clearance_m,
         "maximum_generation_resample_attempts": (
             MODE_GENERATION_RESAMPLE_ATTEMPTS
         ),

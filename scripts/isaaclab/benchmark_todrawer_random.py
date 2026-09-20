@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,8 +26,12 @@ from scripts.isaaclab.todrawer_scenario_validation import (
     DESIGN_EPISODE_DURATION_S,
     ROBOT_BASE_EXCLUSION_MAX,
     ROBOT_BASE_EXCLUSION_MIN,
+    STARTUP_SAFE_ANCHOR_BOUNDS,
+    STATIC_INTERACTION_WINDOW_HALF_WIDTH_S,
+    initial_franka_trajectory_clearance,
     load_static_environment_boxes,
     object_position_at,
+    static_interaction_clearance,
     validate_trajectory_clearance,
 )
 
@@ -162,6 +167,13 @@ MAX_GENERATION_RESAMPLE_ATTEMPTS = 50
 DEFAULT_ANCHOR_JITTER_M = 0.015
 DENSE_ANCHOR_JITTER_M = 0.020
 GENERATION_REVISION = "world-clock-robot-aware-crossings-v1"
+BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v2"
+TIMING_PROTOCOLS = ("absolute_world_time", "motion_aligned")
+DEFAULT_TIMING_PROTOCOL = "motion_aligned"
+DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY = 5
+DEFAULT_PLANNER_REPEATS = 5
+MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M = 0.0
+MAXIMUM_ENVIRONMENT_RESAMPLE_ATTEMPTS = 500
 
 
 @dataclass(frozen=True)
@@ -173,10 +185,14 @@ class CrossingAssignment:
 
 REPORT_FIELDS = (
     "scenario_id",
+    "environment_index",
+    "environment_seed",
     "category",
     "difficulty",
     "repeat",
+    "planner_repeat",
     "mode",
+    "timing_protocol",
     "planner_seed",
     "pipeline_returncode",
     "pipeline_completed",
@@ -197,6 +213,7 @@ REPORT_FIELDS = (
     "scheduled_crossing_time_min_s",
     "scheduled_crossing_time_max_s",
     "minimum_static_environment_clearance_m",
+    "minimum_static_interaction_clearance_m",
     "brake_count",
     "guard_dynamic_collision_rejections",
     "accepted_nonpositive_clearance_count",
@@ -397,11 +414,7 @@ def _random_object(
     crossing_spec = crossing_specs[corridor_index]
     anchor_base = crossing_spec["anchor"]
     direction_base = crossing_spec["direction"]
-    anchor_jitter = (
-        DENSE_ANCHOR_JITTER_M
-        if category == "inflated_dense"
-        else DEFAULT_ANCHOR_JITTER_M
-    )
+    anchor_jitter = DENSE_ANCHOR_JITTER_M if category == "inflated_dense" else DEFAULT_ANCHOR_JITTER_M
     anchor = [value + rng.uniform(-anchor_jitter, anchor_jitter) for value in anchor_base]
     direction = _rotate_xy(direction_base, rng.uniform(-0.18, 0.18))
     if rng.random() < 0.5:
@@ -666,23 +679,427 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
     }
 
 
-def materialize_suite(output_dir: Path, count: int, seed: int) -> dict[str, Any]:
+def _timing_profile_mode(mode: str) -> str:
+    if mode in {"scalar_duration", "timing_only"}:
+        return "joint"
+    if mode in {"f1", "f2", "f3"}:
+        return f"{mode}_c"
+    if mode.startswith("aligned_"):
+        return "phase4_aligned"
+    if mode.startswith("phase5_"):
+        return "joint"
+    return mode
+
+
+def _validate_motion_parameters(item: dict[str, Any]) -> None:
+    """Reject non-finite or physically invalid generated motion parameters."""
+
+    speed = float(item["speed_m_s"])
+    crossing_time = float(item["crossing_time_s"])
+    direction = np.asarray(item["direction"], dtype=np.float64)
+    size = np.asarray(item["local_sdf"]["size_xyz"], dtype=np.float64)
+    if not math.isfinite(speed) or speed <= 0.0:
+        raise ValueError("object speed must be finite and positive")
+    if direction.shape != (3,) or not np.isfinite(direction).all():
+        raise ValueError("object direction must be a finite three-vector")
+    if abs(float(np.linalg.norm(direction)) - 1.0) > 1.0e-7:
+        raise ValueError("object direction must be unit length")
+    if size.shape != (3,) or not np.isfinite(size).all() or np.any(size <= 0.0):
+        raise ValueError("object box dimensions must be finite and positive")
+    motion = item.get("motion", {})
+    motion_type = str(motion.get("type", ""))
+    if motion_type == "constant_acceleration":
+        acceleration = float(motion["longitudinal_acceleration_m_s2"])
+        velocities = [speed + acceleration * (elapsed - crossing_time) for elapsed in (0.0, DESIGN_EPISODE_DURATION_S)]
+        if not math.isfinite(acceleration) or not all(
+            0.04 - 1.0e-12 <= value <= 0.38 + 1.0e-12 for value in velocities
+        ):
+            raise ValueError("constant-acceleration motion exceeds its velocity bounds")
+    if motion_type in {"sinusoidal_curve", "curved_speed_variation"}:
+        lateral = np.asarray(motion["lateral_direction"], dtype=np.float64)
+        amplitude = float(motion["lateral_amplitude_m"])
+        frequency = float(motion["lateral_angular_frequency_rad_s"])
+        if (
+            lateral.shape != (3,)
+            or not np.isfinite(lateral).all()
+            or not math.isfinite(amplitude)
+            or amplitude <= 0.0
+            or not math.isfinite(frequency)
+            or frequency <= 0.0
+        ):
+            raise ValueError("curved motion parameters are invalid")
+    if motion_type in {"smooth_speed_variation", "curved_speed_variation"}:
+        amplitude = float(motion["speed_variation_amplitude_m_s"])
+        frequency = float(motion["speed_variation_angular_frequency_rad_s"])
+        if (
+            not math.isfinite(amplitude)
+            or amplitude <= 0.0
+            or amplitude >= speed
+            or not math.isfinite(frequency)
+            or frequency <= 0.0
+        ):
+            raise ValueError("speed-variation parameters are invalid")
+
+
+def _mode_timing_shift(
+    scenario: dict[str, Any],
+    *,
+    mode: str,
+    protocol: str,
+    timing_fraction: float,
+) -> tuple[float, dict[str, Any] | None, float]:
+    from scripts.isaaclab.run_todrawer_f3c_until_success import (
+        GOAL_CROSSING_RESERVE_S,
+        MINIMUM_CROSSING_AFTER_MOTION_START_S,
+        MODE_TIMING_PROFILES,
+    )
+
+    profile_mode = _timing_profile_mode(mode)
+    if profile_mode not in MODE_TIMING_PROFILES:
+        raise ValueError(f"mode {mode!r} has no motion-alignment profile")
+    profile = MODE_TIMING_PROFILES[profile_mode]
+    original_times = [float(item["crossing_time_s"]) for item in scenario["objects"]]
+    protection_until_s = profile.expected_goal_s - GOAL_CROSSING_RESERVE_S
+    if protocol == "absolute_world_time":
+        return 0.0, None, protection_until_s
+    if protocol != "motion_aligned":
+        raise ValueError(f"unsupported timing protocol {protocol!r}")
+    shift_lower = max(
+        profile.crossing_shift_min_s,
+        profile.significant_motion_start_s + MINIMUM_CROSSING_AFTER_MOTION_START_S - min(original_times),
+    )
+    shift_upper = min(
+        profile.crossing_shift_max_s,
+        profile.expected_goal_s - GOAL_CROSSING_RESERVE_S - max(original_times),
+    )
+    if shift_lower > shift_upper:
+        raise ValueError(
+            f"mode {mode} has no crossing-time interval for {scenario['id']}: "
+            f"shift=[{shift_lower:.3f}, {shift_upper:.3f}]"
+        )
+    shift = shift_lower + timing_fraction * (shift_upper - shift_lower)
+    metadata = {
+        "mode": mode,
+        "profile_mode": profile_mode,
+        "significant_motion_threshold_rad": 0.01,
+        "significant_motion_start_s": profile.significant_motion_start_s,
+        "expected_goal_s": profile.expected_goal_s,
+        "goal_crossing_reserve_s": GOAL_CROSSING_RESERVE_S,
+        "crossing_shift_s": shift,
+        "crossing_shift_range_s": [shift_lower, shift_upper],
+        "minimum_crossing_after_motion_start_s": (MINIMUM_CROSSING_AFTER_MOTION_START_S),
+    }
+    return shift, metadata, protection_until_s
+
+
+def _materialize_timing_variant(
+    geometry: dict[str, Any],
+    template: dict[str, Any],
+    *,
+    mode: str,
+    protocol: str,
+    timing_fraction: float,
+    static_boxes,
+) -> dict[str, Any]:
+    from scripts.isaaclab.run_todrawer_f3c_until_success import (
+        MINIMUM_INITIAL_FRANKA_CLEARANCE_M,
+        MODE_GENERATION_RESAMPLE_ATTEMPTS,
+    )
+
+    variant = copy.deepcopy(geometry)
+    shift, profile, protection_until_s = _mode_timing_shift(
+        template,
+        mode=mode,
+        protocol=protocol,
+        timing_fraction=timing_fraction,
+    )
+    for item, original in zip(variant["objects"], template["objects"]):
+        item["crossing_time_s"] = float(original["crossing_time_s"]) + shift
+        _validate_motion_parameters(item)
+        clearance = validate_trajectory_clearance(item, static_boxes=static_boxes)
+        if clearance.robot_base_m <= 0.0:
+            raise ValueError(f"{item['id']} intersects the robot-base exclusion")
+        interaction_clearance = static_interaction_clearance(
+            item,
+            static_boxes=static_boxes,
+        )
+        if interaction_clearance <= MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M:
+            raise ValueError(f"{item['id']} intersects static furniture")
+        initial = initial_franka_trajectory_clearance(
+            item,
+            end_s=protection_until_s,
+        )
+        if initial.minimum_m <= MINIMUM_INITIAL_FRANKA_CLEARANCE_M:
+            raise ValueError(f"{item['id']} violates initial Franka clearance: " f"{initial.minimum_m:.6f}m")
+        item["minimum_robot_base_clearance_m"] = clearance.robot_base_m
+        item["minimum_static_environment_clearance_m"] = clearance.static_environment_m
+        item["minimum_static_interaction_clearance_m"] = interaction_clearance
+        item["minimum_initial_franka_clearance_m"] = initial.minimum_m
+        item["minimum_initial_franka_clearance_time_s"] = initial.time_s
+        item["minimum_initial_franka_clearance_sphere_index"] = initial.sphere_index
+    variant["anchor_schedule"] = [
+        {
+            "anchor_id": item["anchor_id"],
+            "schedule_role": item["schedule_role"],
+            "crossing_time_s": item["crossing_time_s"],
+        }
+        for item in variant["objects"]
+    ]
+    crossing_times = [float(item["crossing_time_s"]) for item in variant["objects"]]
+    variant["primary_crossing_window_s"] = [min(crossing_times), max(crossing_times)]
+    variant.pop("mode_timing_profile", None)
+    if profile is not None:
+        variant["mode_timing_profile"] = profile
+    variant["benchmark_timing"] = {
+        "protocol": protocol,
+        "mode": mode,
+        "crossing_shift_s": shift,
+        "geometry_shared_across_modes": True,
+    }
+    sampling = dict(variant.get("attempt_sampling", {}))
+    sampling.update(
+        {
+            "revision": BENCHMARK_GENERATION_REVISION,
+            "mode": "paired_frozen_environment_rejection_sampling",
+            "initial_franka_check_interval": ("0..parked_franka_protection_until_s"),
+            "parked_franka_protection_until_s": protection_until_s,
+            "minimum_initial_franka_clearance_m": (MINIMUM_INITIAL_FRANKA_CLEARANCE_M),
+            "minimum_static_interaction_clearance_m": (MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
+            "maximum_generation_resample_attempts": (MODE_GENERATION_RESAMPLE_ATTEMPTS),
+        }
+    )
+    variant["attempt_sampling"] = sampling
+    return variant
+
+
+def materialize_scenario_for_mode(environment: dict[str, Any], mode: str) -> dict[str, Any]:
+    variants = environment.get("benchmark_mode_variants", {})
+    if mode not in variants:
+        raise ValueError(f"environment {environment.get('id')} has no variant for {mode}")
+    scenario = copy.deepcopy(environment)
+    stored = scenario.pop("benchmark_mode_variants")[mode]
+    for key, value in stored.items():
+        scenario[key] = copy.deepcopy(value)
+    return scenario
+
+
+def generate_benchmark_suite(
+    environment_count_per_category: int,
+    seed: int,
+    *,
+    timing_protocol: str = DEFAULT_TIMING_PROTOCOL,
+    modes: tuple[str, ...] | list[str] = DEFAULT_MODES,
+) -> dict[str, Any]:
+    """Generate paired, startup-safe environments and all requested mode variants."""
+
+    if environment_count_per_category < 1:
+        raise ValueError("environment_count_per_category must be positive")
+    if timing_protocol not in TIMING_PROTOCOLS:
+        raise ValueError(f"unsupported timing protocol {timing_protocol!r}")
+    selected_modes = tuple(dict.fromkeys(str(mode) for mode in modes))
+    unknown_modes = sorted(set(selected_modes) - set(MODE_SPECS))
+    if not selected_modes or unknown_modes:
+        raise ValueError(f"invalid benchmark modes: {unknown_modes}")
+    scenario_count = environment_count_per_category * len(CATEGORIES)
+    templates = generate_suite(scenario_count, seed)
+    static_boxes = load_static_environment_boxes()
+    environments = []
+    from scripts.isaaclab.run_todrawer_f3c_until_success import (
+        resample_mode_attempt_scenario,
+    )
+
+    for scenario_index, template in enumerate(templates["scenarios"]):
+        environment_index = scenario_index // len(CATEGORIES)
+        accepted = None
+        last_error: Exception | None = None
+        for generation_attempt in range(1, MAXIMUM_ENVIRONMENT_RESAMPLE_ATTEMPTS + 1):
+            geometry_seed = int(
+                (seed + 15_485_863 * (scenario_index + 1) + 32_452_843 * generation_attempt) % 2_147_483_647
+            )
+            timing_fraction = random.Random(geometry_seed ^ 0x5A17C9E3).random()
+            try:
+                reference_mode = _timing_profile_mode(selected_modes[0])
+                geometry = resample_mode_attempt_scenario(
+                    template,
+                    mode=reference_mode,
+                    seed=geometry_seed,
+                    minimum_static_clearance_m=(MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
+                )
+                variants = {
+                    mode: _materialize_timing_variant(
+                        geometry,
+                        template,
+                        mode=mode,
+                        protocol=timing_protocol,
+                        timing_fraction=timing_fraction,
+                        static_boxes=static_boxes,
+                    )
+                    for mode in selected_modes
+                }
+            except (RuntimeError, ValueError) as error:
+                last_error = error
+                continue
+            canonical = copy.deepcopy(variants[selected_modes[0]])
+            canonical["environment_index"] = environment_index
+            canonical["environment_seed"] = geometry_seed
+            canonical["environment_generation_attempt"] = generation_attempt
+            canonical["benchmark_environment"] = {
+                "timing_protocol": timing_protocol,
+                "environment_index_within_category": environment_index,
+                "seed": geometry_seed,
+                "generation_attempt": generation_attempt,
+                "geometry_shared_across_modes": True,
+                "planner_seed_independent": True,
+            }
+            canonical["benchmark_mode_variants"] = {
+                mode: {
+                    key: copy.deepcopy(value)
+                    for key, value in variant.items()
+                    if key
+                    in {
+                        "objects",
+                        "anchor_schedule",
+                        "primary_crossing_window_s",
+                        "mode_timing_profile",
+                        "benchmark_timing",
+                        "attempt_sampling",
+                    }
+                }
+                for mode, variant in variants.items()
+            }
+            accepted = canonical
+            break
+        if accepted is None:
+            raise RuntimeError(
+                f"failed to generate paired startup-safe environment "
+                f"{template['id']} after {MAXIMUM_ENVIRONMENT_RESAMPLE_ATTEMPTS} "
+                f"attempts: {last_error}"
+            )
+        environments.append(accepted)
+    return {
+        "schema": "mpd_todrawer_random_suite",
+        "schema_version": 5,
+        "suite_seed": seed,
+        "scenario_count": len(environments),
+        "environment_count_per_category": environment_count_per_category,
+        "planner_repeats": None,
+        "timing_protocol": timing_protocol,
+        "modes": list(selected_modes),
+        "categories": list(CATEGORIES),
+        "category_definitions": templates["category_definitions"],
+        "generation_policy": {
+            **templates["generation_policy"],
+            "revision": BENCHMARK_GENERATION_REVISION,
+            "timing_protocol": timing_protocol,
+            "geometry_shared_across_modes": True,
+            "environment_count_per_category": environment_count_per_category,
+            "environment_randomized_fields": [
+                "anchor_position",
+                "direction",
+                "speed_m_s",
+                "local_sdf.size_xyz",
+                "motion_model",
+                "motion_parameters",
+                "crossing_time_s",
+            ],
+            "minimum_static_interaction_clearance_m": (MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
+            "static_clearance_scope": {
+                "spawn_time_s": 0.0,
+                "interval": "spawn_to_crossing_plus_half_window",
+                "crossing_window_half_width_s": (STATIC_INTERACTION_WINDOW_HALF_WIDTH_S),
+                "full_episode_clearance_is_diagnostic": True,
+            },
+            "initial_franka_collision_spheres": 56,
+            "anchor_bounds": {
+                key: [list(lower), list(upper)] for key, (lower, upper) in STARTUP_SAFE_ANCHOR_BOUNDS.items()
+            },
+            "rejection_checks": [
+                "robot_base_clearance",
+                "static_environment_clearance",
+                "initial_franka_56_sphere_clearance",
+                "anchor_work_volume",
+                "crossing_time_window",
+                "multi_object_direction_line_separation",
+                "finite_motion_parameters",
+            ],
+            "static_environment_intersection_policy": "hard_reject",
+            "feasibility_scope": (
+                "all frozen mode variants pass geometric/startup checks; planner "
+                "success is not guaranteed"
+            ),
+        },
+        "scenarios": environments,
+    }
+
+
+def _scenario_path(
+    output_dir: Path,
+    scenario_id: str,
+    mode: str,
+    timing_protocol: str,
+) -> Path:
+    if timing_protocol == "absolute_world_time":
+        return output_dir / "scenarios" / f"{scenario_id}.json"
+    return output_dir / "scenarios" / scenario_id / f"{mode}.json"
+
+
+def materialize_suite(
+    output_dir: Path,
+    environment_count_per_category: int,
+    seed: int,
+    *,
+    timing_protocol: str,
+    modes: tuple[str, ...] | list[str],
+    planner_repeats: int,
+) -> dict[str, Any]:
     suite_path = output_dir / "suite.json"
+    selected_modes = list(dict.fromkeys(modes))
     if suite_path.is_file():
         suite = _read_json(suite_path)
         if (
             suite.get("suite_seed") != seed
-            or suite.get("scenario_count") != count
-            or suite.get("generation_policy", {}).get("revision") != GENERATION_REVISION
+            or suite.get("environment_count_per_category") != environment_count_per_category
+            or suite.get("planner_repeats") != planner_repeats
+            or suite.get("timing_protocol") != timing_protocol
+            or suite.get("modes") != selected_modes
+            or suite.get("generation_policy", {}).get("revision") != BENCHMARK_GENERATION_REVISION
         ):
             raise ValueError(
-                "existing suite.json does not match the requested seed/count/generation revision; "
+                "existing suite.json does not match the requested seed/environment "
+                "count/planner repeats/timing protocol/modes/generation revision; "
                 "use a new output directory"
             )
         return suite
-    suite = generate_suite(count, seed)
-    for scenario in suite["scenarios"]:
-        _write_json(output_dir / "scenarios" / f"{scenario['id']}.json", scenario)
+    suite = generate_benchmark_suite(
+        environment_count_per_category,
+        seed,
+        timing_protocol=timing_protocol,
+        modes=selected_modes,
+    )
+    suite["planner_repeats"] = planner_repeats
+    for environment in suite["scenarios"]:
+        if timing_protocol == "absolute_world_time":
+            scenario = materialize_scenario_for_mode(environment, selected_modes[0])
+            _write_json(
+                _scenario_path(
+                    output_dir,
+                    environment["id"],
+                    selected_modes[0],
+                    timing_protocol,
+                ),
+                scenario,
+            )
+        else:
+            for mode in selected_modes:
+                _write_json(
+                    _scenario_path(
+                        output_dir,
+                        environment["id"],
+                        mode,
+                        timing_protocol,
+                    ),
+                    materialize_scenario_for_mode(environment, mode),
+                )
     _write_json(suite_path, suite)
     return suite
 
@@ -775,18 +1192,14 @@ def _parse_ros_log(path: Path) -> dict[str, Any]:
         "candidate_rejection_reasons": reasons,
         "no_valid_trajectory_count": text.count("NoValidTrajectoryError"),
         "jtc_error_count": len(re.findall(r"JTC dynamic plan .* entered", text)),
-        "world_start_unix_s": (
-            None if world_start_match is None else int(world_start_match.group(1)) * 1e-9
-        ),
+        "world_start_unix_s": (None if world_start_match is None else int(world_start_match.group(1)) * 1e-9),
         "first_planning_submit_from_world_s": (
             None if initial_submit_match is None else float(initial_submit_match.group(1))
         ),
         "initial_world_warmup_observations": (
             None if initial_submit_match is None else int(initial_submit_match.group(2))
         ),
-        "initial_world_warmup_age_s": (
-            None if initial_submit_match is None else float(initial_submit_match.group(3))
-        ),
+        "initial_world_warmup_age_s": (None if initial_submit_match is None else float(initial_submit_match.group(3))),
     }
 
 
@@ -872,6 +1285,9 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     scenario_static_clearances = _finite(
         [item.get("minimum_static_environment_clearance_m") for item in scenario_objects]
     )
+    scenario_static_interaction_clearances = _finite(
+        [item.get("minimum_static_interaction_clearance_m") for item in scenario_objects]
+    )
     ros = _parse_ros_log(attempt_dir / "ros-replan.log")
     joint_l2, joint_l1 = _trajectory_segment_metrics(manifest_path, executed)
     selected_clearance = _selected_clearance(executed)
@@ -927,9 +1343,7 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         goal_reached=ros["goal_reached"],
         goal_time_s=ros["goal_time_s"],
         world_start_unix_s=(
-            ros["world_start_unix_s"]
-            if ros["world_start_unix_s"] is not None
-            else timing.get("world_start_unix_s")
+            ros["world_start_unix_s"] if ros["world_start_unix_s"] is not None else timing.get("world_start_unix_s")
         ),
         first_planning_submit_from_world_s=(
             ros["first_planning_submit_from_world_s"]
@@ -952,6 +1366,10 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         scheduled_crossing_time_min_s=min(scheduled_crossings, default=None),
         scheduled_crossing_time_max_s=max(scheduled_crossings, default=None),
         minimum_static_environment_clearance_m=min(scenario_static_clearances, default=None),
+        minimum_static_interaction_clearance_m=min(
+            scenario_static_interaction_clearances,
+            default=None,
+        ),
         brake_count=sum(event.get("type") == "brake" for event in events),
         guard_dynamic_collision_rejections=ros["candidate_rejection_reasons"].get("dynamic_collision", 0),
         candidate_rejection_reasons=ros["candidate_rejection_reasons"],
@@ -1044,6 +1462,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "scheduled_crossing_time_max_s": _describe([row.get("scheduled_crossing_time_max_s") for row in rows]),
         "minimum_static_environment_clearance_m": _describe(
             [row.get("minimum_static_environment_clearance_m") for row in rows]
+        ),
+        "minimum_static_interaction_clearance_m": _describe(
+            [row.get("minimum_static_interaction_clearance_m") for row in rows]
         ),
         "episode_duration_s": _describe([row.get("episode_duration_s") for row in rows]),
         "execution_duration_s": _describe([row.get("execution_duration_s") for row in rows]),
@@ -1165,12 +1586,16 @@ def write_reports(
         "schema_version": 5,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
+        "environment_count_per_category": suite.get("environment_count_per_category"),
+        "planner_repeats": suite.get("planner_repeats"),
+        "timing_protocol": suite.get("timing_protocol"),
         "run_count": len(rows),
         "modes": list(report_modes),
         "metric_semantics": {
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "dynamic_object_vs_static_environment": (
-                "intersection is allowed by benchmark policy; minimum clearance is diagnostic only"
+                "spawn-to-crossing trajectories require positive static clearance; "
+                "full-episode clearance is diagnostic because objects continue after leaving the interaction zone"
             ),
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
             "clearance": "selected candidate guard clearance plus successful MPD DenseCheck clearance",
@@ -1188,7 +1613,10 @@ def write_reports(
         "# ToDrawer 随机动态重规划基准报告",
         "",
         f"- suite seed：`{suite['suite_seed']}`",
-        f"- 场景数：{suite['scenario_count']}",
+        f"- 每类环境数：{suite.get('environment_count_per_category', '—')}",
+        f"- 冻结环境总数：{suite['scenario_count']}",
+        f"- 每环境 planner repeats：{suite.get('planner_repeats', '—')}",
+        f"- 时间协议：`{suite.get('timing_protocol', 'legacy')}`",
         f"- 已发现运行：{len(rows)}",
         "- 模式：" + "、".join(report_modes),
         "- 场景构造：包含水平/竖直穿越、匀速、匀加速、曲线和光滑速度/加速度波动；按 easy/moderate/hard 分层。硬场景仍保留一条空间通道或后续时间间隙，但不预先保证规划成功。",
@@ -1196,7 +1624,7 @@ def write_reports(
         "## 指标口径",
         "",
         "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。uncovered command gap 只统计相邻实际命令区间没有任何 JTC goal 覆盖的时间；guarded terminal hold 是显式发送且经过动态 guard 验证的末端保持；controller reference jump 是切换时新 goal 首点与旧控制参考之间的最大关节位置差。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
-        "动态物体必须避开机器人底座；与柜体、抽屉或货架相交允许穿模。静态环境最小余量只作诊断与可视化，不作为场景失败条件。",
+        "动态物体必须从 t=0 到 crossing anchor 的连续轨迹避开柜体、抽屉和货架，完整运动轨迹避开机器人底座，并在预定保护窗口内避开初始 Franka 的 56 个碰撞球；不满足条件的环境在执行前重采样。物体离开交互区后仍按方程运动，因此全 35 秒静态环境 clearance 仅作诊断。",
         "",
         "## 场景类型与难度",
         "",
@@ -1497,7 +1925,14 @@ def _run_command(command: list[str], cwd: Path, log_path: Path) -> int:
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    suite = materialize_suite(output_dir, args.scenario_count, args.suite_seed)
+    suite = materialize_suite(
+        output_dir,
+        args.environment_count_per_category,
+        args.suite_seed,
+        timing_protocol=args.timing_protocol,
+        modes=args.modes,
+        planner_repeats=args.planner_repeats,
+    )
     if args.report_only:
         rows = _existing_rows(output_dir)
         write_reports(output_dir, rows, suite)
@@ -1532,16 +1967,21 @@ def run_benchmark(args: argparse.Namespace) -> int:
         if row.get("pipeline_completed")
     }
     failures = 0
-    for repeat in range(args.repeats):
+    for repeat in range(args.planner_repeats):
         for scenario_index, scenario in enumerate(suite["scenarios"]):
             if scenario["category"] not in selected_categories:
                 continue
-            scenario_path = output_dir / "scenarios" / f"{scenario['id']}.json"
             modes = list(args.modes)
             shift = (scenario_index + repeat) % len(modes)
             modes = modes[shift:] + modes[:shift]
             planner_seed = (args.suite_seed + 1009 * scenario_index + 9176 * repeat) % 2147483647
             for mode in modes:
+                scenario_path = _scenario_path(
+                    output_dir,
+                    scenario["id"],
+                    mode,
+                    args.timing_protocol,
+                )
                 key = (scenario["id"], repeat, mode)
                 if key in completed_keys:
                     print(f"[skip] completed {scenario['id']} repeat={repeat} mode={mode}")
@@ -1565,10 +2005,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         DIFFICULTY_BY_CATEGORY.get(scenario["category"]),
                     ),
                     "repeat": repeat,
+                    "planner_repeat": repeat,
                     "mode": mode,
                     "phase": phase,
                     "timing_mode": timing_mode,
                     "planner_seed": planner_seed,
+                    "environment_seed": scenario.get("environment_seed"),
+                    "environment_index": scenario.get("environment_index"),
+                    "timing_protocol": args.timing_protocol,
                     "scenario_file": scenario_path.as_posix(),
                 }
                 if phase == "factorized":
@@ -1648,16 +2092,25 @@ def _parser() -> argparse.ArgumentParser:
         default=REPO_ROOT / "scripts" / "isaaclab" / "logs" / "todrawer-random-benchmark" / timestamp,
     )
     parser.add_argument(
-        "--scenario-count",
+        "--environment-count-per-category",
         type=int,
-        default=50,
-        help="Random scenarios; 50 gives five scenarios per category",
+        default=DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY,
+        help="Independently sampled frozen environments for every category",
     )
     parser.add_argument(
-        "--repeats",
+        "--planner-repeats",
         type=int,
-        default=5,
-        help="Independent planner seeds per frozen scenario",
+        default=DEFAULT_PLANNER_REPEATS,
+        help="Planner seeds per frozen environment, shared by every mode",
+    )
+    parser.add_argument(
+        "--timing-protocol",
+        choices=TIMING_PROTOCOLS,
+        default=DEFAULT_TIMING_PROTOCOL,
+        help=(
+            "absolute_world_time shares crossing times exactly; motion_aligned "
+            "uses per-mode motion-start profiles while retaining shared geometry"
+        ),
     )
     parser.add_argument("--suite-seed", type=int, default=20260829)
     parser.add_argument("--duration-sec", type=float, default=35.0)
@@ -1733,8 +2186,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.dry_run:
         args.skip_build = True
-    if args.repeats < 1 or args.duration_sec <= 0.0 or args.plan_rate_hz <= 0.0:
-        raise SystemExit("repeats, duration-sec, and plan-rate-hz must be positive")
+    if (
+        args.environment_count_per_category < 1
+        or args.planner_repeats < 1
+        or args.duration_sec <= 0.0
+        or args.plan_rate_hz <= 0.0
+    ):
+        raise SystemExit(
+            "environment-count-per-category, planner-repeats, duration-sec, " "and plan-rate-hz must be positive"
+        )
     generic_factorized_selected = any(mode in {"f1", "f2", "f3"} for mode in args.modes)
     if not args.report_only and generic_factorized_selected and args.factorized_timing_checkpoint is None:
         parser.error("--factorized-timing-checkpoint is required when f1/f2/f3 is selected")

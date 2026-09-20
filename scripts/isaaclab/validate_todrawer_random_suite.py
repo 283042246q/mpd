@@ -15,11 +15,13 @@ import numpy as np
 
 from scripts.isaaclab.benchmark_todrawer_random import (
     BASE_CROSSINGS,
+    BENCHMARK_GENERATION_REVISION,
     CATEGORIES,
     GENERATION_REVISION,
     MAX_GENERATION_RESAMPLE_ATTEMPTS,
     SAFE_CONTROL_CROSSINGS,
     generate_suite,
+    materialize_scenario_for_mode,
 )
 from scripts.isaaclab.todrawer_scenario_validation import (
     STARTUP_SAFE_ANCHOR_BOUNDS,
@@ -27,6 +29,7 @@ from scripts.isaaclab.todrawer_scenario_validation import (
     initial_franka_trajectory_clearance,
     load_static_environment_boxes,
     object_position_at,
+    static_interaction_clearance,
     trajectory_clearances,
 )
 
@@ -77,6 +80,8 @@ def validate_scenario(
     _require(clock.get("independent_of_execution") is True, f"{scenario_id}: clock is execution-dependent")
     objects = scenario.get("objects")
     mode_profile = scenario.get("mode_timing_profile")
+    benchmark_environment = scenario.get("benchmark_environment")
+    safe_sampling = mode_profile is not None or benchmark_environment is not None
     _require(isinstance(objects, list) and 1 <= len(objects) <= 3, f"{scenario_id}: object count")
     _finite_tree(scenario)
     warnings = []
@@ -99,7 +104,7 @@ def validate_scenario(
         at_crossing = object_position_at(item, float(item["crossing_time_s"]))
         crossing_error = math.dist(at_crossing, item["anchor_position"])
         _require(crossing_error < 1e-7, f"{scenario_id}/{object_id}: crossing error {crossing_error}")
-        if mode_profile is None:
+        if not safe_sampling:
             base = ANCHORS[anchor_id]["anchor"]
             jitter_limit = 0.020 if category == "inflated_dense" else 0.015
             _require(
@@ -129,7 +134,7 @@ def validate_scenario(
             <= 1e-6,
             f"{scenario_id}/{object_id}: stored static clearance mismatch",
         )
-        if mode_profile is not None:
+        if safe_sampling:
             attempt_sampling = scenario.get("attempt_sampling", {})
             protection_until_s = float(
                 attempt_sampling.get(
@@ -157,6 +162,27 @@ def validate_scenario(
                 )
                 <= 1e-9,
                 f"{scenario_id}/{object_id}: stored initial Franka clearance mismatch",
+            )
+        if benchmark_environment is not None:
+            interaction_clearance = static_interaction_clearance(
+                item,
+                static_boxes=boxes,
+            )
+            _require(
+                interaction_clearance > 0.0,
+                f"{scenario_id}/{object_id}: static interaction-window intersection",
+            )
+            _require(
+                abs(
+                    float(
+                        item.get(
+                            "minimum_static_interaction_clearance_m", -1.0
+                        )
+                    )
+                    - interaction_clearance
+                )
+                <= 1e-6,
+                f"{scenario_id}/{object_id}: stored static interaction clearance mismatch",
             )
         attempts = int(item.get("generation_resample_attempts", 0))
         maximum_attempts = int(
@@ -234,18 +260,47 @@ def validate_scenario(
             max(times) <= expected_goal - goal_reserve + 1e-12,
             f"{scenario_id}: crossing is later than the expected goal reserve",
         )
+    if benchmark_environment is not None and len(objects) >= 2:
+        contract = scenario.get("attempt_sampling", {}).get(
+            "direction_line_contract", {}
+        )
+        _require(
+            contract.get("satisfied") is True
+            and int(contract.get("required_distinct_lines", 0)) >= 2,
+            f"{scenario_id}: multi-object direction-line contract is not satisfied",
+        )
     return warnings
 
 
 def validate_suite(payload: dict[str, Any], *, static_scene: Path | None = None) -> list[str]:
     _require(payload.get("schema") == "mpd_todrawer_random_suite", "bad suite schema")
-    _require(payload.get("schema_version") == 4, "suite schema_version must be 4")
-    _require(payload.get("generation_policy", {}).get("revision") == GENERATION_REVISION, "stale generation revision")
+    schema_version = payload.get("schema_version")
+    _require(schema_version in {4, 5}, "suite schema_version must be 4 or 5")
+    expected_revision = (
+        BENCHMARK_GENERATION_REVISION if schema_version == 5 else GENERATION_REVISION
+    )
+    _require(
+        payload.get("generation_policy", {}).get("revision") == expected_revision,
+        "stale generation revision",
+    )
     scenarios = payload.get("scenarios")
     _require(isinstance(scenarios, list), "suite scenarios must be a list")
     _require(payload.get("scenario_count") == len(scenarios), "scenario_count mismatch")
     boxes = load_static_environment_boxes(static_scene)
-    return [warning for scenario in scenarios for warning in validate_scenario(scenario, static_boxes=boxes)]
+    warnings = []
+    for scenario in scenarios:
+        variants = scenario.get("benchmark_mode_variants")
+        if variants:
+            for mode in payload.get("modes", []):
+                warnings.extend(
+                    validate_scenario(
+                        materialize_scenario_for_mode(scenario, mode),
+                        static_boxes=boxes,
+                    )
+                )
+        else:
+            warnings.extend(validate_scenario(scenario, static_boxes=boxes))
+    return warnings
 
 
 def _percentiles(values: list[float]) -> dict[str, float]:

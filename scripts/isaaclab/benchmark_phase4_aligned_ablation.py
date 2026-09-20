@@ -33,8 +33,8 @@ ABLATION_PIPELINE_ARGS = {
 }
 
 
-def planned_run_count(scenario_count: int, repeats: int, modes) -> int:
-    return int(scenario_count) * int(repeats) * len(modes)
+def planned_run_count(environment_count_per_category: int, planner_repeats: int, modes) -> int:
+    return int(environment_count_per_category) * len(benchmark.CATEGORIES) * int(planner_repeats) * len(modes)
 
 
 def _parser():
@@ -50,14 +50,10 @@ def _parser():
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     parser.description = __doc__
     parser.set_defaults(
-        output_dir=benchmark.REPO_ROOT
-        / "scripts"
-        / "isaaclab"
-        / "logs"
-        / "phase4-aligned-ablation"
-        / timestamp,
-        scenario_count=40,
-        repeats=2,
+        output_dir=benchmark.REPO_ROOT / "scripts" / "isaaclab" / "logs" / "phase4-aligned-ablation" / timestamp,
+        environment_count_per_category=4,
+        planner_repeats=2,
+        timing_protocol="motion_aligned",
         modes=list(ABLATION_MODE_SPECS),
     )
     return parser
@@ -65,14 +61,15 @@ def _parser():
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
-    if args.repeats < 1 or args.scenario_count < 1:
-        raise SystemExit("scenario-count and repeats must be positive")
+    if args.planner_repeats < 1 or args.environment_count_per_category < 1:
+        raise SystemExit("environment-count-per-category and planner-repeats must be positive")
     if args.dry_run:
         args.skip_build = True
     print(
         "planned paired runs: "
-        f"{planned_run_count(args.scenario_count, args.repeats, args.modes)} "
-        f"({args.scenario_count} scenarios x {args.repeats} repeats x "
+        f"{planned_run_count(args.environment_count_per_category, args.planner_repeats, args.modes)} "
+        f"({args.environment_count_per_category} environments/category x "
+        f"{len(benchmark.CATEGORIES)} categories x {args.planner_repeats} repeats x "
         f"{len(args.modes)} modes)"
     )
     benchmark.MODE_SPECS = dict(ABLATION_MODE_SPECS)

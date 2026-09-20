@@ -20,10 +20,18 @@ ALIGNED_CONFIG = Path(
 def test_ablation_defaults_to_640_paired_runs():
     args = _parser().parse_args([])
 
-    assert args.scenario_count == 40
-    assert args.repeats == 2
+    assert args.environment_count_per_category == 4
+    assert args.planner_repeats == 2
+    assert args.timing_protocol == "motion_aligned"
     assert args.modes == list(ABLATION_MODE_SPECS)
-    assert planned_run_count(args.scenario_count, args.repeats, args.modes) == 640
+    assert (
+        planned_run_count(
+            args.environment_count_per_category,
+            args.planner_repeats,
+            args.modes,
+        )
+        == 640
+    )
     assert len(ABLATION_PIPELINE_ARGS) == 6
 
 
@@ -64,7 +72,4 @@ def test_materialized_ros_config_uses_full_adaptive_deviation_weight(tmp_path):
 def test_every_one_factor_mode_changes_exactly_one_pipeline_switch():
     assert ABLATION_MODE_SPECS["phase4"] == ("phase4", None)
     assert ABLATION_MODE_SPECS["aligned_all"] == ("phase4_aligned", None)
-    assert all(
-        arguments[-1] == "off" and len(arguments) == 2
-        for arguments in ABLATION_PIPELINE_ARGS.values()
-    )
+    assert all(arguments[-1] == "off" and len(arguments) == 2 for arguments in ABLATION_PIPELINE_ARGS.values())

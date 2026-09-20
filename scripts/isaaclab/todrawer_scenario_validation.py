@@ -33,6 +33,7 @@ TRAJECTORY_SAMPLE_DT_S = 0.05
 # objects may pass through it; only the robot-base exclusion is a hard reject.
 MINIMUM_STATIC_CLEARANCE_M = 0.0
 STATIC_CLEARANCE_WARNING_M = 0.02
+STATIC_INTERACTION_WINDOW_HALF_WIDTH_S = 0.0
 INITIAL_FRANKA_Q = (0.0, -math.pi / 4.0, 0.0, -3.0 * math.pi / 4.0, 0.0, math.pi / 2.0, math.pi / 4.0)
 INITIAL_FRANKA_CLEARANCE_SAMPLE_DT_S = 0.02
 # These boxes keep randomized anchors inside the ToDrawer work volume while
@@ -282,23 +283,28 @@ def trajectory_clearances(
     item: dict[str, Any],
     *,
     static_boxes: tuple[AxisAlignedBox, ...] | None = None,
+    start_s: float = 0.0,
     duration_s: float = DESIGN_EPISODE_DURATION_S,
     sample_dt_s: float = TRAJECTORY_SAMPLE_DT_S,
 ) -> TrajectoryClearance:
     """Sample the complete object trajectory against robot base and furniture."""
 
-    if duration_s <= 0.0 or sample_dt_s <= 0.0:
-        raise ValueError("trajectory duration and sample dt must be positive")
+    if start_s < 0.0 or duration_s < start_s or sample_dt_s <= 0.0:
+        raise ValueError("trajectory time interval or sample dt is invalid")
     boxes = load_static_environment_boxes() if static_boxes is None else static_boxes
     half_extent = _object_half_extent(item)
     base_center = tuple(
         0.5 * (lower + upper) for lower, upper in zip(ROBOT_BASE_EXCLUSION_MIN, ROBOT_BASE_EXCLUSION_MAX)
     )
     base_half = tuple(0.5 * (upper - lower) for lower, upper in zip(ROBOT_BASE_EXCLUSION_MIN, ROBOT_BASE_EXCLUSION_MAX))
-    sample_count = math.ceil(duration_s / sample_dt_s)
-    times = [duration_s * index / sample_count for index in range(sample_count + 1)]
+    interval_s = duration_s - start_s
+    sample_count = max(1, math.ceil(interval_s / sample_dt_s))
+    times = [
+        start_s + interval_s * index / sample_count
+        for index in range(sample_count + 1)
+    ]
     crossing_time = float(item["crossing_time_s"])
-    if 0.0 <= crossing_time <= duration_s:
+    if start_s <= crossing_time <= duration_s:
         times.append(crossing_time)
     positions = np.asarray(
         [object_position_at(item, elapsed_s) for elapsed_s in times],
@@ -333,3 +339,27 @@ def validate_trajectory_clearance(
     if clearance.robot_base_m <= 0.0:
         raise ValueError(f"{item.get('id', '<object>')} intersects the robot-base exclusion")
     return clearance
+
+
+def static_interaction_clearance(
+    item: dict[str, Any],
+    *,
+    static_boxes: tuple[AxisAlignedBox, ...] | None = None,
+    half_window_s: float = STATIC_INTERACTION_WINDOW_HALF_WIDTH_S,
+) -> float:
+    """Check furniture clearance continuously from spawn through the crossing.
+
+    Generated objects continue indefinitely after the robot interaction. A
+    full-episode furniture check would therefore reject otherwise valid
+    crossing lines after the object has left the benchmark interaction zone.
+    """
+
+    if half_window_s < 0.0:
+        raise ValueError("static interaction half-window must be non-negative")
+    crossing = float(item["crossing_time_s"])
+    clearance = trajectory_clearances(
+        item,
+        static_boxes=static_boxes,
+        duration_s=crossing + half_window_s,
+    )
+    return clearance.static_environment_m

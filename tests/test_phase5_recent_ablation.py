@@ -20,10 +20,18 @@ PHASE5_CONFIG = Path(
 def test_ablation_defaults_to_1040_paired_runs():
     args = _parser().parse_args([])
 
-    assert args.scenario_count == 40
-    assert args.repeats == 2
+    assert args.environment_count_per_category == 4
+    assert args.planner_repeats == 2
+    assert args.timing_protocol == "motion_aligned"
     assert args.modes == list(ABLATION_MODE_SPECS)
-    assert planned_run_count(args.scenario_count, args.repeats, args.modes) == 1040
+    assert (
+        planned_run_count(
+            args.environment_count_per_category,
+            args.planner_repeats,
+            args.modes,
+        )
+        == 1040
+    )
     assert len(ABLATION_PIPELINE_ARGS) == 10
 
 

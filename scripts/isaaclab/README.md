@@ -139,12 +139,13 @@ scripts/isaaclab/run_dynamic_demo_pipeline.sh \
 
 ### Paired random ToDrawer benchmark
 
-`benchmark_todrawer_random.py` freezes every random world to a repository artifact and
-runs the same scenario/planner seed against Phase 4, Phase 4 aligned, and all three
-Phase-5 timing modes. The default 50 scenarios x 5 repeats x 5 modes is 1250 sequential
-GPU/ROS runs and is intended as the large comparison suite. It gives each of the ten
-environment categories five independently generated worlds and each frozen world five
-independent planner seeds. Start a smaller smoke suite before launching the full matrix:
+`benchmark_todrawer_random.py` freezes every random world to an output artifact and
+runs paired planner seeds against Phase 4, Phase 4 aligned, and all three Phase-5 timing
+modes. The default is 5 environments/category x 10 categories x 5 planner repeats x
+5 modes = 1250 sequential GPU/ROS runs. Every environment independently resamples its
+anchors, directions, speeds, sizes, motion laws, and crossing times. Planner repeats
+keep that environment fixed and change only the planner seed; every mode receives the
+same seed sequence. Start a smaller smoke suite before launching the full matrix:
 
 ```bash
 cd /home/eric/Projects/MotionPlanningDiffusion/mpd
@@ -152,8 +153,9 @@ cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
   --output-dir scripts/isaaclab/logs/todrawer-random-smoke \
-  --scenario-count 10 \
-  --repeats 1 \
+  --environment-count-per-category 1 \
+  --planner-repeats 1 \
+  --timing-protocol motion_aligned \
   --duration-sec 20 \
   --categories curved_crossing \
   --modes phase4 phase4_aligned joint
@@ -165,8 +167,9 @@ Full benchmark:
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
   --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
-  --scenario-count 50 \
-  --repeats 5 \
+  --environment-count-per-category 5 \
+  --planner-repeats 5 \
+  --timing-protocol motion_aligned \
   --duration-sec 35 \
   --suite-seed 20260829
 ```
@@ -179,8 +182,9 @@ Phase 5 joint, and F1/F2/F3 comparison under both `c` and `tau_r`
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
   --output-dir scripts/isaaclab/logs/todrawer-factorized-c-tau-r-50x5x9 \
-  --scenario-count 50 \
-  --repeats 5 \
+  --environment-count-per-category 5 \
+  --planner-repeats 5 \
+  --timing-protocol motion_aligned \
   --duration-sec 35 \
   --suite-seed 20260829 \
   --modes phase4 phase4_aligned joint \
@@ -197,6 +201,17 @@ explicit spatial-basis adaptation by default for factorized modes;
 run this 29-to-21 checkpoint/config pair. Within each representation, F1/F2/F3 share one
 checkpoint so the comparison isolates sampler design. The generic legacy modes
 `f1/f2/f3` remain available with `--factorized-timing-checkpoint`.
+
+`motion_aligned` is the default timing protocol. It holds object geometry and motion
+parameters fixed across modes, then shifts crossing times using each mode's measured
+significant-motion profile. `absolute_world_time` also shares crossing times exactly,
+so every mode sees an identical world-clock trajectory. Both protocols perform bounded
+rejection sampling before execution: robot-base clearance over the full design episode,
+continuous static-furniture clearance from spawn through the crossing anchor, initial parked-Franka
+56-sphere clearance, anchor work-volume bounds, valid crossing windows, distinct
+multi-object direction lines, and finite valid motion parameters. Full-episode furniture
+clearance remains diagnostic because objects intentionally continue beyond the robot
+interaction region and may later traverse warehouse furniture.
 
 To run the ten scenario categories sequentially and retry each category until it reaches
 the goal without an earlier controlled brake, use the until-success runner. Select one
@@ -246,8 +261,8 @@ joint-displacement thresholds with:
   --output /tmp/todrawer-mode-motion-start.json
 ```
 
-Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
-planner-seed repeats x 8 modes = 640 paired runs):
+Phase-4 aligned one-factor-off ablation (default: 4 environments/category x 10
+categories x 2 planner repeats x 8 modes = 640 paired runs):
 
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
@@ -295,8 +310,9 @@ failures:
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
   --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
-  --scenario-count 50 \
-  --repeats 5 \
+  --environment-count-per-category 5 \
+  --planner-repeats 5 \
+  --timing-protocol motion_aligned \
   --duration-sec 35 \
   --skip-build \
   --retry-failure-class dds_startup \
