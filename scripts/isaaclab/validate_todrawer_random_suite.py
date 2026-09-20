@@ -22,7 +22,9 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     generate_suite,
 )
 from scripts.isaaclab.todrawer_scenario_validation import (
+    STARTUP_SAFE_ANCHOR_BOUNDS,
     STATIC_CLEARANCE_WARNING_M,
+    initial_franka_trajectory_clearance,
     load_static_environment_boxes,
     object_position_at,
     trajectory_clearances,
@@ -74,6 +76,7 @@ def validate_scenario(
     _require(clock.get("mode") == "first_robot_state_after_scenario_load", f"{scenario_id}: bad clock mode")
     _require(clock.get("independent_of_execution") is True, f"{scenario_id}: clock is execution-dependent")
     objects = scenario.get("objects")
+    mode_profile = scenario.get("mode_timing_profile")
     _require(isinstance(objects, list) and 1 <= len(objects) <= 3, f"{scenario_id}: object count")
     _finite_tree(scenario)
     warnings = []
@@ -96,15 +99,25 @@ def validate_scenario(
         at_crossing = object_position_at(item, float(item["crossing_time_s"]))
         crossing_error = math.dist(at_crossing, item["anchor_position"])
         _require(crossing_error < 1e-7, f"{scenario_id}/{object_id}: crossing error {crossing_error}")
-        base = ANCHORS[anchor_id]["anchor"]
-        jitter_limit = 0.020 if category == "inflated_dense" else 0.015
-        _require(
-            all(
-                abs(float(actual) - float(expected)) <= jitter_limit + 1e-12
-                for actual, expected in zip(item["anchor_position"], base)
-            ),
-            f"{scenario_id}/{object_id}: anchor jitter exceeds {jitter_limit}",
-        )
+        if mode_profile is None:
+            base = ANCHORS[anchor_id]["anchor"]
+            jitter_limit = 0.020 if category == "inflated_dense" else 0.015
+            _require(
+                all(
+                    abs(float(actual) - float(expected)) <= jitter_limit + 1e-12
+                    for actual, expected in zip(item["anchor_position"], base)
+                ),
+                f"{scenario_id}/{object_id}: anchor jitter exceeds {jitter_limit}",
+            )
+        else:
+            lower, upper = STARTUP_SAFE_ANCHOR_BOUNDS[str(anchor_id)]
+            _require(
+                all(
+                    low - 1e-12 <= float(actual) <= high + 1e-12
+                    for actual, low, high in zip(item["anchor_position"], lower, upper)
+                ),
+                f"{scenario_id}/{object_id}: startup-safe anchor is outside its work-volume bounds",
+            )
         clearance = trajectory_clearances(item, static_boxes=boxes)
         _require(clearance.robot_base_m > 0.0, f"{scenario_id}/{object_id}: robot-base intersection")
         _require(
@@ -116,8 +129,46 @@ def validate_scenario(
             <= 1e-6,
             f"{scenario_id}/{object_id}: stored static clearance mismatch",
         )
+        if mode_profile is not None:
+            attempt_sampling = scenario.get("attempt_sampling", {})
+            protection_until_s = float(
+                attempt_sampling.get(
+                    "parked_franka_protection_until_s",
+                    item["crossing_time_s"],
+                )
+            )
+            initial_clearance = initial_franka_trajectory_clearance(
+                item, end_s=protection_until_s
+            )
+            required = float(
+                attempt_sampling.get(
+                    "minimum_initial_franka_clearance_m", 0.0
+                )
+            )
+            _require(
+                initial_clearance.minimum_m > required,
+                f"{scenario_id}/{object_id}: initial Franka sweep clearance "
+                f"{initial_clearance.minimum_m:.6f} <= {required:.6f}",
+            )
+            _require(
+                abs(
+                    float(item.get("minimum_initial_franka_clearance_m", -1.0))
+                    - initial_clearance.minimum_m
+                )
+                <= 1e-9,
+                f"{scenario_id}/{object_id}: stored initial Franka clearance mismatch",
+            )
         attempts = int(item.get("generation_resample_attempts", 0))
-        _require(1 <= attempts <= MAX_GENERATION_RESAMPLE_ATTEMPTS, f"{scenario_id}/{object_id}: bad resample count")
+        maximum_attempts = int(
+            scenario.get("attempt_sampling", {}).get(
+                "maximum_generation_resample_attempts",
+                MAX_GENERATION_RESAMPLE_ATTEMPTS,
+            )
+        )
+        _require(
+            1 <= attempts <= maximum_attempts,
+            f"{scenario_id}/{object_id}: bad resample count",
+        )
         if clearance.static_environment_m < STATIC_CLEARANCE_WARNING_M:
             warnings.append(
                 f"{scenario_id}/{object_id}: static clearance is only {clearance.static_environment_m:.4f} m"
@@ -155,11 +206,34 @@ def validate_scenario(
         _require(
             0.90 - 1e-12 <= delayed[0] - statistics.mean(near) <= 1.20 + 1e-12, f"{scenario_id}: mixed delayed gap"
         )
-    elif category == "safe_control":
+    elif category == "safe_control" and mode_profile is None:
         _require(set(anchor_ids) <= {"S0", "S1"}, f"{scenario_id}: safe-control anchor")
         _require(all(4.40 - 1e-12 <= time <= 6.00 + 1e-12 for time in times), f"{scenario_id}: safe-control time")
-    else:
+    elif mode_profile is None:
         _require(all(4.0 <= time <= 6.5 for time in times), f"{scenario_id}: crossing outside primary window")
+    if mode_profile is not None:
+        motion_start = float(mode_profile["significant_motion_start_s"])
+        minimum_delay = float(mode_profile["minimum_crossing_after_motion_start_s"])
+        expected_goal = float(mode_profile["expected_goal_s"])
+        goal_reserve = float(mode_profile["goal_crossing_reserve_s"])
+        attempt_sampling = scenario.get("attempt_sampling", {})
+        if "parked_franka_protection_until_s" in attempt_sampling:
+            _require(
+                abs(
+                    float(attempt_sampling["parked_franka_protection_until_s"])
+                    - (expected_goal - goal_reserve)
+                )
+                <= 1e-12,
+                f"{scenario_id}: parked-Franka protection window mismatch",
+            )
+        _require(
+            min(times) >= motion_start + minimum_delay - 1e-12,
+            f"{scenario_id}: crossing precedes mode motion-start allowance",
+        )
+        _require(
+            max(times) <= expected_goal - goal_reserve + 1e-12,
+            f"{scenario_id}: crossing is later than the expected goal reserve",
+        )
     return warnings
 
 

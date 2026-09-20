@@ -213,13 +213,38 @@ of `phase4`, `phase4_aligned`, `joint`, `f1_c`, `f2_c`, `f3_c`, `f1_tau_r`,
   --skip-build
 ```
 
-Planner and anchor seeds change deterministically on every retry. Every attempt with a
-replay manifest is rendered, whether it passes or fails, under
+Planner and geometry seeds change deterministically on every retry. Each attempt uses
+the selected mode's measured significant-motion profile to move the original crossing
+schedule later, while retaining a 0.5 s reserve before the mode's expected goal. Anchor,
+direction, speed, size, and crossing time are all resampled. The complete moving box is
+checked from world time zero through the mode's expected-goal safety boundary against
+all 56 collision spheres of the initial Franka pose; candidates must retain more than
+5 mm clearance and remain
+outside the robot-base exclusion for the full episode. Multi-object attempts additionally
+require at least two motion-line orientations separated by 35 degrees or more; opposite
+vectors on the same line count as one orientation. Old successful artifacts without this
+policy revision are rerun instead of skipped. Every attempt with a replay
+manifest is rendered, whether it passes or fails, under
 `runs/<scenario>/<mode>/attempt-NNN/replay.mp4`. Only a passing attempt advances to the
 next category. Successful replay copies are indexed under `videos/<mode>/`, while exact
 scenario JSON, seeds, assessment, screenshot, and replay summary remain in the attempt
 directory. Infrastructure failures that produce no replay manifest are recorded but
 cannot be rendered.
+
+After execution, the runner measures the actual 0.01 rad robot-motion start from the
+recorded trajectory and audits every dynamic object against parked Franka up to that
+measured time. A logged `q_pos_start is in collision`, or a failed measured pre-motion
+clearance audit, makes the attempt fail even if it later reaches the goal without braking.
+
+Audit the significant-motion profiles from recorded replays at both 0.01 and 0.02 rad
+joint-displacement thresholds with:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/analyze_todrawer_mode_motion_start.py \
+  --logs-root scripts/isaaclab/logs \
+  --output /tmp/todrawer-mode-motion-start.json
+```
 
 Phase-4 aligned one-factor-off ablation (default: 40 frozen scenarios x 2
 planner-seed repeats x 8 modes = 640 paired runs):

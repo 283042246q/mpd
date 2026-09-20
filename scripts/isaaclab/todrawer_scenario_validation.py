@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 from dataclasses import dataclass
+from functools import lru_cache
+import io
 import json
 import math
 from pathlib import Path
@@ -30,6 +33,18 @@ TRAJECTORY_SAMPLE_DT_S = 0.05
 # objects may pass through it; only the robot-base exclusion is a hard reject.
 MINIMUM_STATIC_CLEARANCE_M = 0.0
 STATIC_CLEARANCE_WARNING_M = 0.02
+INITIAL_FRANKA_Q = (0.0, -math.pi / 4.0, 0.0, -3.0 * math.pi / 4.0, 0.0, math.pi / 2.0, math.pi / 4.0)
+INITIAL_FRANKA_CLEARANCE_SAMPLE_DT_S = 0.02
+# These boxes keep randomized anchors inside the ToDrawer work volume while
+# allowing the complete incoming path to remain clear of the parked arm.  The
+# exact geometry is still accepted/rejected by the 56-sphere test below.
+STARTUP_SAFE_ANCHOR_BOUNDS = {
+    "A0": ((0.22, 0.24, 0.54), (0.34, 0.42, 0.69)),
+    "A1": ((-0.02, 0.24, 0.50), (0.12, 0.42, 0.66)),
+    "A2": ((-0.25, 0.24, 0.48), (-0.11, 0.42, 0.64)),
+    "S0": ((0.48, -0.48, 0.48), (0.62, -0.32, 0.62)),
+    "S1": ((0.38, -0.64, 0.62), (0.54, -0.46, 0.78)),
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +58,13 @@ class AxisAlignedBox:
 class TrajectoryClearance:
     robot_base_m: float
     static_environment_m: float
+
+
+@dataclass(frozen=True)
+class InitialFrankaClearance:
+    minimum_m: float
+    time_s: float
+    sphere_index: int
 
 
 def _finite_vector(value: Any, size: int, name: str) -> tuple[float, ...]:
@@ -148,6 +170,112 @@ def _object_half_extent(item: dict[str, Any]) -> tuple[float, float, float]:
     size = _finite_vector(local_sdf.get("size_xyz"), 3, "local_sdf.size_xyz")
     padding = float(item["inflation"]["base_m"])
     return tuple(0.5 * value + padding for value in size)
+
+
+@lru_cache(maxsize=1)
+def initial_franka_collision_spheres() -> tuple[np.ndarray, np.ndarray]:
+    """Return all 56 MPD collision spheres at the benchmark's initial q."""
+
+    # Keep this import lazy so lightweight report readers do not initialize
+    # torch_robotics.  The benchmark runtime already requires this dependency.
+    import torch
+
+    # torch_robotics still references removed NumPy aliases in some versions.
+    for name, value in (("int", int), ("float", float), ("bool", bool)):
+        if name not in np.__dict__:
+            setattr(np, name, value)
+    from torch_robotics.robots import RobotPanda
+
+    tensor_args = {"device": "cpu", "dtype": torch.float64}
+    with contextlib.redirect_stdout(io.StringIO()):
+        robot = RobotPanda(gripper=True, tensor_args=tensor_args)
+    q = torch.as_tensor([INITIAL_FRANKA_Q], **tensor_args)
+    poses = robot.fk_collision_spheres(q)
+    centers = (
+        torch.stack(poses)
+        .transpose(0, 1)[0, :, :3, 3]
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.float64, copy=True)
+    )
+    radii = (
+        robot.link_collision_spheres_radii.detach()
+        .cpu()
+        .numpy()
+        .astype(np.float64, copy=True)
+    )
+    if centers.shape != (56, 3) or radii.shape != (56,):
+        raise ValueError(
+            "unexpected Franka collision-sphere geometry: "
+            f"centers={centers.shape}, radii={radii.shape}"
+        )
+    centers.setflags(write=False)
+    radii.setflags(write=False)
+    return centers, radii
+
+
+def initial_franka_trajectory_clearance(
+    item: dict[str, Any],
+    *,
+    end_s: float | None = None,
+    sample_dt_s: float = INITIAL_FRANKA_CLEARANCE_SAMPLE_DT_S,
+) -> InitialFrankaClearance:
+    """Check the full moving box against every parked-Franka collision sphere.
+
+    The interval includes both endpoints and defaults to ``0..crossing_time``.
+    Object base inflation is part of its effective geometry.  Horizon-rate
+    inflation is intentionally not accumulated from episode start: the runtime
+    applies it from each observation snapshot into that request's future.
+    """
+
+    crossing_time = float(item["crossing_time_s"])
+    interval_end = crossing_time if end_s is None else float(end_s)
+    if not math.isfinite(interval_end) or interval_end < 0.0 or sample_dt_s <= 0.0:
+        raise ValueError("initial-Franka clearance interval is invalid")
+    sample_count = max(1, math.ceil(interval_end / sample_dt_s))
+    times = np.linspace(0.0, interval_end, sample_count + 1, dtype=np.float64)
+    if 0.0 <= crossing_time <= interval_end and not np.any(np.isclose(times, crossing_time, atol=1e-12)):
+        times = np.sort(np.append(times, crossing_time))
+    positions = np.asarray(
+        [object_position_at(item, float(elapsed_s)) for elapsed_s in times],
+        dtype=np.float64,
+    )
+    half_extent = np.asarray(_object_half_extent(item), dtype=np.float64)
+    sphere_centers, sphere_radii = initial_franka_collision_spheres()
+    gaps = np.maximum(
+        np.abs(positions[:, None, :] - sphere_centers[None, :, :])
+        - half_extent[None, None, :],
+        0.0,
+    )
+    signed = np.linalg.norm(gaps, axis=2) - sphere_radii[None, :]
+    flat_index = int(np.argmin(signed))
+    time_index, sphere_index = np.unravel_index(flat_index, signed.shape)
+    return InitialFrankaClearance(
+        minimum_m=float(signed[time_index, sphere_index]),
+        time_s=float(times[time_index]),
+        sphere_index=int(sphere_index),
+    )
+
+
+def validate_initial_franka_clearance(
+    item: dict[str, Any],
+    *,
+    end_s: float | None = None,
+    minimum_clearance_m: float = 0.0,
+) -> InitialFrankaClearance:
+    clearance = initial_franka_trajectory_clearance(item, end_s=end_s)
+    if clearance.minimum_m <= minimum_clearance_m:
+        interval_end = (
+            float(item["crossing_time_s"]) if end_s is None else float(end_s)
+        )
+        raise ValueError(
+            f"{item.get('id', '<object>')} intersects the initial Franka "
+            f"before t={interval_end:.3f}s: "
+            f"clearance={clearance.minimum_m:.6f}m at "
+            f"t={clearance.time_s:.3f}s sphere={clearance.sphere_index}"
+        )
+    return clearance
 
 
 def trajectory_clearances(

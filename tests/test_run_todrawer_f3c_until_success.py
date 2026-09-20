@@ -1,22 +1,36 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import scripts.isaaclab.run_todrawer_f3c_until_success as runner
 from scripts.isaaclab.run_todrawer_f3c_until_success import (
+    ATTEMPT_GENERATION_REVISION,
+    GOAL_CROSSING_RESERVE_S,
+    MINIMUM_DIRECTION_LINE_SEPARATION_RAD,
+    MINIMUM_CROSSING_AFTER_MOTION_START_S,
+    MINIMUM_INITIAL_FRANKA_CLEARANCE_M,
+    MODE_TIMING_PROFILES,
     SUPPORTED_MODES,
     _next_attempt_index,
+    _success_record_uses_current_attempt_policy,
     anchor_seed,
     assess_attempt,
     build_pipeline_command,
+    direction_line_separation_rad,
     mode_contract,
     planner_seed,
     resample_attempt_anchors,
+    resample_mode_attempt_scenario,
 )
 from scripts.isaaclab.benchmark_todrawer_random import BASE_CROSSINGS, generate_suite
-from scripts.isaaclab.todrawer_scenario_validation import trajectory_clearances
+from scripts.isaaclab.todrawer_scenario_validation import (
+    initial_franka_trajectory_clearance,
+    trajectory_clearances,
+)
+from scripts.isaaclab.validate_todrawer_random_suite import validate_scenario
 
 
 def test_next_attempt_index_is_python38_compatible_and_ignores_bad_names(tmp_path):
@@ -67,6 +81,57 @@ def test_brake_before_goal_is_failure(tmp_path: Path) -> None:
 
     assert not result.success
     assert result.brakes_before_goal == [104.0]
+
+
+def test_q_start_collision_before_goal_is_failure(tmp_path: Path) -> None:
+    attempt = _attempt(
+        tmp_path,
+        "[node] [104.0] dynamic plan rejected: RequestValidationError: "
+        "q_pos_start is in collision in the configured MPD scene.\n"
+        "[node] [108.0] goal reached; holding position\n",
+    )
+
+    result = assess_attempt(attempt, 0)
+
+    assert not result.success
+    assert result.start_collision_timestamps_s == [104.0]
+    assert result.start_collisions_before_goal == [104.0]
+    assert "q_pos_start" in result.reason
+
+
+def test_measured_premotion_clearance_violation_is_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    attempt = _attempt(
+        tmp_path,
+        "[node] [108.0] goal reached; holding position\n",
+    )
+    (attempt / "scenario.json").write_text(
+        '{"objects": [{"id": "moving-box"}]}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        runner,
+        "measure_manifest_motion_start",
+        lambda *_args, **_kwargs: {"motion_start_from_world_s": 9.5},
+    )
+    monkeypatch.setattr(
+        runner,
+        "initial_franka_trajectory_clearance",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            minimum_m=-0.01,
+            time_s=7.25,
+            sphere_index=9,
+        ),
+    )
+
+    result = assess_attempt(attempt, 0)
+
+    assert not result.success
+    assert result.premotion_audit_passed is False
+    assert result.measured_motion_start_from_world_s == pytest.approx(9.5)
+    assert result.minimum_premotion_clearance_m == pytest.approx(-0.01)
+    assert result.minimum_premotion_clearance_object_id == "moving-box"
+    assert result.minimum_premotion_clearance_time_s == pytest.approx(7.25)
 
 
 def test_goal_and_manifest_are_both_required(tmp_path: Path) -> None:
@@ -144,6 +209,103 @@ def test_dense_attempt_uses_separate_anchor_range() -> None:
         sampled_item["anchor_position"] != original_item["anchor_position"]
         for sampled_item, original_item in zip(sampled["objects"], dense["objects"])
     )
+
+
+def test_direction_line_separation_treats_reverse_vectors_as_one_line() -> None:
+    assert direction_line_separation_rad(
+        [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]
+    ) == pytest.approx(0.0)
+    assert direction_line_separation_rad(
+        [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]
+    ) == pytest.approx(0.5 * 3.141592653589793)
+
+
+def test_only_current_satisfied_direction_policy_can_reuse_a_success() -> None:
+    current = {
+        "attempt_sampling": {
+            "revision": ATTEMPT_GENERATION_REVISION,
+            "direction_line_contract": {
+                "satisfied": True,
+                "opposite_vectors_share_line": True,
+            },
+        }
+    }
+
+    assert _success_record_uses_current_attempt_policy(current)
+    assert not _success_record_uses_current_attempt_policy({})
+    current["attempt_sampling"]["direction_line_contract"]["satisfied"] = False
+    assert not _success_record_uses_current_attempt_policy(current)
+
+
+def test_three_object_attempt_uses_at_least_two_distinct_direction_lines() -> None:
+    dense = next(
+        scenario
+        for scenario in generate_suite(len(runner.CATEGORIES), 811)["scenarios"]
+        if scenario["category"] == "inflated_dense"
+    )
+
+    sampled = resample_mode_attempt_scenario(dense, mode="f3_c", seed=7319)
+    contract = sampled["attempt_sampling"]["direction_line_contract"]
+    separations = [
+        direction_line_separation_rad(left["direction"], right["direction"])
+        for index, left in enumerate(sampled["objects"])
+        for right in sampled["objects"][index + 1 :]
+    ]
+
+    assert len(sampled["objects"]) == 3
+    assert max(separations) >= MINIMUM_DIRECTION_LINE_SEPARATION_RAD
+    assert contract["required_distinct_lines"] == 2
+    assert contract["opposite_vectors_share_line"] is True
+    assert contract["satisfied"] is True
+    assert len(contract["witness_object_ids"]) == 2
+
+
+@pytest.mark.parametrize("mode", SUPPORTED_MODES)
+def test_mode_attempt_randomizes_geometry_and_respects_timing_contract(mode: str) -> None:
+    original = generate_suite(1, 117)["scenarios"][0]
+    sampled = resample_mode_attempt_scenario(original, mode=mode, seed=7319)
+    profile = MODE_TIMING_PROFILES[mode]
+
+    validate_scenario(sampled)
+    assert sampled["mode_timing_profile"]["mode"] == mode
+    assert sampled["mode_timing_profile"]["crossing_shift_s"] > 0.0
+    original_item = original["objects"][0]
+    item = sampled["objects"][0]
+    assert item["anchor_position"] != original_item["anchor_position"]
+    assert item["direction"] != original_item["direction"]
+    assert item["speed_m_s"] != original_item["speed_m_s"]
+    assert item["local_sdf"]["size_xyz"] != original_item["local_sdf"]["size_xyz"]
+    assert item["crossing_time_s"] > original_item["crossing_time_s"]
+    assert (
+        item["crossing_time_s"]
+        >= profile.significant_motion_start_s
+        + MINIMUM_CROSSING_AFTER_MOTION_START_S
+    )
+    assert item["crossing_time_s"] <= profile.expected_goal_s - GOAL_CROSSING_RESERVE_S
+    assert sampled["attempt_sampling"]["parked_franka_protection_until_s"] == pytest.approx(
+        profile.expected_goal_s - GOAL_CROSSING_RESERVE_S
+    )
+    clearance = initial_franka_trajectory_clearance(
+        item,
+        end_s=sampled["attempt_sampling"]["parked_franka_protection_until_s"],
+    )
+    assert clearance.minimum_m > MINIMUM_INITIAL_FRANKA_CLEARANCE_M
+    assert item["minimum_initial_franka_clearance_m"] == pytest.approx(
+        clearance.minimum_m
+    )
+
+
+def test_mode_attempt_seed_changes_full_obstacle_realization() -> None:
+    original = generate_suite(1, 117)["scenarios"][0]
+    first = resample_mode_attempt_scenario(original, mode="f3_c", seed=11)
+    second = resample_mode_attempt_scenario(original, mode="f3_c", seed=12)
+
+    first_item, second_item = first["objects"][0], second["objects"][0]
+    assert first_item["anchor_position"] != second_item["anchor_position"]
+    assert first_item["direction"] != second_item["direction"]
+    assert first_item["speed_m_s"] != second_item["speed_m_s"]
+    assert first_item["local_sdf"]["size_xyz"] != second_item["local_sdf"]["size_xyz"]
+    assert first_item["crossing_time_s"] != second_item["crossing_time_s"]
 
 
 def _pipeline_command(tmp_path: Path, mode: str) -> list[str]:

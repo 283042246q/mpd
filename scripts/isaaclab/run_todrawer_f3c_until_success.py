@@ -3,8 +3,9 @@
 
 A scenario succeeds only when the ROS log records reaching the goal and no
 controlled-braking request occurred before that goal timestamp.  Failed
-attempts are retained and retried with a new deterministic planner seed and
-new anchor positions sampled inside the configured per-axis range.  Every
+attempts are retained and retried with a new deterministic planner seed and a
+new mode-timed obstacle realization (anchor, direction, speed, size, and
+crossing time).  Every
 attempt with a replay manifest is rendered in IsaacLab, including failed
 attempts; only a successful attempt advances to the next scenario.
 """
@@ -16,6 +17,7 @@ import copy
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -43,10 +45,17 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     MAX_GENERATION_RESAMPLE_ATTEMPTS,
     REPO_ROOT,
     SAFE_CONTROL_CROSSINGS,
+    _random_object,
     generate_suite,
 )
+from scripts.isaaclab.analyze_todrawer_mode_motion_start import (
+    measure_manifest_motion_start,
+)
 from scripts.isaaclab.todrawer_scenario_validation import (
+    STARTUP_SAFE_ANCHOR_BOUNDS,
+    initial_franka_trajectory_clearance,
     load_static_environment_boxes,
+    validate_initial_franka_clearance,
     validate_trajectory_clearance,
 )
 
@@ -61,6 +70,9 @@ GOAL_PATTERN = re.compile(
 )
 BRAKE_PATTERN = re.compile(
     r"\[(?P<time>\d+(?:\.\d+)?)\].*controlled braking requested"
+)
+START_COLLISION_PATTERN = re.compile(
+    r"\[(?P<time>\d+(?:\.\d+)?)\].*q_pos_start is in collision"
 )
 MAX_PLANNER_SEED = 2_147_483_647
 DEFAULT_MODE = "f3_c"
@@ -96,6 +108,50 @@ class AttemptAssessment:
     goal_timestamp_s: float | None
     brake_timestamps_s: list[float]
     brakes_before_goal: list[float]
+    start_collision_timestamps_s: list[float]
+    start_collisions_before_goal: list[float]
+    premotion_audit_passed: bool | None
+    measured_motion_start_from_world_s: float | None
+    minimum_premotion_clearance_m: float | None
+    minimum_premotion_clearance_object_id: str | None
+    minimum_premotion_clearance_time_s: float | None
+    premotion_audit_error: str | None
+
+
+@dataclass(frozen=True)
+class ModeTimingProfile:
+    # Measured from existing successful replays at a 0.01 rad joint-motion
+    # threshold. These are normal first-plan medians, not retry outliers.
+    significant_motion_start_s: float
+    expected_goal_s: float
+    crossing_shift_min_s: float
+    crossing_shift_max_s: float
+
+
+MODE_TIMING_PROFILES = {
+    "phase4": ModeTimingProfile(3.04, 12.70, 1.10, 1.40),
+    "phase4_aligned": ModeTimingProfile(3.04, 12.70, 1.20, 1.50),
+    "joint": ModeTimingProfile(4.02, 12.80, 1.65, 1.95),
+    "f1_c": ModeTimingProfile(3.97, 8.80, 1.40, 1.70),
+    "f2_c": ModeTimingProfile(3.98, 8.90, 1.50, 1.80),
+    "f3_c": ModeTimingProfile(3.97, 8.90, 1.60, 1.90),
+    "f1_tau_r": ModeTimingProfile(4.05, 10.20, 1.70, 2.00),
+    "f2_tau_r": ModeTimingProfile(4.07, 10.80, 1.80, 2.10),
+    "f3_tau_r": ModeTimingProfile(4.13, 11.00, 1.90, 2.20),
+}
+MINIMUM_CROSSING_AFTER_MOTION_START_S = 1.25
+GOAL_CROSSING_RESERVE_S = 0.50
+MINIMUM_INITIAL_FRANKA_CLEARANCE_M = 0.005
+MODE_GENERATION_RESAMPLE_ATTEMPTS = 200
+# Directions are compared as unoriented lines: d and -d describe the same
+# motion line. A 35 degree gap is visibly meaningful and cannot be satisfied
+# by the ordinary +/-0.18 rad direction jitter alone.
+MINIMUM_DIRECTION_LINE_SEPARATION_RAD = math.radians(35.0)
+FORCED_DIRECTION_LINE_SEPARATION_RANGE_RAD = (
+    math.radians(50.0),
+    math.radians(60.0),
+)
+ATTEMPT_GENERATION_REVISION = "actual-premotion-safe-distinct-direction-lines-v3"
 
 
 def mode_contract(mode: str) -> RunnerMode:
@@ -147,18 +203,82 @@ def _run_streaming(command: list[str], *, cwd: Path, log_path: Path, env=None) -
         return int(process.wait())
 
 
+def _audit_actual_premotion_clearance(
+    attempt_dir: Path,
+) -> tuple[bool | None, float | None, float | None, str | None, float | None, str | None]:
+    """Check every obstacle against parked Franka until measured robot motion."""
+
+    scenario_path = attempt_dir / "scenario.json"
+    manifest_path = attempt_dir / "episode/replay-manifest.json"
+    if not scenario_path.is_file() or not manifest_path.is_file():
+        return None, None, None, None, None, None
+    try:
+        motion = measure_manifest_motion_start(
+            manifest_path,
+            threshold_rad=0.01,
+        )
+        if motion is None:
+            raise ValueError("replay has no measured 0.01 rad robot motion start")
+        motion_start_s = float(motion["motion_start_from_world_s"])
+        scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
+        objects = list(scenario.get("objects", []))
+        if not objects:
+            raise ValueError("attempt scenario contains no dynamic objects")
+        best_clearance = None
+        best_object_id = None
+        for item in objects:
+            clearance = initial_franka_trajectory_clearance(
+                item,
+                end_s=motion_start_s,
+            )
+            if best_clearance is None or clearance.minimum_m < best_clearance.minimum_m:
+                best_clearance = clearance
+                best_object_id = str(item.get("id", "<object>"))
+        assert best_clearance is not None
+        return (
+            best_clearance.minimum_m > MINIMUM_INITIAL_FRANKA_CLEARANCE_M,
+            motion_start_s,
+            best_clearance.minimum_m,
+            best_object_id,
+            best_clearance.time_s,
+            None,
+        )
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        return False, None, None, None, None, str(error)
+
+
 def assess_attempt(attempt_dir: Path, pipeline_returncode: int) -> AttemptAssessment:
     manifest_available = (attempt_dir / "episode/replay-manifest.json").is_file()
     ros_log = attempt_dir / "ros-replan.log"
     text = ros_log.read_text(encoding="utf-8", errors="replace") if ros_log.is_file() else ""
     goal_matches = list(GOAL_PATTERN.finditer(text))
     brake_timestamps = [float(match.group("time")) for match in BRAKE_PATTERN.finditer(text)]
+    start_collision_timestamps = [
+        float(match.group("time")) for match in START_COLLISION_PATTERN.finditer(text)
+    ]
     goal_timestamp = float(goal_matches[0].group("time")) if goal_matches else None
     brakes_before_goal = (
         []
         if goal_timestamp is None
         else [timestamp for timestamp in brake_timestamps if timestamp <= goal_timestamp]
     )
+    start_collisions_before_goal = (
+        []
+        if goal_timestamp is None
+        else [
+            timestamp
+            for timestamp in start_collision_timestamps
+            if timestamp <= goal_timestamp
+        ]
+    )
+    (
+        premotion_audit_passed,
+        measured_motion_start_s,
+        minimum_premotion_clearance_m,
+        minimum_premotion_clearance_object_id,
+        minimum_premotion_clearance_time_s,
+        premotion_audit_error,
+    ) = _audit_actual_premotion_clearance(attempt_dir)
 
     if pipeline_returncode != 0:
         reason = f"pipeline exited with status {pipeline_returncode}"
@@ -166,16 +286,28 @@ def assess_attempt(attempt_dir: Path, pipeline_returncode: int) -> AttemptAssess
         reason = "replay manifest missing"
     elif goal_timestamp is None:
         reason = "goal was not reached"
+    elif start_collisions_before_goal:
+        reason = "planner observed q_pos_start in collision before reaching the goal"
+    elif premotion_audit_passed is False:
+        if premotion_audit_error is not None:
+            reason = f"pre-motion clearance audit failed: {premotion_audit_error}"
+        else:
+            reason = (
+                "dynamic obstacle violated parked-Franka clearance before measured "
+                "robot motion"
+            )
     elif brakes_before_goal:
         reason = "controlled braking occurred before reaching the goal"
     else:
-        reason = "goal reached without an earlier brake"
+        reason = "goal reached with no earlier brake or collision safety violation"
 
     return AttemptAssessment(
         success=(
             pipeline_returncode == 0
             and manifest_available
             and goal_timestamp is not None
+            and not start_collisions_before_goal
+            and premotion_audit_passed is not False
             and not brakes_before_goal
         ),
         reason=reason,
@@ -185,6 +317,16 @@ def assess_attempt(attempt_dir: Path, pipeline_returncode: int) -> AttemptAssess
         goal_timestamp_s=goal_timestamp,
         brake_timestamps_s=brake_timestamps,
         brakes_before_goal=brakes_before_goal,
+        start_collision_timestamps_s=start_collision_timestamps,
+        start_collisions_before_goal=start_collisions_before_goal,
+        premotion_audit_passed=premotion_audit_passed,
+        measured_motion_start_from_world_s=measured_motion_start_s,
+        minimum_premotion_clearance_m=minimum_premotion_clearance_m,
+        minimum_premotion_clearance_object_id=(
+            minimum_premotion_clearance_object_id
+        ),
+        minimum_premotion_clearance_time_s=minimum_premotion_clearance_time_s,
+        premotion_audit_error=premotion_audit_error,
     )
 
 
@@ -271,6 +413,292 @@ def resample_attempt_anchors(
         "seed": int(seed),
         "half_range_m": float(half_range_m),
         "positions": sampled_positions,
+    }
+    return sampled
+
+
+def _sample_startup_safe_anchor(rng: random.Random, anchor_id: str) -> list[float]:
+    try:
+        lower, upper = STARTUP_SAFE_ANCHOR_BOUNDS[anchor_id]
+    except KeyError as error:
+        raise ValueError(f"unknown anchor_id {anchor_id!r}") from error
+    return [rng.uniform(low, high) for low, high in zip(lower, upper)]
+
+
+def direction_line_separation_rad(
+    first: list[float] | tuple[float, ...],
+    second: list[float] | tuple[float, ...],
+) -> float:
+    """Return the acute angle between two unoriented 3-D direction lines."""
+
+    first_norm = math.sqrt(sum(float(value) ** 2 for value in first))
+    second_norm = math.sqrt(sum(float(value) ** 2 for value in second))
+    if first_norm <= 1.0e-12 or second_norm <= 1.0e-12:
+        raise ValueError("motion direction must be non-zero")
+    cosine = sum(
+        float(left) * float(right) for left, right in zip(first, second)
+    ) / (first_norm * second_norm)
+    # abs makes opposite vectors equivalent, as required for a direction line.
+    return math.acos(min(1.0, max(0.0, abs(cosine))))
+
+
+def _sample_distinct_xy_direction(
+    rng: random.Random,
+    reference: list[float] | tuple[float, ...],
+) -> list[float]:
+    """Sample an XY direction on a visibly different unoriented line."""
+
+    reference_x, reference_y = float(reference[0]), float(reference[1])
+    if math.hypot(reference_x, reference_y) <= 1.0e-12:
+        raise ValueError("reference direction must have a non-zero XY component")
+    reference_angle = math.atan2(reference_y, reference_x)
+    separation = rng.uniform(*FORCED_DIRECTION_LINE_SEPARATION_RANGE_RAD)
+    if rng.random() < 0.5:
+        separation = -separation
+    angle = reference_angle + separation
+    direction = [math.cos(angle), math.sin(angle), 0.0]
+    if rng.random() < 0.5:
+        direction = [-value for value in direction]
+    return direction
+
+
+def _replace_primary_direction(item: dict[str, Any], direction: list[float]) -> None:
+    """Replace a primary motion direction and keep curved motion orthogonal."""
+
+    item["direction"] = direction
+    motion = item.get("motion", {})
+    if motion.get("type") in {"sinusoidal_curve", "curved_speed_variation"}:
+        motion["lateral_direction"] = [-direction[1], direction[0], 0.0]
+
+
+def _direction_line_contract(objects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe and verify the per-attempt unoriented direction-line contract."""
+
+    required_lines = min(2, len(objects))
+    best_pair: tuple[int, int] | None = None
+    best_separation = 0.0
+    for left in range(len(objects)):
+        for right in range(left + 1, len(objects)):
+            separation = direction_line_separation_rad(
+                objects[left]["direction"], objects[right]["direction"]
+            )
+            if separation > best_separation:
+                best_pair = (left, right)
+                best_separation = separation
+    satisfied = required_lines == 1 or (
+        best_pair is not None
+        and best_separation + 1.0e-12 >= MINIMUM_DIRECTION_LINE_SEPARATION_RAD
+    )
+    return {
+        "required_distinct_lines": required_lines,
+        "opposite_vectors_share_line": True,
+        "minimum_separation_deg": math.degrees(
+            MINIMUM_DIRECTION_LINE_SEPARATION_RAD
+        ),
+        "maximum_realized_pair_separation_deg": math.degrees(best_separation),
+        "witness_object_ids": (
+            []
+            if best_pair is None
+            else [objects[best_pair[0]]["id"], objects[best_pair[1]]["id"]]
+        ),
+        "satisfied": satisfied,
+    }
+
+
+def _success_record_uses_current_attempt_policy(record: dict[str, Any]) -> bool:
+    sampling = record.get("attempt_sampling", {})
+    line_contract = sampling.get("direction_line_contract", {})
+    return bool(
+        sampling.get("revision") == ATTEMPT_GENERATION_REVISION
+        and line_contract.get("satisfied") is True
+        and line_contract.get("opposite_vectors_share_line") is True
+    )
+
+
+def resample_mode_attempt_scenario(
+    scenario: dict[str, Any],
+    *,
+    mode: str,
+    seed: int,
+    goal_reserve_s: float = GOAL_CROSSING_RESERVE_S,
+) -> dict[str, Any]:
+    """Create one mode-timed, startup-safe realization of a suite template."""
+
+    if mode not in MODE_TIMING_PROFILES:
+        raise ValueError(f"unsupported mode timing profile {mode!r}")
+    if goal_reserve_s < 0.0:
+        raise ValueError("goal reserve must be non-negative")
+    profile = MODE_TIMING_PROFILES[mode]
+    rng = random.Random(seed)
+    sampled = copy.deepcopy(scenario)
+    category = str(sampled["category"])
+    original_objects = list(sampled["objects"])
+    if not original_objects:
+        raise ValueError("scenario contains no objects")
+
+    original_times = [float(item["crossing_time_s"]) for item in original_objects]
+    shift_lower = max(
+        profile.crossing_shift_min_s,
+        profile.significant_motion_start_s
+        + MINIMUM_CROSSING_AFTER_MOTION_START_S
+        - min(original_times),
+    )
+    shift_upper = min(
+        profile.crossing_shift_max_s,
+        profile.expected_goal_s - goal_reserve_s - max(original_times),
+    )
+    if shift_lower > shift_upper:
+        raise ValueError(
+            f"mode {mode} has no crossing-time interval for {sampled['id']}: "
+            f"shift=[{shift_lower:.3f}, {shift_upper:.3f}]"
+        )
+    crossing_shift_s = rng.uniform(shift_lower, shift_upper)
+    crossing_specs = BASE_CROSSINGS + SAFE_CONTROL_CROSSINGS
+    corridor_index = {
+        str(spec["id"]): index for index, spec in enumerate(crossing_specs)
+    }
+    static_boxes = load_static_environment_boxes()
+    parked_franka_protection_until_s = profile.expected_goal_s - goal_reserve_s
+    realized_objects = []
+    nominal_directions = []
+    for item in original_objects:
+        spec = crossing_specs[corridor_index[str(item["anchor_id"])]]
+        nominal_directions.append(spec["direction"])
+    nominally_distinct = any(
+        direction_line_separation_rad(left, right)
+        >= MINIMUM_DIRECTION_LINE_SEPARATION_RAD
+        for index, left in enumerate(nominal_directions)
+        for right in nominal_directions[index + 1 :]
+    )
+    # If all nominal corridors are parallel, put the second orientation on an
+    # outer A0/A2 lane instead of the central A1 lane.  This substantially
+    # increases the chance that the complete line stays clear of parked Franka.
+    diversity_object_index = None
+    diversity_reference_direction = None
+    if len(original_objects) >= 2 and not nominally_distinct:
+        anchor_ids = [str(item["anchor_id"]) for item in original_objects]
+        preferred_anchor = next(
+            (anchor_id for anchor_id in ("A2", "A0") if anchor_id in anchor_ids),
+            anchor_ids[0],
+        )
+        diversity_object_index = anchor_ids.index(preferred_anchor)
+        reference_index = next(
+            index
+            for index in range(len(original_objects))
+            if index != diversity_object_index
+        )
+        diversity_reference_direction = nominal_directions[reference_index]
+    for object_index, original in enumerate(original_objects):
+        crossing_time_s = float(original["crossing_time_s"]) + crossing_shift_s
+        last_error: Exception | None = None
+        for resample_index in range(1, MODE_GENERATION_RESAMPLE_ATTEMPTS + 1):
+            item = _random_object(
+                rng,
+                scenario_index=int(str(sampled["id"]).rsplit("-", 1)[-1]),
+                object_index=object_index,
+                corridor_index=corridor_index[str(original["anchor_id"])],
+                category=category,
+                crossing_time_s=crossing_time_s,
+                schedule_role=str(original["schedule_role"]),
+                motion_type=str(original["motion_model"]),
+            )
+            item["anchor_position"] = _sample_startup_safe_anchor(
+                rng, str(original["anchor_id"])
+            )
+            if object_index == diversity_object_index:
+                assert diversity_reference_direction is not None
+                _replace_primary_direction(
+                    item,
+                    _sample_distinct_xy_direction(
+                        rng, diversity_reference_direction
+                    ),
+                )
+            try:
+                clearance = validate_trajectory_clearance(
+                    item, static_boxes=static_boxes
+                )
+                initial_clearance = validate_initial_franka_clearance(
+                    item,
+                    end_s=parked_franka_protection_until_s,
+                    minimum_clearance_m=MINIMUM_INITIAL_FRANKA_CLEARANCE_M,
+                )
+            except ValueError as error:
+                last_error = error
+                continue
+            item["minimum_robot_base_clearance_m"] = clearance.robot_base_m
+            item["minimum_static_environment_clearance_m"] = (
+                clearance.static_environment_m
+            )
+            item["minimum_initial_franka_clearance_m"] = (
+                initial_clearance.minimum_m
+            )
+            item["minimum_initial_franka_clearance_time_s"] = (
+                initial_clearance.time_s
+            )
+            item["minimum_initial_franka_clearance_sphere_index"] = (
+                initial_clearance.sphere_index
+            )
+            item["generation_resample_attempts"] = resample_index
+            realized_objects.append(item)
+            break
+        else:
+            raise RuntimeError(
+                f"failed to generate startup-safe {category} object "
+                f"{object_index} for {mode} after "
+                f"{MODE_GENERATION_RESAMPLE_ATTEMPTS} attempts: {last_error}"
+            )
+
+    direction_line_contract = _direction_line_contract(realized_objects)
+    if not direction_line_contract["satisfied"]:
+        raise RuntimeError(
+            f"failed to realize two distinct unoriented motion lines for "
+            f"{sampled['id']}"
+        )
+    sampled["objects"] = realized_objects
+    sampled["anchor_schedule"] = [
+        {
+            "anchor_id": item["anchor_id"],
+            "schedule_role": item["schedule_role"],
+            "crossing_time_s": item["crossing_time_s"],
+        }
+        for item in realized_objects
+    ]
+    sampled["primary_crossing_window_s"] = [
+        min(float(item["crossing_time_s"]) for item in realized_objects),
+        max(float(item["crossing_time_s"]) for item in realized_objects),
+    ]
+    sampled["mode_timing_profile"] = {
+        "mode": mode,
+        "significant_motion_threshold_rad": 0.01,
+        "significant_motion_start_s": profile.significant_motion_start_s,
+        "expected_goal_s": profile.expected_goal_s,
+        "goal_crossing_reserve_s": goal_reserve_s,
+        "crossing_shift_s": crossing_shift_s,
+        "crossing_shift_range_s": [shift_lower, shift_upper],
+        "minimum_crossing_after_motion_start_s": (
+            MINIMUM_CROSSING_AFTER_MOTION_START_S
+        ),
+    }
+    sampled["attempt_sampling"] = {
+        "revision": ATTEMPT_GENERATION_REVISION,
+        "mode": "full_obstacle_resample_with_initial_franka_sweep_check",
+        "seed": int(seed),
+        "randomized_fields": [
+            "anchor_position",
+            "direction",
+            "speed_m_s",
+            "local_sdf.size_xyz",
+            "crossing_time_s",
+        ],
+        "initial_franka_check_interval": "0..parked_franka_protection_until_s",
+        "parked_franka_protection_until_s": parked_franka_protection_until_s,
+        "minimum_initial_franka_clearance_m": (
+            MINIMUM_INITIAL_FRANKA_CLEARANCE_M
+        ),
+        "maximum_generation_resample_attempts": (
+            MODE_GENERATION_RESAMPLE_ATTEMPTS
+        ),
+        "direction_line_contract": direction_line_contract,
     }
     return sampled
 
@@ -485,7 +913,7 @@ def _parser() -> argparse.ArgumentParser:
         "--anchor-jitter-m",
         type=float,
         default=DEFAULT_ANCHOR_JITTER_M,
-        help="per-axis anchor half-range for ordinary scenarios (default: 0.015 m)",
+        help="legacy option retained for CLI compatibility; mode-safe sampling uses bounded work-volume anchors",
     )
     parser.add_argument(
         "--dense-anchor-jitter-m",
@@ -586,12 +1014,17 @@ def main(argv: list[str] | None = None) -> int:
         success_path = output_dir / "successes" / args.mode / f"{scenario_id}.json"
         if success_path.is_file() and video.is_file() and video.stat().st_size > 0:
             record = json.loads(success_path.read_text(encoding="utf-8"))
-            successful.append(record)
+            if _success_record_uses_current_attempt_policy(record):
+                successful.append(record)
+                print(
+                    f"[skip] {scenario_id} category={category} mode={args.mode} "
+                    "already has a successful video using the current attempt policy"
+                )
+                continue
             print(
-                f"[skip] {scenario_id} category={category} mode={args.mode} "
-                "already has a successful video"
+                f"[rerun] {scenario_id} category={category} mode={args.mode} "
+                "has an old success that does not satisfy the current direction-line policy"
             )
-            continue
         if args.mode == "f3_c":
             legacy_success_path = output_dir / "successes" / f"{scenario_id}.json"
             legacy_video = (
@@ -603,11 +1036,14 @@ def main(argv: list[str] | None = None) -> int:
                 and legacy_video.stat().st_size > 0
             ):
                 record = json.loads(legacy_success_path.read_text(encoding="utf-8"))
-                if record.get("mode") == "f3_c":
+                if (
+                    record.get("mode") == "f3_c"
+                    and _success_record_uses_current_attempt_policy(record)
+                ):
                     successful.append(record)
                     print(
                         f"[skip] {scenario_id} category={category} mode=f3_c "
-                        "has a legacy successful video"
+                        "has a compatible legacy-path successful video"
                     )
                     continue
 
@@ -621,11 +1057,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.suite_seed, scenario_index, attempt_index
             )
             attempt_dir = run_dir / f"attempt-{attempt_number:03d}"
-            attempt_scenario = resample_attempt_anchors(
+            attempt_scenario = resample_mode_attempt_scenario(
                 scenario,
+                mode=args.mode,
                 seed=attempt_anchor_seed,
-                anchor_jitter_m=args.anchor_jitter_m,
-                dense_anchor_jitter_m=args.dense_anchor_jitter_m,
             )
             scenario_path = attempt_dir / "scenario.json"
             _write_json(scenario_path, attempt_scenario)
@@ -645,13 +1080,14 @@ def main(argv: list[str] | None = None) -> int:
                 "attempt": attempt_number,
                 "planner_seed": seed,
                 "anchor_seed": attempt_anchor_seed,
-                "anchor_jitter_m": (
-                    args.dense_anchor_jitter_m
-                    if category == "inflated_dense"
-                    else args.anchor_jitter_m
-                ),
+                "mode_timing_profile": attempt_scenario["mode_timing_profile"],
+                "attempt_sampling": attempt_scenario["attempt_sampling"],
                 "anchor_positions": {
                     item["id"]: item["anchor_position"]
+                    for item in attempt_scenario["objects"]
+                },
+                "directions": {
+                    item["id"]: item["direction"]
                     for item in attempt_scenario["objects"]
                 },
                 "scenario_path": scenario_path.as_posix(),
@@ -674,7 +1110,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"[run] {scenario_id} category={category} mode={args.mode} "
                 f"attempt={attempt_number} planner_seed={seed} "
-                f"anchor_seed={attempt_anchor_seed}",
+                f"geometry_seed={attempt_anchor_seed} "
+                f"crossing_shift_s={attempt_scenario['mode_timing_profile']['crossing_shift_s']:.3f}",
                 flush=True,
             )
             if args.dry_run:
@@ -760,10 +1197,13 @@ def main(argv: list[str] | None = None) -> int:
                     "schema_version": 3,
                     "mode": args.mode,
                     "success_definition": (
-                        "goal reached and no controlled brake at or before goal"
+                        "goal reached, no controlled brake or q-start collision at or "
+                        "before goal, and parked-Franka clearance passed until measured "
+                        "robot motion"
                     ),
                     "attempt_randomization": (
-                        "planner seed and anchor positions vary per attempt"
+                        "planner seed and full obstacle realization vary per attempt; "
+                        "multi-object attempts use at least two unoriented motion lines"
                     ),
                     "replay_policy": "render every attempt that has a manifest",
                     "successful": successful,
@@ -796,8 +1236,14 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "mpd_todrawer_until_success",
         "schema_version": 3,
         "mode": args.mode,
-        "success_definition": "goal reached and no controlled brake at or before goal",
-        "attempt_randomization": "planner seed and anchor positions vary per attempt",
+        "success_definition": (
+            "goal reached, no controlled brake or q-start collision at or before goal, "
+            "and parked-Franka clearance passed until measured robot motion"
+        ),
+        "attempt_randomization": (
+            "planner seed and full obstacle realization vary per attempt; "
+            "multi-object attempts use at least two unoriented motion lines"
+        ),
         "replay_policy": "render every attempt that has a manifest",
         "successful": successful,
     }
