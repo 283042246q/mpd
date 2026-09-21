@@ -797,6 +797,61 @@ def test_standalone_merge_allows_gaps_rejects_duplicates_and_preserves_shards(tm
     assert not (duplicate_root / "dataset_merged.hdf5").exists()
 
 
+@pytest.mark.parametrize(
+    "contract_fn",
+    [
+        pytest.param(
+            __import__(
+                "scripts.generate_data.merge_marvin_warehouse_datasets",
+                fromlist=["_planning_contract"],
+            )._planning_contract,
+            id="dataset-merge",
+        ),
+        pytest.param(
+            __import__(
+                "scripts.generate_data.merge_marvin_warehouse_shards",
+                fromlist=["_planning_contract"],
+            )._planning_contract,
+            id="shard-merge",
+        ),
+        pytest.param(
+            __import__(
+                "scripts.generate_data.compare_marvin_warehouse_datasets",
+                fromlist=["planning_contract"],
+            ).planning_contract,
+            id="comparison",
+        ),
+    ],
+)
+def test_gpu_resource_sizing_is_not_a_planning_contract(contract_fn):
+    baseline = {
+        "planner": "GpuMultiQueryRRTConnect",
+        "gpu_rrt_max_iterations": 4096,
+        "gpu_pipeline_max_attempts_per_task": 100,
+        "gpu_collision_batch_size": 256,
+        "gpu_self_collision_pair_chunk_size": 65636,
+        "gpu_pipeline_endpoint_workers": 2,
+        "gpu_pipeline_active_unfinished_tasks": 80,
+        "gpu_pipeline_max_open_shards": 8,
+        "gpu_pipeline_gpu_endpoint_batch_size": 128,
+        "max_attempts_per_task": 30,
+    }
+    resource_tuned = {
+        **baseline,
+        "gpu_collision_batch_size": 384,
+        "gpu_self_collision_pair_chunk_size": 65536,
+        "gpu_pipeline_endpoint_workers": 3,
+        "gpu_pipeline_active_unfinished_tasks": 120,
+        "gpu_pipeline_max_open_shards": 12,
+        "gpu_pipeline_gpu_endpoint_batch_size": 192,
+        "max_attempts_per_task": 100,
+    }
+    assert contract_fn(resource_tuned) == contract_fn(baseline)
+
+    planner_changed = {**resource_tuned, "gpu_rrt_max_iterations": 2048}
+    assert contract_fn(planner_changed) != contract_fn(baseline)
+
+
 def test_dataset_comparison_pairs_only_equal_numeric_shard_ids(tmp_path):
     from scripts.generate_data.compare_marvin_warehouse_datasets import compare_matching_shards
     from scripts.generate_data.generate_marvin_warehouse_bimanual import _write_dataset
@@ -933,6 +988,86 @@ def test_combined_datasets_reindex_ids_and_pass_training_validation(tmp_path, mo
     )
     training_config["dataset_subdir"] = output.name
     assert validate_dataset(training_config)["num_trajectories"] == 20
+
+
+def test_combined_datasets_can_drop_only_exact_trajectory_duplicates(tmp_path):
+    import h5py
+
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import _write_dataset
+    from scripts.generate_data.merge_marvin_warehouse_datasets import main as combine_main
+
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+
+    def write_dataset(root, path_offset, planning_time):
+        metadata, paths = [], []
+        for task_id in range(10):
+            mode, direction = task_spec(task_id)
+            # Keep rows within a source distinct while allowing another source
+            # with the same path_offset to be an exact semantic copy.
+            row_offset = path_offset + task_id * 0.001
+            q_start = np.full(14, row_offset)
+            q_goal = np.full(14, row_offset + 0.1)
+            path = np.linspace(q_start, q_goal, 128)
+            pose = np.concatenate(
+                (
+                    np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+                    np.full((2, 3, 1), row_offset, dtype=np.float32),
+                ),
+                axis=-1,
+            )
+            item = dict(
+                task_id=task_id,
+                task_mode=mode,
+                direction=direction,
+                q_start=q_start,
+                q_goal=q_goal,
+                planning_time=planning_time,
+                joint_path_length=float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum()),
+                bspline=(np.zeros(28), np.full((14, 22), row_offset), 5),
+                ee_goal_pose=pose,
+            )
+            for arm in ("left", "right"):
+                item[f"source_region_{arm}"] = "random"
+                item[f"goal_region_{arm}"] = f"{arm}_table"
+            metadata.append(item)
+            paths.append(path)
+        _write_dataset(root, config, paths, metadata, config["seed"])
+
+    source_a = tmp_path / "source_a"
+    source_a_duplicate = tmp_path / "source_a_duplicate"
+    source_b = tmp_path / "source_b"
+    output = tmp_path / "EnvWarehouse-RobotMarvinBimanual-deduplicated-test"
+    write_dataset(source_a, 0.0, 1.0)
+    # Planning time and task ID are provenance, not trajectory semantics. This
+    # second copy must still be removed.
+    write_dataset(source_a_duplicate, 0.0, 9.0)
+    write_dataset(source_b, 1.0, 1.0)
+
+    arguments = [
+        str(source_a),
+        str(source_a_duplicate),
+        str(source_b),
+        "--output-dir",
+        str(output),
+        "--deduplicate-exact-trajectories",
+    ]
+    assert combine_main(arguments + ["--dry-run"]) == 0
+    assert not output.exists()
+    assert combine_main(arguments) == 0
+
+    with h5py.File(output / "dataset_merged.hdf5", "r") as data:
+        assert len(data["task_id"]) == 20
+        assert np.array_equal(data["task_id"][:], np.arange(20))
+        assert np.allclose(data["q_start"][:10, 0], np.arange(10) * 0.001)
+        assert np.allclose(data["q_start"][10:, 0], 1.0 + np.arange(10) * 0.001)
+
+    report = json.loads((output / "merge_report.json").read_text())
+    deduplication = report["exact_deduplication"]
+    assert deduplication["input_num_trajectories"] == 30
+    assert deduplication["retained_num_trajectories"] == 20
+    assert deduplication["exact_duplicates_dropped"] == 10
+    assert len(deduplication["duplicates"]) == 10
+    assert {item["dropped_source_index"] for item in deduplication["duplicates"]} == {1}
 
 
 def test_shard_layout_uses_workers_without_breaking_ten_task_quotas():

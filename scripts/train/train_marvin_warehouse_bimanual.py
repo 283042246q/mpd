@@ -61,10 +61,18 @@ def validate_dataset(config):
             raise ValueError("dataset lacks dual-slot EE goals/masks")
         if data.attrs.get("ee_goal_schema") != "marvin_dual_pika_tcp/v1":
             raise ValueError("unknown or missing dual Pika TCP schema")
-        for start in range(0, n, 256):
-            cc = data["bspline_params_cc"][start : start + 256]
-            pose = data["ee_goal_pose"][start : start + 256]
-            mask = data["active_ee_mask"][start : start + 256]
+        validation_fields = ("bspline_params_cc", "ee_goal_pose", "active_ee_mask")
+        hdf5_chunk_rows = [
+            data[key].chunks[0]
+            for key in validation_fields
+            if data[key].chunks is not None
+        ]
+        validation_chunk_rows = max(hdf5_chunk_rows) if hdf5_chunk_rows else min(n, 4096)
+        for start in range(0, n, validation_chunk_rows):
+            stop = min(start + validation_chunk_rows, n)
+            cc = data["bspline_params_cc"][start:stop]
+            pose = data["ee_goal_pose"][start:stop]
+            mask = data["active_ee_mask"][start:stop]
             if not np.isfinite(cc).all() or not np.isfinite(pose).all():
                 raise ValueError("nonfinite training control points/EE goals")
             rotations = pose[..., :3]
@@ -126,10 +134,16 @@ def main(argv=None):
         f"validated Marvin Warehouse {config['task_family']} config: state_dim=14 "
         f"raw_context_dim=40 network_variant={config['bimanual_network_variant']}"
     )
+    dataset_strictly_validated = False
     if args.check_dataset or not args.dry_run:
         validate_dataset(config)
+        dataset_strictly_validated = True
     if args.dry_run or args.check_dataset:
         return 0
+    # This internal trust signal is deliberately injected only after the
+    # Warehouse v3 validator has checked the complete file hash, schema,
+    # current robot assets, serialized spline shape and finite EE data.
+    config["skip_collision_statistics_for_validated_splines"] = dataset_strictly_validated
     return run_training(config)
 
 

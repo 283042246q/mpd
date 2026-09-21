@@ -24,6 +24,13 @@ OPERATIONAL_CONFIG_KEYS = {
     "tasks_per_shard",
     "worker_lifetime_trajectories",
     "max_worker_restarts_per_shard",
+    "gpu_collision_batch_size",
+    "gpu_self_collision_pair_chunk_size",
+    "gpu_pipeline_endpoint_workers",
+    "gpu_pipeline_active_unfinished_tasks",
+    "gpu_pipeline_max_open_shards",
+    "gpu_pipeline_gpu_endpoint_batch_size",
+    "max_attempts_per_task",
 }
 CATEGORICAL_FIELDS = (
     "task_mode",

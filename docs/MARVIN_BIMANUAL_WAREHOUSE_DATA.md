@@ -93,6 +93,53 @@ PYTHONPATH=. conda run -n mpd-splines-public \
 目录。训练目标仍是关节轨迹控制点，环境碰撞统计由 `PlanningTask` 使用 Marvin 的
 torchkin/碰撞模型完成；不会读取或覆盖 Panda checkpoint。
 
+Warehouse v3 训练入口会先严格校验 manifest、完整 HDF5 hash、机器人资产、双 EE schema
+和已验证 B-spline 标记。校验通过后，首次加载会按 HDF5 chunk 批量读取序列化控制点，
+并跳过生成阶段已经完成的重复碰撞统计。预处理缓存使用同目录临时文件完整写入后原子
+替换；中断不会留下被误认为有效的半成品 pickle。后续运行会直接复用文件名包含
+`marvin_dual_ee_v2_batched` 的缓存。
+
+### 多电脑数据集合并与精确去重
+
+多电脑生成目录存在重叠时，在合并命令中显式增加：
+
+```bash
+--deduplicate-exact-trajectories
+```
+
+该选项先以 `sol_path` 的 BLAKE2b-256 哈希定位候选，再逐字段精确比较路径、起终点、
+B-spline、EE goal、mask、任务模式、方向、区域和路径长度。`task_id` 和
+`planning_time` 仅作为来源信息，不参与轨迹语义判重。因此，完全相同的后续副本只保留
+一次，而相同原始 task ID 下由随机规划得到的不同路径都会保留。建议先同时加
+`--dry-run` 核对 `exact_duplicates_dropped`，确认后仅去掉 `--dry-run` 正式写出。
+去重明细（被删除行、保留行、原 task ID 和摘要）会写入输出的
+`merge_report.json` 和 `manifest.yaml`。
+
+### 正反轨迹增广
+
+先完成所有 shard 和多电脑数据集合并，再对最终 Warehouse v3 数据集运行：
+
+```bash
+PYTHONPATH=. conda run -n mpd-splines-public \
+  python -m scripts.generate_data.augment_marvin_warehouse_reverse \
+  data_trajectories/EnvWarehouse-RobotMarvinBimanual-independent-v3-gpu-combined \
+  --output-dir \
+  data_trajectories/EnvWarehouse-RobotMarvinBimanual-independent-v3-gpu-combined-reversed \
+  --dry-run
+
+# 确认输入、输出和轨迹数量后去掉 --dry-run
+```
+
+该入口以新目录原子写出两倍数据，源数据不变。它同步反转原始路径、B-spline knot/
+控制点，交换关节起终点和 source/goal region，更新 direction，并用规范 Marvin/Pika
+模型重新计算两个 TCP 的 goal pose。正反行相邻且共享原 `task_id`；训练器按 `task_id`
+划分 train/validation，因此一对轨迹不会跨集合。输出还包含
+`augmentation_pair_id`、`augmentation_is_reversed` 和 `augmentation_source_row` 供审计。
+
+不要对 Marvin v3 使用通用的 `flip_solution_paths.py`。也不要在增广后继续调用多数据集
+合并器；后者要求输入 task ID 唯一。正确顺序是：每机 shard 合并 → 多电脑数据集合并 →
+正反增广 → 训练。
+
 ## 注意事项
 
 - `Link5_R` 与 `Link7_R` 的导出 mesh 在 PyBullet 中存在永久零距离接触，因此仅在

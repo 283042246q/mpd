@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import ExitStack
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -54,6 +56,18 @@ OPERATIONAL_CONFIG_KEYS = {
     "tasks_per_shard",
     "worker_lifetime_trajectories",
     "max_worker_restarts_per_shard",
+    # Resource sizing and scheduling change throughput, memory consumption,
+    # and completion order, but not proposal, planner, or acceptance rules.
+    "gpu_collision_batch_size",
+    "gpu_self_collision_pair_chunk_size",
+    "gpu_pipeline_endpoint_workers",
+    "gpu_pipeline_active_unfinished_tasks",
+    "gpu_pipeline_max_open_shards",
+    "gpu_pipeline_gpu_endpoint_batch_size",
+    # The streaming GPU pipeline uses gpu_pipeline_max_attempts_per_task as
+    # its hard limit. Keep that key planning-critical; the legacy generator's
+    # max_attempts_per_task is only an execution budget for accepted records.
+    "max_attempts_per_task",
     "combined_dataset",
 }
 PROVENANCE_KEYS = (
@@ -71,6 +85,7 @@ HDF5_CONTRACT_ATTRS = (
     "ee_goal_schema",
     "ee_goal_links",
 )
+EXACT_TRAJECTORY_FIELDS = tuple(sorted(REQUIRED_FIELDS.difference({"task_id", "planning_time"})))
 
 
 def _load_yaml(path):
@@ -182,7 +197,14 @@ def validate_sources(paths, start_task_id=0):
             if provenance != baseline_provenance:
                 raise ValueError(f"scene/robot/schema provenance differs in {root}")
             if planning_contract != baseline_contract:
-                raise ValueError(f"planning-critical generation config differs in {root}")
+                differing_keys = sorted(
+                    key
+                    for key in set(baseline_contract) | set(planning_contract)
+                    if baseline_contract.get(key) != planning_contract.get(key)
+                )
+                raise ValueError(
+                    f"planning-critical generation config differs in {root}: {differing_keys}"
+                )
             if hdf5_contract != baseline_hdf5_contract:
                 raise ValueError(f"HDF5 fields/shapes/dtypes differ in {root}")
             if hdf5_attrs != baseline_hdf5_attrs:
@@ -217,6 +239,102 @@ def validate_sources(paths, start_task_id=0):
     }
 
 
+def _values_equal(left, right):
+    if isinstance(left, bytes) or isinstance(right, bytes):
+        return left == right
+    return np.array_equal(np.asarray(left), np.asarray(right), equal_nan=True)
+
+
+def _trajectory_rows_equal(handles, left, right):
+    left_source, left_row = left
+    right_source, right_row = right
+    return all(
+        _values_equal(handles[left_source][field][left_row], handles[right_source][field][right_row])
+        for field in EXACT_TRAJECTORY_FIELDS
+    )
+
+
+def deduplicate_exact_trajectories(validated, chunk_size=256):
+    """Select one copy of each byte-identical semantic trajectory.
+
+    Raw-path hashes only locate candidates. Every collision is confirmed by
+    exact comparison of all trajectory fields except task ID and planning
+    time, so distinct RRT solutions for the same task remain in the output.
+    """
+    if chunk_size < 1:
+        raise ValueError("chunk-size must be positive")
+
+    keep_rows = [[] for _ in validated["resolved"]]
+    representatives = {}
+    duplicate_records = []
+    with ExitStack() as stack:
+        handles = [stack.enter_context(h5py.File(dataset, "r")) for _, dataset in validated["resolved"]]
+        for source_index, handle in enumerate(handles):
+            count = len(handle["task_id"])
+            for start in range(0, count, chunk_size):
+                stop = min(start + chunk_size, count)
+                paths = np.asarray(handle["sol_path"][start:stop])
+                task_ids = np.asarray(handle["task_id"][start:stop], dtype=np.int64)
+                for offset, path in enumerate(paths):
+                    row = start + offset
+                    digest = hashlib.blake2b(
+                        np.ascontiguousarray(path).tobytes(), digest_size=32
+                    ).hexdigest()
+                    matches = representatives.setdefault(digest, [])
+                    duplicate_of = next(
+                        (
+                            representative
+                            for representative in matches
+                            if _trajectory_rows_equal(
+                                handles, representative, (source_index, row)
+                            )
+                        ),
+                        None,
+                    )
+                    if duplicate_of is None:
+                        matches.append((source_index, row))
+                        keep_rows[source_index].append(row)
+                        continue
+
+                    kept_source, kept_row = duplicate_of
+                    duplicate_records.append(
+                        {
+                            "digest_blake2b_256": digest,
+                            "dropped_source_index": source_index,
+                            "dropped_source_row": row,
+                            "dropped_task_id": int(task_ids[offset]),
+                            "kept_source_index": kept_source,
+                            "kept_source_row": kept_row,
+                            "kept_task_id": int(handles[kept_source]["task_id"][kept_row]),
+                        }
+                    )
+
+    result = dict(validated)
+    result["input_total"] = validated["total"]
+    result["row_indices"] = [np.asarray(rows, dtype=np.int64) for rows in keep_rows]
+    result["total"] = sum(len(rows) for rows in keep_rows)
+    result["sources"] = deepcopy(validated["sources"])
+    next_task_id = validated["start_task_id"]
+    for source, rows in zip(result["sources"], keep_rows):
+        retained = len(rows)
+        source["input_num_trajectories"] = source["num_trajectories"]
+        source["retained_num_trajectories"] = retained
+        source["exact_duplicates_dropped"] = source["num_trajectories"] - retained
+        source["new_task_id_first"] = next_task_id if retained else None
+        source["new_task_id_last"] = next_task_id + retained - 1 if retained else None
+        next_task_id += retained
+    result["deduplication"] = {
+        "schema": "marvin_bimanual_warehouse_exact_deduplication/v1",
+        "candidate_hash_field": "sol_path",
+        "exact_comparison_fields": list(EXACT_TRAJECTORY_FIELDS),
+        "input_num_trajectories": result["input_total"],
+        "retained_num_trajectories": result["total"],
+        "exact_duplicates_dropped": len(duplicate_records),
+        "duplicates": duplicate_records,
+    }
+    return result
+
+
 def _decode_strings(values):
     return [item.decode("utf-8") if isinstance(item, bytes) else str(item) for item in values]
 
@@ -239,15 +357,24 @@ def _write_combined_dataset(staging_root, validated, chunk_size):
             )
 
         output_offset = 0
-        for source_record, (root, dataset) in zip(validated["sources"], validated["resolved"]):
+        row_indices = validated.get("row_indices")
+        for source_index, (source_record, (root, dataset)) in enumerate(
+            zip(validated["sources"], validated["resolved"])
+        ):
             manifest = _load_yaml(root / "manifest.yaml")
             stats.update(manifest.get("stats", {}))
             with h5py.File(dataset, "r") as source:
-                count = source_record["num_trajectories"]
-                for input_start in range(0, count, chunk_size):
-                    input_stop = min(input_start + chunk_size, count)
-                    output_start = output_offset + input_start
-                    output_stop = output_offset + input_stop
+                selected_rows = (
+                    row_indices[source_index]
+                    if row_indices is not None
+                    else np.arange(source_record["num_trajectories"], dtype=np.int64)
+                )
+                count = len(selected_rows)
+                for selected_start in range(0, count, chunk_size):
+                    selected_stop = min(selected_start + chunk_size, count)
+                    input_selection = selected_rows[selected_start:selected_stop]
+                    output_start = output_offset + selected_start
+                    output_stop = output_offset + selected_stop
                     for key, value in source.items():
                         if key == "task_id":
                             destination[key][output_start:output_stop] = np.arange(
@@ -256,16 +383,14 @@ def _write_combined_dataset(staging_root, validated, chunk_size):
                                 dtype=destination[key].dtype,
                             )
                         else:
-                            destination[key][output_start:output_stop] = value[input_start:input_stop]
-                    modes = _decode_strings(source["task_mode"][input_start:input_stop])
-                    directions = _decode_strings(source["direction"][input_start:input_stop])
+                            destination[key][output_start:output_stop] = value[input_selection]
+                    modes = _decode_strings(source["task_mode"][input_selection])
+                    directions = _decode_strings(source["direction"][input_selection])
                     task_counts.update(modes)
                     direction_counts.update(directions)
                     for key in region_counts:
-                        region_counts[key].update(
-                            _decode_strings(source[key][input_start:input_stop])
-                        )
-            output_offset += source_record["num_trajectories"]
+                        region_counts[key].update(_decode_strings(source[key][input_selection]))
+            output_offset += count
 
     if output_offset != total:
         raise RuntimeError(f"internal row-count error: wrote {output_offset}/{total}")
@@ -304,6 +429,11 @@ def combine_sources(output, validated, chunk_size=256):
                 "task_id_last": validated["start_task_id"] + total - 1,
                 "source_datasets_preserved": True,
                 "sources": sources,
+                **(
+                    {"exact_deduplication": validated["deduplication"]}
+                    if "deduplication" in validated
+                    else {}
+                ),
             },
         )
 
@@ -332,6 +462,11 @@ def combine_sources(output, validated, chunk_size=256):
             "dataset_sha256": dataset_digest,
             "source_datasets_preserved": True,
             "sources": sources,
+            **(
+                {"exact_deduplication": validated["deduplication"]}
+                if "deduplication" in validated
+                else {}
+            ),
         }
         (staging / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
         (staging / "generation_config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -353,6 +488,11 @@ def main(argv=None):
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--start-task-id", type=int, default=0)
     parser.add_argument("--chunk-size", type=int, default=256)
+    parser.add_argument(
+        "--deduplicate-exact-trajectories",
+        action="store_true",
+        help="keep one copy of trajectories whose complete semantic fields match exactly",
+    )
     parser.add_argument("--dry-run", action="store_true", help="validate without writing output")
     args = parser.parse_args(argv)
     if len(args.sources) < 2:
@@ -361,6 +501,8 @@ def main(argv=None):
         raise ValueError("chunk-size must be positive")
 
     validated = validate_sources(args.sources, args.start_task_id)
+    if args.deduplicate_exact_trajectories:
+        validated = deduplicate_exact_trajectories(validated, args.chunk_size)
     preview = {
         "output": str(args.output_dir.expanduser().resolve()),
         "num_trajectories": validated["total"],
@@ -368,6 +510,12 @@ def main(argv=None):
         "task_id_last": validated["start_task_id"] + validated["total"] - 1,
         "sources": validated["sources"],
     }
+    if "deduplication" in validated:
+        preview["exact_deduplication"] = {
+            key: value
+            for key, value in validated["deduplication"].items()
+            if key != "duplicates"
+        }
     print(json.dumps(preview, indent=2))
     if args.dry_run:
         return 0

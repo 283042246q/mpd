@@ -1,0 +1,42 @@
+environment: EnvWarehouse
+representation: tau_r
+run_name: warehouse-tau-r-v3-stable
+output_root: ${REPO_ROOT}/data_trained_models/timing_diffusion
+training_data:
+  EnvWarehouse:
+  - ${REPO_ROOT}/data_trajectories_spacetime/EnvWarehouse-RobotPanda-RRTConnect-SpaceTime-v2
+data:
+  batch_size: 128
+  num_workers: 0
+  split_seed: 1726484688
+  train_fraction: 0.9
+  validation_fraction: 0.05
+  statistics_chunk_rows: 1024
+  allow_hash_split_fallback: false
+  max_train_samples: null
+  max_val_samples: null
+model:
+  latent_dim: 6
+  num_phase_points: 64
+  path_width: 128
+  path_embedding_dim: 256
+  hidden_dim: 256
+  time_embedding_dim: 128
+  num_residual_blocks: 6
+diffusion:
+  num_diffusion_steps: 100
+  schedule_offset: 0.008
+  clip_clean: 5.0
+training:
+  seed: 20260920
+  device: auto
+  max_steps: 250000
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  gradient_clip_norm: 0.5
+  use_amp: false
+  ema_decay: 0.999
+  log_every: 100
+  validate_every: 1000
+  validation_batches: 50
+  checkpoint_every: 5000

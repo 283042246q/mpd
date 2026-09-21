@@ -68,6 +68,9 @@ def experiment(
     reload_data: bool = False,
     # 是否预加载数据到训练设备；大数据集/显存紧张时保持 False
     preload_data_to_device: bool = False,
+    # Internal trust signal set only after the Marvin Warehouse entrypoint has
+    # verified the manifest, full dataset hash, schema, robot assets and spline contract.
+    skip_collision_statistics_for_validated_splines: bool = False,
     # 只抽取多少个任务用于训练/调试；-1 表示使用全部任务
     n_task_samples: int = -1,
     ########################################################################
@@ -205,6 +208,7 @@ def experiment(
         dataset_file_merged=dataset_file_merged,
         reload_data=reload_data,
         preload_data_to_device=preload_data_to_device,
+        skip_collision_statistics_for_validated_splines=skip_collision_statistics_for_validated_splines,
         n_task_samples=n_task_samples,
         bspline_degree=bspline_degree,
         bspline_num_control_points_desired=bspline_num_control_points_desired,
