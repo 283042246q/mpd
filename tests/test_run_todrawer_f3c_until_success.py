@@ -15,6 +15,7 @@ from scripts.isaaclab.run_todrawer_f3c_until_success import (
     MODE_TIMING_PROFILES,
     SUPPORTED_MODES,
     _next_attempt_index,
+    _require_current_attempt_policy,
     _success_record_uses_current_attempt_policy,
     anchor_seed,
     assess_attempt,
@@ -237,6 +238,22 @@ def test_only_current_satisfied_direction_policy_can_reuse_a_success() -> None:
     assert not _success_record_uses_current_attempt_policy(current)
 
 
+def test_runtime_policy_guard_rejects_old_revision() -> None:
+    payload = {
+        "attempt_sampling": {
+            "revision": "startup-safe-distinct-direction-lines-v2",
+            "direction_line_contract": {
+                "satisfied": True,
+                "opposite_vectors_share_line": True,
+            },
+        },
+        "mode_timing_profile": {"mode": "phase4"},
+    }
+
+    with pytest.raises(RuntimeError, match="expected .*v3"):
+        _require_current_attempt_policy(payload, expected_mode="phase4")
+
+
 def test_three_object_attempt_uses_at_least_two_distinct_direction_lines() -> None:
     dense = next(
         scenario
@@ -267,6 +284,8 @@ def test_mode_attempt_randomizes_geometry_and_respects_timing_contract(mode: str
     profile = MODE_TIMING_PROFILES[mode]
 
     validate_scenario(sampled)
+    assert sampled["attempt_sampling"]["revision"] == ATTEMPT_GENERATION_REVISION
+    _require_current_attempt_policy(sampled, expected_mode=mode)
     assert sampled["mode_timing_profile"]["mode"] == mode
     assert sampled["mode_timing_profile"]["crossing_shift_s"] > 0.0
     original_item = original["objects"][0]

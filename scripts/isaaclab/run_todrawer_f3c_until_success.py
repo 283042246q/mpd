@@ -516,6 +516,24 @@ def _success_record_uses_current_attempt_policy(record: dict[str, Any]) -> bool:
     )
 
 
+def _require_current_attempt_policy(
+    payload: dict[str, Any], *, expected_mode: str
+) -> None:
+    """Fail closed if an attempt was not materialized by the shared v3 policy."""
+
+    if not _success_record_uses_current_attempt_policy(payload):
+        revision = payload.get("attempt_sampling", {}).get("revision")
+        raise RuntimeError(
+            f"mode {expected_mode} produced attempt generation revision "
+            f"{revision!r}; expected {ATTEMPT_GENERATION_REVISION!r}"
+        )
+    actual_mode = payload.get("mode_timing_profile", {}).get("mode")
+    if actual_mode != expected_mode:
+        raise RuntimeError(
+            f"mode {expected_mode} produced timing profile for {actual_mode!r}"
+        )
+
+
 def resample_mode_attempt_scenario(
     scenario: dict[str, Any],
     *,
@@ -1043,7 +1061,8 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             print(
                 f"[rerun] {scenario_id} category={category} mode={args.mode} "
-                "has an old success that does not satisfy the current direction-line policy"
+                f"has an old success that does not satisfy the shared "
+                f"{ATTEMPT_GENERATION_REVISION} policy"
             )
         if args.mode == "f3_c":
             legacy_success_path = output_dir / "successes" / f"{scenario_id}.json"
@@ -1082,6 +1101,10 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 seed=attempt_anchor_seed,
             )
+            _require_current_attempt_policy(
+                attempt_scenario,
+                expected_mode=args.mode,
+            )
             scenario_path = attempt_dir / "scenario.json"
             _write_json(scenario_path, attempt_scenario)
             command = build_pipeline_command(
@@ -1100,6 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
                 "attempt": attempt_number,
                 "planner_seed": seed,
                 "anchor_seed": attempt_anchor_seed,
+                "attempt_generation_revision": ATTEMPT_GENERATION_REVISION,
                 "mode_timing_profile": attempt_scenario["mode_timing_profile"],
                 "attempt_sampling": attempt_scenario["attempt_sampling"],
                 "anchor_positions": {
@@ -1216,6 +1240,7 @@ def main(argv: list[str] | None = None) -> int:
                     "schema": "mpd_todrawer_until_success",
                     "schema_version": 3,
                     "mode": args.mode,
+                    "attempt_generation_revision": ATTEMPT_GENERATION_REVISION,
                     "success_definition": (
                         "goal reached, no controlled brake or q-start collision at or "
                         "before goal, and parked-Franka clearance passed until measured "
@@ -1256,6 +1281,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "mpd_todrawer_until_success",
         "schema_version": 3,
         "mode": args.mode,
+        "attempt_generation_revision": ATTEMPT_GENERATION_REVISION,
         "success_definition": (
             "goal reached, no controlled brake or q-start collision at or before goal, "
             "and parked-Franka clearance passed until measured robot motion"
