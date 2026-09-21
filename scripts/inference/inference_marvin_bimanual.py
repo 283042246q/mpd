@@ -140,10 +140,23 @@ def _validate_runtime_config(config: dict) -> None:
             )
     if tuple(_runtime_value(config, "joint_names", ())) != JOINT_NAMES:
         raise InferenceConfigurationError("runtime.joint_names is not canonical")
-    if config.get("task_mode") != "dual_independent":
+    if config.get("task_mode") not in {"dual_independent", "cooperative_rigid"}:
         raise InferenceConfigurationError(
-            "Phase 1 runtime supports task_mode=dual_independent only"
+            "Marvin runtime task_mode must be dual_independent or cooperative_rigid"
         )
+    if config.get("task_mode") == "cooperative_rigid":
+        cooperative = config.get("cooperative_inference", {})
+        if cooperative.get("prior_mode") not in {
+            "direct_project",
+            "reference_residual",
+        }:
+            raise InferenceConfigurationError(
+                "cooperative_inference.prior_mode must be direct_project or reference_residual"
+            )
+        if not config.get("cooperative_generation_config"):
+            raise InferenceConfigurationError(
+                "cooperative_generation_config is required for cooperative_rigid"
+            )
 
 
 def _resolve_model_dir(config: dict) -> Path:
@@ -252,6 +265,9 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     from torch_robotics.robots.robot_marvin_bimanual import RobotMarvinBimanual
     from torch_robotics.torch_utils.seed import fix_random_seed
 
+    cooperative_generator = None
+    cooperative_adapter = None
+
     _deadline_guard(request)
     if device_text.startswith("cuda") and not torch.cuda.is_available():
         raise InferenceConfigurationError(
@@ -315,6 +331,50 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     if request.robot_model_hash and request.robot_model_hash != robot_hash:
         raise InferenceConfigurationError("request robot_model_hash does not match Marvin asset")
 
+    if request.task_mode == "cooperative_rigid":
+        if raw_config.get("task_mode") != "cooperative_rigid":
+            raise InferenceConfigurationError(
+                "cooperative request requires a cooperative_rigid runtime config"
+            )
+        import yaml
+
+        from mpd.bimanual.cooperative_prior import CooperativePriorAdapter
+        from scripts.generate_data.generate_marvin_warehouse_cooperative import (
+            MarvinWarehouseCooperativeGenerator,
+            validate_config as validate_cooperative_config,
+        )
+
+        generation_path = Path(raw_config["cooperative_generation_config"])
+        if not generation_path.is_absolute():
+            generation_path = (config_path.resolve().parent / generation_path).resolve()
+        cooperative_config = validate_cooperative_config(
+            yaml.safe_load(generation_path.read_text(encoding="utf-8"))
+        )
+        overrides = raw_config.get("cooperative_generator_overrides", {})
+        for section, values in overrides.items():
+            if not isinstance(values, dict) or section not in cooperative_config:
+                raise InferenceConfigurationError(
+                    f"invalid cooperative_generator_overrides section {section!r}"
+                )
+            cooperative_config[section].update(values)
+        validate_cooperative_config(cooperative_config)
+        cooperative_generator = MarvinWarehouseCooperativeGenerator(
+            cooperative_config, request.seed, progress_label="cooperative-inference"
+        )
+        planning_task.task_mode = "cooperative_rigid"
+        planning_task.object_to_left_grasp = torch.as_tensor(
+            cooperative_generator.object_to_left, **tensor_args
+        )
+        planning_task.object_to_right_grasp = torch.as_tensor(
+            cooperative_generator.object_to_right, **tensor_args
+        )
+        if request.object_goal_pose is not None:
+            planning_task.set_object_goal(
+                torch.as_tensor(
+                    _pose_xyzw_to_matrix(request.object_goal_pose), **tensor_args
+                )
+            )
+
     scene = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
     scene["frame_id"] = request.planning_frame
     scene_hash = _sha256_json(scene)
@@ -351,6 +411,48 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         sampling_based_planner_fn=None,
         debug=False,
     )
+    plan_kwargs = {}
+    if cooperative_generator is not None:
+        source = dict(request.scene or {}).get("object_start_state_xyz_yaw")
+        target = dict(request.scene or {}).get("object_goal_state_xyz_yaw")
+        if source is None or target is None:
+            raise ContractError(
+                "cooperative request.scene must contain object_start_state_xyz_yaw "
+                "and object_goal_state_xyz_yaw"
+            )
+        planning_task.set_q_pos_start_goal(q_start, q_goal)
+        planning_task.parametric_trajectory.set_boundary_conditions(
+            q_pos_start=q_start,
+            q_pos_goal=q_goal,
+            q_vel_start=q_velocity_start,
+            q_vel_goal=torch.zeros_like(q_goal),
+            q_acc_start=q_acceleration_start,
+            q_acc_goal=torch.zeros_like(q_goal),
+        )
+        cooperative_adapter = CooperativePriorAdapter(
+            cooperative_generator,
+            planning_task,
+            train_subset.dataset,
+            raw_config["cooperative_inference"].get("projection", {}),
+        )
+        cooperative_adapter.set_task(source, target, request.q_start, request.q_goal)
+        cooperative_options = raw_config["cooperative_inference"]
+        if cooperative_options["prior_mode"] == "reference_residual":
+            plan_kwargs["initial_control_points_normalized"] = (
+                cooperative_adapter.build_reference_normalized()
+            )
+            fraction = float(cooperative_options.get("reference_noise_fraction", 0.4))
+            if not 0.0 < fraction <= 1.0:
+                raise InferenceConfigurationError(
+                    "reference_noise_fraction must lie in (0, 1]"
+                )
+            plan_kwargs["initial_noise_timestep"] = int(
+                round(fraction * (planner.model.n_diffusion_steps - 1))
+            )
+        if bool(cooperative_options.get("closed_chain_projection", True)):
+            plan_kwargs["control_point_postprocessor"] = (
+                cooperative_adapter.project_normalized
+            )
     results = planner.plan_trajectory(
         q_start,
         q_goal,
@@ -360,15 +462,45 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         q_acc_start=q_acceleration_start,
         results_ns=DotMap(t_generator=0.0, t_guide=0.0),
         debug=False,
+        **plan_kwargs,
     )
     _deadline_guard(request)
-    valid_indices = torch.nonzero(results.valid_trajectory_mask).flatten()
-    if valid_indices.numel() == 0 or results.q_trajs_pos_best is None:
+    generic_valid_indices = torch.nonzero(results.valid_trajectory_mask).flatten()
+    cooperative_audits = {}
+    if cooperative_adapter is None:
+        valid_indices = generic_valid_indices
+    else:
+        cooperative_valid = []
+        for candidate_index in generic_valid_indices.tolist():
+            audit = cooperative_adapter.audit_path(
+                results.q_trajs_pos_iter_0[candidate_index].detach().cpu().numpy()
+            )
+            cooperative_audits[candidate_index] = audit
+            if audit.valid:
+                cooperative_valid.append(candidate_index)
+        valid_indices = torch.as_tensor(
+            cooperative_valid,
+            dtype=torch.long,
+            device=generic_valid_indices.device,
+        )
+    if valid_indices.numel() == 0:
         raise NoValidTrajectoryError("MPD produced no dense-valid trajectory")
 
-    best_positions = results.q_trajs_pos_best
-    best_velocities = results.q_trajs_vel_best
-    best_accelerations = results.q_trajs_acc_best
+    original_valid = generic_valid_indices.tolist()
+    score_by_candidate = {}
+    if results.valid_trajectory_selection_scores is not None:
+        score_by_candidate = {
+            index: results.valid_trajectory_selection_scores[offset]
+            for offset, index in enumerate(original_valid)
+        }
+    ordered_valid = sorted(
+        valid_indices.tolist(),
+        key=lambda index: float(score_by_candidate.get(index, 0.0)),
+    )
+    selected_index = int(ordered_valid[0])
+    best_positions = results.q_trajs_pos_iter_0[selected_index]
+    best_velocities = results.q_trajs_vel_iter_0[selected_index]
+    best_accelerations = results.q_trajs_acc_iter_0[selected_index]
     best_report = planner.dense_validator.validate(
         q_position=best_positions.unsqueeze(0),
         q_velocity=best_velocities.unsqueeze(0),
@@ -385,11 +517,9 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             f"Selected trajectory failed final oracle: {best_report.failure_codes[0]}"
         )
 
-    selected_index = int(
-        results.best_trajectory_selection_details["selected_candidate_index"]
+    ordered_valid = torch.as_tensor(
+        ordered_valid, dtype=torch.long, device=valid_indices.device
     )
-    scores = results.valid_trajectory_selection_scores
-    ordered_valid = valid_indices if scores is None else valid_indices[torch.argsort(scores)]
     top_k_count = min(int(config.runtime_top_k_valid_trajectories), ordered_valid.numel())
     if top_k_count < 1:
         raise InferenceConfigurationError("runtime_top_k_valid_trajectories must be positive")
@@ -432,6 +562,14 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         "joint_velocity_violation": best_report.joint_velocity_violation_mask[0],
         "joint_acceleration_violation": best_report.joint_acceleration_violation_mask[0],
     }
+    if cooperative_adapter is not None:
+        selected_audit = cooperative_audits[selected_index]
+        validation.update(
+            max_closure_translation_error_m=selected_audit.max_closure_translation_m,
+            max_closure_rotation_error_rad=selected_audit.max_closure_rotation_rad,
+            cooperative_points_checked=selected_audit.checked_points,
+            payload_collision=False,
+        )
     guide_robot = getattr(planner.cost_guide, "guide_collision_robot", None)
     if guide_robot is None:
         guide_robot = robot
@@ -479,6 +617,11 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             "active_ee_mask": active_mask,
             "left_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[0]),
             "right_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[1]),
+            "object_pose_xyzw": (
+                None
+                if request.object_goal_pose is None
+                else list(request.object_goal_pose)
+            ),
         },
         "model": {
             "directory": model_dir,
@@ -513,6 +656,18 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         "cuda_memory": cuda_memory,
         "created_unix_ns": time.time_ns(),
     }
+    if cooperative_adapter is not None:
+        result["cooperative_inference"] = {
+            "prior_mode": raw_config["cooperative_inference"]["prior_mode"],
+            "closed_chain_projection": bool(
+                raw_config["cooperative_inference"].get(
+                    "closed_chain_projection", True
+                )
+            ),
+            **cooperative_adapter.statistics(),
+            "generic_valid_candidates": int(generic_valid_indices.numel()),
+            "cooperative_valid_candidates": int(valid_indices.numel()),
+        }
     result = validate_result(_jsonable(result), request=request)
     arrays = {
         "positions": best_positions.detach().cpu().numpy().astype(np.float64),
@@ -540,6 +695,14 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             dim=1,
         ).detach().cpu().numpy().astype(np.float64),
     }
+    if cooperative_adapter is not None:
+        arrays["object_path"] = np.stack(
+            [
+                cooperative_generator.object_state_from_q(state)
+                for state in best_positions.detach().cpu().numpy()
+            ]
+        ).astype(np.float64)
+        cooperative_generator.close()
     return result, arrays, scene
 
 

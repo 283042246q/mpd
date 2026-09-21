@@ -1,0 +1,196 @@
+# Rigid cooperative transport using the v3 independent dual-arm checkpoint as
+# a generic 14-D motion prior. The independent runtime config and entrypoint
+# remain unchanged.
+model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_D_warmstart_from_380k'
+model_selection: bspline
+
+runtime:
+  schema: marvin_bimanual_request/v2
+  result_schema: marvin_bimanual_result/v2
+  robot_model: marvin_bimanual
+  planning_frame: world
+  scene_id: EnvWarehouseMarvinBimanual
+  scene_version: marvin_warehouse_v2
+  network_variant: D
+  joint_names: [Joint1_L, Joint2_L, Joint3_L, Joint4_L, Joint5_L, Joint6_L, Joint7_L, Joint1_R, Joint2_R, Joint3_R, Joint4_R, Joint5_R, Joint6_R, Joint7_R]
+
+# The normalization statistics and dual-EE context still come from the
+# independent training dataset/checkpoint.
+dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-combined-10170
+dataset_file_merged: dataset_merged.hdf5
+planning_env_id: EnvWarehouseMarvinBimanual
+robot_model: marvin_bimanual
+task_family: independent
+task_mode: cooperative_rigid
+context_qs: true
+context_ee_goal_pose: true
+context_ee_goal_pose_bimanual: true
+state_dim: 14
+context_q_dim: 14
+raw_context_dim: 40
+parametric_trajectory_class: ParametricTrajectoryBspline
+bspline_degree: 5
+bspline_num_control_points_desired: 22
+bspline_num_control_points_exact: true
+num_T_pts: 128
+trajectory_duration: 10.0
+phase_time_class: PhaseTimeLinear
+obstacle_cutoff_margin_extra: 0.05
+margin_for_dense_collision_checking: 0.0
+project_gradient_hierarchy: false
+
+start_goal_source: regions
+cooperative_regions_path: start_goal_regions/EnvWarehouse-RobotMarvinBimanual-cooperative-regions.yaml
+cooperative_seed_file_path: start_goal_states/EnvWarehouse-RobotMarvinBimanual-cooperative-seeds.yaml
+cooperative_generation_config: ../../../data_generation_cfgs/EnvWarehouse-RobotMarvinBimanual-cooperative.yaml
+
+cooperative_inference:
+  # direct_project: normal independent diffusion sample, then optional closure projection.
+  # reference_residual: forward-noise a paired-IK reference and denoise a residual around it.
+  prior_mode: reference_residual
+  reference_noise_fraction: 0.40
+  closed_chain_projection: true
+  projection:
+    points: 32
+    iterations: 2
+
+# Inference reference construction uses the same algorithms as data generation,
+# with bounded runtime settings. Final validation remains at the production
+# tolerances from the generation config.
+cooperative_generator_overrides:
+  object_planning:
+    proposals_per_task: 2
+    rrt_allowed_time: 1.0
+  continuous_ik:
+    initial_branches: 3
+    beam_width: 2
+    waypoints: 24
+    max_nfev: 80
+  joint_optimization:
+    projection_points: 32
+    projection_iterations: 1
+
+collision_optimization:
+  pair_streaming: {enabled: true, pair_chunk_size: 1024}
+  reduced_guide_geometry: {enabled: true, profile: foam_pika_100}
+
+gradient_pruning:
+  enabled: true
+  force_all_active: false
+  # Closure and payload costs require dual-EE kinematics along the full path.
+  endpoint: {ee_only_last_point: false}
+  candidate: {enabled: false}
+  preselection: {parent_bounds_scan: false}
+  span_certificate: {enabled: false}
+  temporal:
+    enabled: false
+    conditional_enabled: false
+    reuse_selection_within_ddim_step: false
+    coarse_points: 32
+    buckets: [32, 64, 128]
+    always_keep_endpoints: true
+  spatial:
+    parent_link_kinematics: true
+    dense_parent_fast_path: true
+    active_link_pruning: true
+    link_broad_phase:
+      enabled: true
+      full_scan: true
+      scan_geometry: parent_bounds
+      reuse_scan_cache: false
+      environment_margin: 0.20
+      self_margin: 0.10
+    environment_link_broad_phase: false
+    self_link_pair_broad_phase: false
+  mapping: {fused_bspline_integration: false, sparse_bspline_support: false}
+  scheduling: {enabled: false}
+
+dense_validation:
+  enabled: true
+  runtime_points: 128
+  benchmark_points: 128
+  ee_position_tolerance_m: 0.01
+  ee_orientation_tolerance_rad: 0.034906585
+  check_environment: true
+  check_self_collision: true
+  check_joint_limits: true
+  check_joint_position: true
+  check_joint_velocity: true
+  check_joint_acceleration: true
+  reject_invalid: true
+  chunking:
+    enabled: true
+    candidate_chunk_size: 8
+    time_chunk_size: 32
+    self_pair_chunk_size: 1024
+  ranked_early_exit:
+    enabled: false
+    batch_buckets: [4, 8, 16, 32]
+    preallocate_buffers: true
+    cuda_graph: false
+
+costs:
+  CostTaskSpaceCollisionObjects:
+    weight: 10.0
+    use_only_on_extra_objects: false
+  CostTaskSpaceCollisionSelfLeftArm: {weight: 1.0}
+  CostTaskSpaceCollisionSelfRightArm: {weight: 1.0}
+  CostTaskSpaceCollisionInterArm: {weight: 5.0}
+  CostTaskSpacePayloadCollision:
+    weight: 8.0
+    size_xyz: [0.30, 0.24, 0.20]
+    proxy_radius: 0.025
+    margin: 0.01
+  CostTaskSpaceCooperativeClosure:
+    weight: 1.0
+    translation_scale: 0.01
+    rotation_scale: 0.0523598776
+  CostJointSpaceJointLimits: {weight: 1.0}
+  # The old network still receives derived dual-EE context, while guidance is
+  # expressed explicitly in the common object frame.
+  CostTaskSpaceObjectGoalPosition: {weight: 1.0, error_scale: 0.01}
+  CostTaskSpaceObjectGoalOrientation: {weight: 1.0, error_scale: 0.034906585}
+  CostJointSpaceVelocity: {weight: 0.02}
+  CostJointSpaceAcceleration: {weight: 0.005}
+  CostJointSpacePathLength: {weight: 0.0}
+
+# Keep the independent DDIM/guide timing profile; use 16 candidates because
+# each candidate additionally receives dense closure projection and payload audit.
+n_trajectory_samples: 16
+warmup_rounds: 1
+runtime_top_k_valid_trajectories: 4
+best_trajectory_selection: weighted_metrics
+best_trajectory_weights:
+  ee_position: 0.35
+  ee_orientation: 0.20
+  path_length: 0.15
+  smoothness: 0.15
+  velocity_limit_utilization: 0.075
+  acceleration_limit_utilization: 0.075
+best_trajectory_metric_scales:
+  ee_position: 0.01
+  ee_orientation: 1.0
+  path_length: null
+  smoothness: null
+  velocity_limit_utilization: 0.3
+  acceleration_limit_utilization: 0.15
+bimanual_goal_ranking: {mean_weight: 0.4, worst_weight: 0.6}
+
+planner_alg: mpd
+diffusion_sampling_method: ddim
+compute_costs_with_xrecon: true
+n_diffusion_steps_without_noise: 0
+extra_mp_steps: 0
+ddim:
+  t_start_guide_steps_fraction: 0.33
+  ddim_sampling_timesteps: 15
+  ddim_eta: 0.5
+  ddim_skip_type: quadratic
+  ddim_scale_grad_prior: 0.5
+  n_guide_steps: 6
+  guide_lr: 1.0
+  max_perturb_x: 0.15
+  clip_grad: true
+  clip_grad_rule: value
+  max_grad_norm: 1.0
+  max_grad_value: 1.0

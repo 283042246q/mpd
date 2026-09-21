@@ -857,7 +857,7 @@ class GenerativeOptimizationPlanner:
 
         ################################################################################################################
         # Warmup the model and guide costs
-        self.warmup()
+        self.warmup(warmup_rounds=int(_config_value(args_inference, "warmup_rounds", 5)))
 
     def warmup(self, warmup_rounds=5, **kwargs):
         # cache the model for faster inference
@@ -906,6 +906,9 @@ class GenerativeOptimizationPlanner:
         q_acc_start=None,
         q_acc_goal=None,
         active_ee_mask=None,
+        initial_control_points_normalized=None,
+        initial_noise_timestep=None,
+        control_point_postprocessor=None,
         **kwargs,
     ):
 
@@ -1045,6 +1048,12 @@ class GenerativeOptimizationPlanner:
                 control_points_normalized_iters = control_points_normalized[None, ...]
 
             else:
+                inference_sampling_kwargs = dict(self.sample_fn_kwargs)
+                if initial_control_points_normalized is not None:
+                    inference_sampling_kwargs.update(
+                        initial_x=initial_control_points_normalized,
+                        initial_noise_timestep=initial_noise_timestep,
+                    )
                 control_points_normalized_iters = self.model.run_inference(
                     guide=self.cost_guide if self.args_inference.planner_alg == "mpd" else None,
                     context_d=context_d,
@@ -1054,7 +1063,7 @@ class GenerativeOptimizationPlanner:
                     return_chain=True,
                     return_chain_x_recon=False,
                     results_ns=results_ns,
-                    **self.sample_fn_kwargs,
+                    **inference_sampling_kwargs,
                     debug=debug,
                 )
 
@@ -1113,6 +1122,18 @@ class GenerativeOptimizationPlanner:
                     )
 
                 results_ns.t_guide += t_guide_extra_mp_steps.elapsed
+
+            if control_point_postprocessor is not None:
+                processed = control_point_postprocessor(
+                    control_points_normalized_iters[-1]
+                )
+                if processed.shape != control_points_normalized_iters[-1].shape:
+                    raise ValueError(
+                        "control_point_postprocessor changed the control-point shape"
+                    )
+                control_points_normalized_iters = torch.cat(
+                    (control_points_normalized_iters, processed.unsqueeze(0)), dim=0
+                )
 
         results_ns.t_inference_total = t_inference_total.elapsed
 

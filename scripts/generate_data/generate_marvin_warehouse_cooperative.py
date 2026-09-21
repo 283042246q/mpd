@@ -464,7 +464,9 @@ class MarvinWarehouseCooperativeGenerator(MarvinWarehouseGenerator):
             return None
         return result.x.copy()
 
-    def _paired_from_seed(self, object_state, q_seed, phase, perturb=False):
+    def _paired_from_seed(
+        self, object_state, q_seed, phase, perturb=False, *, require_valid=True
+    ):
         seed = np.asarray(q_seed, dtype=float).copy()
         if perturb:
             scale = float(self.config["continuous_ik"].get("nullspace_std", 0.12))
@@ -477,7 +479,9 @@ class MarvinWarehouseCooperativeGenerator(MarvinWarehouseGenerator):
             if solution is None:
                 return None
             q[slice(0, 7) if arm == "left" else slice(7, 14)] = solution
-        return q if self.cooperative_valid(q, object_state, phase) else None
+        if require_valid and not self.cooperative_valid(q, object_state, phase):
+            return None
+        return q
 
     def paired_ik_branches(self, object_state, reference=None, phase=PHASE_IDS["transfer"]):
         started = time.perf_counter()
@@ -654,10 +658,18 @@ class MarvinWarehouseCooperativeGenerator(MarvinWarehouseGenerator):
                 candidates.append((score + np.linalg.norm(q_goal - path[-1]), np.stack(path + [q_goal])))
             return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
-    def _project_path_to_object(self, q_path, object_states, phases):
+    def _project_path_to_object(
+        self, q_path, object_states, phases, *, require_valid=True
+    ):
         projected = [np.asarray(q_path[0]).copy()]
         for index in range(1, len(q_path) - 1):
-            q = self._paired_from_seed(object_states[index], q_path[index], phases[index], perturb=False)
+            q = self._paired_from_seed(
+                object_states[index],
+                q_path[index],
+                phases[index],
+                perturb=False,
+                require_valid=require_valid,
+            )
             if q is None:
                 return None
             projected.append(q)

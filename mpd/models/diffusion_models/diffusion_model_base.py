@@ -188,18 +188,36 @@ class GaussianDiffusionModel(nn.Module, ABC):
         sample_fn=ddpm_sample_fn,
         n_diffusion_steps_without_noise=0,
         t_start_guide=torch.inf,
+        initial_x=None,
+        initial_noise_timestep=None,
         **sample_kwargs,
     ):
         device = self.betas.device
 
         batch_size = shape_x[0]
-        x = torch.randn(shape_x, device=device)
+        if initial_x is None:
+            x = torch.randn(shape_x, device=device)
+            first_timestep = self.n_diffusion_steps - 1
+        else:
+            if tuple(initial_x.shape) != tuple(shape_x):
+                raise ValueError(
+                    f"initial_x must have shape {shape_x}, got {tuple(initial_x.shape)}"
+                )
+            first_timestep = int(
+                self.n_diffusion_steps - 1
+                if initial_noise_timestep is None
+                else initial_noise_timestep
+            )
+            if not 0 <= first_timestep < self.n_diffusion_steps:
+                raise ValueError("initial_noise_timestep is outside the diffusion schedule")
+            initial_t = make_timesteps(batch_size, first_timestep, device)
+            x = self.q_sample(initial_x.to(device=device), initial_t)
         x = apply_hard_conditioning(x, hard_conds)
 
         chain = [x] if return_chain else None
         chain_x_recon = [] if return_chain_x_recon else None
 
-        for i in reversed(range(-n_diffusion_steps_without_noise, self.n_diffusion_steps)):
+        for i in reversed(range(-n_diffusion_steps_without_noise, first_timestep + 1)):
             t = make_timesteps(batch_size, i, device)
             x, x_recon = sample_fn(
                 self, x, hard_conds, context_d, t, activate_guide=True if i <= t_start_guide else False, **sample_kwargs
@@ -254,6 +272,8 @@ class GaussianDiffusionModel(nn.Module, ABC):
         ee_goal_orientation_weight_end=None,
         compute_costs_with_xrecon=False,
         results_ns=None,
+        initial_x=None,
+        initial_noise_timestep=None,
         **sample_kwargs,
     ):
         # Adapted from https://github.com/ezhang7423/language-control-diffusion/blob/63cdafb63d166221549968c662562753f6ac5394/src/lcd/models/diffusion.py#L226
@@ -273,6 +293,19 @@ class GaussianDiffusionModel(nn.Module, ABC):
         time_pairs = ddim_create_time_pairs(
             total_timesteps, sampling_timesteps, ddim_skip_type, n_diffusion_steps_without_noise
         )
+        if initial_x is not None:
+            requested_timestep = int(
+                total_timesteps - 1
+                if initial_noise_timestep is None
+                else initial_noise_timestep
+            )
+            if not 0 <= requested_timestep < total_timesteps:
+                raise ValueError("initial_noise_timestep is outside the diffusion schedule")
+            # Sparse DDIM schedules do not necessarily contain the requested
+            # timestep. Start at the nearest represented level below it.
+            time_pairs = [pair for pair in time_pairs if pair[0] <= requested_timestep]
+            if not time_pairs:
+                raise ValueError("initial_noise_timestep leaves no DDIM reverse steps")
 
         clip_grad_fn = lambda x: x
         if clip_grad and clip_grad_rule == "norm":
@@ -280,7 +313,15 @@ class GaussianDiffusionModel(nn.Module, ABC):
         elif clip_grad and clip_grad_rule == "value":
             clip_grad_fn = partial(clip_grad_by_value, max_grad_value=max_grad_value)
 
-        x = torch.randn(shape_x, device=device)
+        if initial_x is None:
+            x = torch.randn(shape_x, device=device)
+        else:
+            if tuple(initial_x.shape) != tuple(shape_x):
+                raise ValueError(
+                    f"initial_x must have shape {shape_x}, got {tuple(initial_x.shape)}"
+                )
+            first_t = make_timesteps(batch_size, int(time_pairs[0][0]), device)
+            x = self.q_sample(initial_x.to(device=device), first_t)
         x = apply_hard_conditioning(x, hard_conds)
 
         chain = [x] if return_chain else None
@@ -534,6 +575,18 @@ class GaussianDiffusionModel(nn.Module, ABC):
 
         for k, v in context_d.items():
             context_d[k] = einops.repeat(v, "... -> b ...", b=n_samples)
+
+        initial_x = diffusion_kwargs.get("initial_x")
+        if initial_x is not None:
+            if initial_x.ndim != 3:
+                raise ValueError("initial_x must be [batch, horizon, state_dim]")
+            if initial_x.shape[0] == 1 and n_samples != 1:
+                initial_x = initial_x.repeat(n_samples, 1, 1)
+            elif initial_x.shape[0] != n_samples:
+                raise ValueError(
+                    f"initial_x batch must be one or n_samples={n_samples}, got {initial_x.shape[0]}"
+                )
+            diffusion_kwargs["initial_x"] = initial_x
 
         # Sample from diffusion model
         samples, chain, chain_x_recon = self.conditional_sample(

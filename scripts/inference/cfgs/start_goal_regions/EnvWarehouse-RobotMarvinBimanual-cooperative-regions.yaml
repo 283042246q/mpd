@@ -1,0 +1,35 @@
+schema: marvin_bimanual_cooperative_regions/v1
+planning_frame: world
+grasp_profile: default_box
+
+# The 30 x 24 x 20 cm box is side-grasped at y=+/-0.12 m, so cooperative
+# placements stay in the shared central table workspace.  These cells follow
+# the v3 warehouse matrix style (atomic cells plus an explicit directed pair
+# matrix) but deliberately exclude the one-arm cabinet/cross-over cells.
+object_regions:
+  shared_near:
+    {x: [0.42, 0.50], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+  shared_middle:
+    {x: [0.51, 0.59], y: [-0.10, 0.10], z: [0.23, 0.30], yaw_deg: [-15.0, 15.0]}
+  shared_far:
+    {x: [0.60, 0.68], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+  shared_left_offset:
+    {x: [0.48, 0.60], y: [0.06, 0.13], z: [0.24, 0.30], yaw_deg: [-10.0, 10.0]}
+  shared_right_offset:
+    {x: [0.48, 0.60], y: [-0.13, -0.06], z: [0.24, 0.30], yaw_deg: [-10.0, 10.0]}
+
+# Longitudinal transfers dominate because they retain the largest paired-IK
+# basin. Lateral rows intentionally cover coordinated y motion without asking
+# either arm to enter the single-arm shelf regions.
+sampling_matrix:
+  - {start: shared_near, goal: shared_far, weight: 0.25}
+  - {start: shared_far, goal: shared_near, weight: 0.20}
+  - {start: shared_near, goal: shared_middle, weight: 0.10}
+  - {start: shared_middle, goal: shared_far, weight: 0.10}
+  - {start: shared_left_offset, goal: shared_right_offset, weight: 0.10}
+  - {start: shared_right_offset, goal: shared_left_offset, weight: 0.10}
+  - {start: shared_near, goal: shared_left_offset, weight: 0.075}
+  - {start: shared_near, goal: shared_right_offset, weight: 0.075}
+
+sampling:
+  context_sampling_tries: 30

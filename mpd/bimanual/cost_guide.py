@@ -8,6 +8,7 @@ from mpd.inference.cost_guides import (
     CostGuideManagerParametricTrajectory,
     CostTaskSpace,
     NoCostException,
+    map_jacobian_from_world_to_local_world_aligned,
 )
 from mpd.inference.guidance_config import resolve_collision_optimization_config
 from torch_robotics.robots.robot_marvin_bimanual import RobotMarvinBimanual
@@ -21,6 +22,178 @@ from .costs import (
     dual_ee_goal_cost_gradient,
     partition_self_collision_pair_indices,
 )
+from torchlie.functional import SE3 as SE3_Func
+
+
+def _homogeneous(pose):
+    bottom = torch.zeros((*pose.shape[:-2], 1, 4), dtype=pose.dtype, device=pose.device)
+    bottom[..., 0, 3] = 1.0
+    return torch.cat((pose, bottom), dim=-2)
+
+
+def _pose34(transform):
+    return transform[..., :3, :]
+
+
+class CostTaskSpaceCooperativeClosure(CostTaskSpace):
+    """Path-wide rigid-grasp cost using both inferred object frames.
+
+    Each arm is pulled toward the object frame inferred from the other arm.
+    This symmetric local objective is paired with the optional hard projector;
+    it is not used as a substitute for final closure validation.
+    """
+
+    def __init__(
+        self,
+        planning_task,
+        translation_scale=0.01,
+        rotation_scale=0.0523598776,
+        **kwargs,
+    ):
+        super().__init__(planning_task, **kwargs)
+        if planning_task.object_to_left_grasp is None or planning_task.object_to_right_grasp is None:
+            raise ValueError("cooperative closure cost requires both grasp transforms")
+        self.translation_scale = float(translation_scale)
+        self.rotation_scale = float(rotation_scale)
+
+    def compute_cost_grad_wrt_q(
+        self,
+        control_points,
+        q_traj_pos_in_phase,
+        q_traj_vel_in_phase,
+        q_traj_acc_in_phase,
+        link_poses_th,
+        jacs_spatial_th,
+        link_poses_th_ee,
+        jacs_spatial_th_ee,
+        *args,
+        **kwargs,
+    ):
+        if link_poses_th_ee is None or jacs_spatial_th_ee is None:
+            raise ValueError("cooperative closure cost requires dual-EE kinematics")
+        dtype, device = link_poses_th_ee.dtype, link_poses_th_ee.device
+        grasp_left = torch.as_tensor(
+            self.planning_task.object_to_left_grasp, dtype=dtype, device=device
+        )
+        grasp_right = torch.as_tensor(
+            self.planning_task.object_to_right_grasp, dtype=dtype, device=device
+        )
+        current_left = link_poses_th_ee[..., 0, :, :]
+        current_right = link_poses_th_ee[..., 1, :, :]
+        object_left = _homogeneous(current_left) @ torch.linalg.inv(grasp_left)
+        object_right = _homogeneous(current_right) @ torch.linalg.inv(grasp_right)
+        target_left = _pose34(object_right @ grasp_left)
+        target_right = _pose34(object_left @ grasp_right)
+        targets = torch.stack((target_left, target_right), dim=-3)
+        current_inverse = SE3_Func.inv(link_poses_th_ee)
+        error = SE3_Func.log(SE3_Func.compose(targets, current_inverse))
+        scale = torch.as_tensor(
+            [self.translation_scale] * 3 + [self.rotation_scale] * 3,
+            dtype=dtype,
+            device=device,
+        )
+        scaled = error / scale
+        cost = 0.25 * scaled.square().sum(dim=(-1, -2))
+        gradient_task = -0.5 * error / scale.square()
+        gradient_joint = torch.einsum(
+            "...adj,...ad->...j", jacs_spatial_th_ee, gradient_task
+        )
+        return cost, {"pos": gradient_joint}
+
+
+class CostTaskSpacePayloadCollision(CostTaskSpace):
+    """Differentiable box-payload/environment proxy attached to the left TCP."""
+
+    def __init__(
+        self,
+        planning_task,
+        size_xyz=(0.30, 0.24, 0.20),
+        proxy_radius=0.025,
+        margin=0.01,
+        **kwargs,
+    ):
+        super().__init__(planning_task, **kwargs)
+        if planning_task.object_to_left_grasp is None:
+            raise ValueError("payload collision cost requires the left grasp transform")
+        self.environment_field = planning_task.get_collision_objects_field()
+        if self.environment_field is None:
+            raise NoCostException
+        half = torch.as_tensor(size_xyz, **planning_task.tensor_args) * 0.5
+        signs = torch.tensor(
+            [
+                [-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1],
+                [1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1],
+            ],
+            **planning_task.tensor_args,
+        )
+        faces = torch.tensor(
+            [[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1]],
+            **planning_task.tensor_args,
+        )
+        self.local_points = torch.cat((signs * half, faces * half), dim=0)
+        self.clearance = float(proxy_radius) + float(margin)
+
+    def compute_cost_grad_wrt_q(
+        self,
+        control_points,
+        q_traj_pos_in_phase,
+        q_traj_vel_in_phase,
+        q_traj_acc_in_phase,
+        link_poses_th,
+        jacs_spatial_th,
+        link_poses_th_ee,
+        jacs_spatial_th_ee,
+        *args,
+        **kwargs,
+    ):
+        if link_poses_th_ee is None or jacs_spatial_th_ee is None:
+            raise ValueError("payload collision cost requires dual-EE kinematics")
+        left_pose = link_poses_th_ee[..., 0, :, :]
+        left_jacobian = jacs_spatial_th_ee[..., 0, :, :]
+        grasp = torch.as_tensor(
+            self.planning_task.object_to_left_grasp,
+            dtype=left_pose.dtype,
+            device=left_pose.device,
+        )
+        world_object = _homogeneous(left_pose) @ torch.linalg.inv(grasp)
+        rotation = world_object[..., :3, :3]
+        translation = world_object[..., :3, 3]
+        local = self.local_points.to(dtype=left_pose.dtype, device=left_pose.device)
+        points = torch.einsum("...ij,pj->...pi", rotation, local) + translation.unsqueeze(-2)
+
+        sdf, sdf_gradient = self.environment_field.object_signed_distances(
+            points, get_gradient=True
+        )
+        penetration = torch.relu(self.clearance - sdf)
+        if penetration.shape[-2] == 1:
+            active_penetration = penetration.squeeze(-2)
+            active_sdf_gradient = sdf_gradient.squeeze(-3)
+        else:
+            active_penetration, obstacle_index = penetration.max(dim=-2)
+            gather_index = obstacle_index.unsqueeze(-2).unsqueeze(-1).expand(
+                *obstacle_index.shape[:-1], 1, obstacle_index.shape[-1], 3
+            )
+            active_sdf_gradient = sdf_gradient.gather(-3, gather_index).squeeze(-3)
+        active = active_penetration > 0
+        gradient_points = torch.where(
+            active.unsqueeze(-1), -active_sdf_gradient, torch.zeros_like(active_sdf_gradient)
+        )
+
+        point_poses = world_object[..., None, :3, :].expand(
+            *world_object.shape[:-2], local.shape[0], 3, 4
+        ).clone()
+        point_poses[..., :3, 3] = points
+        point_jacobians = left_jacobian.unsqueeze(-3).expand(
+            *left_jacobian.shape[:-2], local.shape[0], 6, left_jacobian.shape[-1]
+        )
+        point_jacobians = map_jacobian_from_world_to_local_world_aligned(
+            point_poses, point_jacobians
+        )[..., :3, :]
+        gradient_joint = torch.einsum(
+            "...pdj,...pd->...j", point_jacobians, gradient_points
+        ) / float(local.shape[0])
+        cost = active_penetration.mean(dim=-1)
+        return cost, {"pos": gradient_joint}
 
 
 class _CollisionGuideTaskProxy:
@@ -217,6 +390,75 @@ class CostTaskSpaceEEGoalPose(CostTaskSpaceBimanualEEGoalComponent):
     component = "pose"
 
 
+class CostTaskSpaceObjectGoalComponent(CostTaskSpaceBimanualEEGoalComponent):
+    """Terminal object goal expressed through both fixed grasp transforms."""
+
+    def compute_cost_grad_wrt_q(
+        self,
+        control_points,
+        q_traj_pos_in_phase,
+        q_traj_vel_in_phase,
+        q_traj_acc_in_phase,
+        link_poses_th,
+        jacs_spatial_th,
+        link_poses_th_ee,
+        jacs_spatial_th_ee,
+        *args,
+        **kwargs,
+    ):
+        object_goal = self.planning_task.object_goal_pose
+        if object_goal is None:
+            raise ValueError("object goal cost requires planning_task.object_goal_pose")
+        dtype, device = link_poses_th_ee.dtype, link_poses_th_ee.device
+        object_goal = torch.as_tensor(object_goal, dtype=dtype, device=device)
+        object_goal_h = _homogeneous(object_goal)
+        targets = torch.stack(
+            (
+                _pose34(
+                    object_goal_h
+                    @ torch.as_tensor(
+                        self.planning_task.object_to_left_grasp,
+                        dtype=dtype,
+                        device=device,
+                    )
+                ),
+                _pose34(
+                    object_goal_h
+                    @ torch.as_tensor(
+                        self.planning_task.object_to_right_grasp,
+                        dtype=dtype,
+                        device=device,
+                    )
+                ),
+            ),
+            dim=-3,
+        )
+        cost, gradient, _ = dual_ee_goal_cost_gradient(
+            link_poses_th_ee,
+            jacs_spatial_th_ee,
+            targets,
+            self.planning_task.active_ee_mask,
+            component=self.component,
+            error_scale=self.error_scale,
+        )
+        if cost.shape[-1] > 1:
+            cost = cost.clone()
+            cost[..., :-1] = 0.0
+        return cost, {"pos": gradient}
+
+
+class CostTaskSpaceObjectGoalPosition(CostTaskSpaceObjectGoalComponent):
+    component = "position"
+
+
+class CostTaskSpaceObjectGoalOrientation(CostTaskSpaceObjectGoalComponent):
+    component = "orientation"
+
+
+class CostTaskSpaceObjectGoalPose(CostTaskSpaceObjectGoalComponent):
+    component = "pose"
+
+
 class BimanualCostGuideManagerParametricTrajectory(
     CostGuideManagerParametricTrajectory
 ):
@@ -229,6 +471,17 @@ class BimanualCostGuideManagerParametricTrajectory(
         "CostTaskSpaceEEGoalPosition": CostTaskSpaceEEGoalPosition,
         "CostTaskSpaceEEGoalOrientation": CostTaskSpaceEEGoalOrientation,
         "CostTaskSpaceEEGoalPose": CostTaskSpaceEEGoalPose,
+        "CostTaskSpaceCooperativeClosure": CostTaskSpaceCooperativeClosure,
+        "CostTaskSpacePayloadCollision": CostTaskSpacePayloadCollision,
+        "CostTaskSpaceObjectGoalPosition": CostTaskSpaceObjectGoalPosition,
+        "CostTaskSpaceObjectGoalOrientation": CostTaskSpaceObjectGoalOrientation,
+        "CostTaskSpaceObjectGoalPose": CostTaskSpaceObjectGoalPose,
+    }
+
+    EE_GOAL_COST_KEYS = CostGuideManagerParametricTrajectory.EE_GOAL_COST_KEYS | {
+        "CostTaskSpaceObjectGoalPosition",
+        "CostTaskSpaceObjectGoalOrientation",
+        "CostTaskSpaceObjectGoalPose",
     }
 
     COLLISION_COST_KEYS = {
@@ -296,6 +549,19 @@ class BimanualCostGuideManagerParametricTrajectory(
             except NoCostException:
                 continue
             self.costs[cost_key] = DotMap(cost=cost, weight=options.weight)
+
+        path_wide_ee_costs = {
+            "CostTaskSpaceCooperativeClosure",
+            "CostTaskSpacePayloadCollision",
+        }.intersection(self.costs)
+        endpoint_config = self.args_inference.get("gradient_pruning", {}).get(
+            "endpoint", {}
+        )
+        if path_wide_ee_costs and endpoint_config.get("ee_only_last_point", False):
+            raise ValueError(
+                "cooperative closure/payload guidance requires "
+                "gradient_pruning.endpoint.ee_only_last_point=false"
+            )
 
         split_keys = {
             "CostTaskSpaceCollisionSelfLeftArm",
