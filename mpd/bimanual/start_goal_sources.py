@@ -158,6 +158,7 @@ def request_from_regions(
     request_id: str,
     seed: int,
     sample_index: int,
+    region_overrides: dict | None = None,
 ) -> dict:
     from scripts.generate_data.generate_marvin_warehouse_bimanual import (
         MarvinWarehouseGenerator,
@@ -167,12 +168,34 @@ def request_from_regions(
     if not isinstance(config, dict) or config.get("schema") != "marvin_bimanual_regions/v1":
         raise ValueError("regions file schema must be marvin_bimanual_regions/v1")
     selection = config.get("inference_selection", {})
-    start_selection = selection.get("start", {"left": "random", "right": "random"})
-    goal_selection = selection.get("goal")
+    start_selection = dict(selection.get("start", {"left": "random", "right": "random"}))
+    goal_selection = dict(selection.get("goal", {}))
+    for key, value in (region_overrides or {}).items():
+        endpoint, arm = key.split(".")
+        if endpoint not in ("start", "goal") or arm not in ("left", "right"):
+            raise ValueError(f"invalid region override: {key}")
+        (start_selection if endpoint == "start" else goal_selection)[arm] = value
     if not isinstance(start_selection, dict):
         raise ValueError("inference_selection.start must define left and right selections")
     if not isinstance(goal_selection, dict):
         raise ValueError("inference_selection.goal must define left and right regions")
+    random_catalog = config.get("named_random_regions", {})
+    for endpoint, selections in (("start", start_selection), ("goal", goal_selection)):
+        for arm in ("left", "right"):
+            value = selections.get(arm, "random" if endpoint == "start" else None)
+            choices = [value] if isinstance(value, str) else value
+            if not isinstance(choices, list) or not choices:
+                raise ValueError(f"{endpoint}.{arm} requires a region name or list")
+            for name in choices:
+                if name == "random":
+                    continue
+                if not isinstance(name, str) or not name.startswith(arm + "_"):
+                    raise ValueError(f"{endpoint}.{arm}: region belongs to another arm: {name}")
+                if name not in config.get("placement_regions", {}) and name not in random_catalog:
+                    raise ValueError(f"unknown region: {name}")
+                if name in random_catalog:
+                    from scripts.generate_data.generate_marvin_warehouse_bimanual import _workspace_boxes
+                    _workspace_boxes(random_catalog[name], field=name)
     # Region endpoints are intentionally fresh samples on every invocation.
     # ``seed`` remains part of the runtime request for MPD's diffusion sampler,
     # while ``sample_index`` only addresses dataset/states-file entries.
@@ -181,6 +204,8 @@ def request_from_regions(
     try:
         attempts = int(config.get("max_sampling_attempts", 100))
         for attempt in range(attempts):
+            if time.perf_counter() >= generator.deadline:
+                break
             q_start = generator._random_valid_state()
             if q_start is None:
                 continue
@@ -190,7 +215,7 @@ def request_from_regions(
             }
             named_start = {arm: name for arm, name in start_regions.items() if name != "random"}
             for arm, region_name in named_start.items():
-                q_start = generator._target_state(q_start, arm, region_name)
+                q_start = _sample_named_endpoint(generator, q_start, arm, region_name, random_catalog)
                 if q_start is None:
                     break
             if q_start is None or not generator.valid(q_start):
@@ -199,7 +224,16 @@ def request_from_regions(
                 arm: _choose_region(goal_selection.get(arm), generator.rng, field=f"goal.{arm}")
                 for arm in ("left", "right")
             }
-            q_goal = generator._sample_endpoint(q_start, "dual_independent", goal_regions)
+            if all(name != "random" and name not in random_catalog for name in goal_regions.values()):
+                q_goal = generator._sample_endpoint(q_start, "dual_independent", goal_regions)
+            else:
+                q_goal = q_start.copy()
+                for arm, name in goal_regions.items():
+                    q_goal = _sample_named_endpoint(generator, q_goal, arm, name, random_catalog)
+                    if q_goal is None:
+                        break
+                if q_goal is not None and not generator.valid(q_goal):
+                    q_goal = None
             if q_goal is None:
                 continue
             minimum_delta = float(config.get("min_active_joint_delta", 0.08))
@@ -234,6 +268,19 @@ def request_from_regions(
         generator.close()
 
 
+def _sample_named_endpoint(generator, q, arm, name, random_catalog):
+    if name != "random" and name not in random_catalog:
+        return generator._target_state(q, arm, name)
+    original = generator.config.get("random_regions", {})
+    generator.config["random_regions"] = dict(original)
+    if name != "random":
+        generator.config["random_regions"][arm] = random_catalog[name]
+    try:
+        return generator._sample_random_endpoint(q, f"{arm}_only")
+    finally:
+        generator.config["random_regions"] = original
+
+
 def request_from_config_source(
     config_path: Path,
     *,
@@ -242,6 +289,7 @@ def request_from_config_source(
     sample_index: int,
     seed: int,
     request_id: str,
+    region_overrides: dict | None = None,
 ) -> dict:
     config_path = Path(config_path).expanduser().resolve()
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -250,6 +298,8 @@ def request_from_config_source(
         selected = "dataset"
     if selected not in SOURCE_NAMES:
         raise ValueError(f"start_goal_source must be one of {SOURCE_NAMES} or auto")
+    if region_overrides and selected != "regions":
+        raise ValueError("per-arm region overrides require start_goal_source=regions")
     if selected == "dataset":
         return request_from_dataset(config, request_id=request_id, seed=seed, sample_index=sample_index)
     configured_key = "start_goal_states_path" if selected == "states_file" else "start_goal_regions_path"
@@ -263,4 +313,5 @@ def request_from_config_source(
     )
     if selected == "states_file":
         return request_from_states_file(path, request_id=request_id, seed=seed, sample_index=sample_index)
-    return request_from_regions(path, request_id=request_id, seed=seed, sample_index=sample_index)
+    return request_from_regions(path, request_id=request_id, seed=seed, sample_index=sample_index,
+                                region_overrides=region_overrides)

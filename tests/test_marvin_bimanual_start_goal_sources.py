@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import h5py
 import numpy as np
+import pytest
 import yaml
 
 from mpd.bimanual import start_goal_sources
@@ -138,6 +139,7 @@ def test_regions_sampling_uses_system_entropy_and_ignores_seed_and_index(
         yaml.safe_dump(
             {
                 "schema": "marvin_bimanual_regions/v1",
+                "placement_regions": {"left_table": {}, "right_table": {}},
                 "inference_selection": {
                     "start": {"left": "random", "right": "random"},
                     "goal": {"left": "left_table", "right": "right_table"},
@@ -157,6 +159,11 @@ def test_regions_sampling_uses_system_entropy_and_ignores_seed_and_index(
     assert first["seed"] == 7 and second["seed"] == 99
     assert first["scene"]["start_goal_source"]["sampling"] == "system_entropy"
     assert second["scene"]["start_goal_source"]["sampling"] == "system_entropy"
+    override = start_goal_sources.request_from_regions(
+        region_file, request_id="override", seed=1, sample_index=0,
+        region_overrides={"start.left": "left_table"},
+    )
+    assert override["scene"]["start_goal_source"]["start"] == {"left": "left_table", "right": "random"}
 
 
 def test_phase3_one_shot_still_requires_explicit_request():
@@ -164,3 +171,52 @@ def test_phase3_one_shot_still_requires_explicit_request():
         action for action in infer_once_marvin_bimanual._build_parser()._actions if action.dest == "request"
     )
     assert request_action.required is True
+
+
+def test_named_random_endpoint_restores_workspace_and_freezes_other_arm():
+    original = {"left": {"x": [[0, 1]]}, "right": {"x": [[2, 3]]}}
+    selected = {"x": [[4, 5]], "y": [[0, 1]], "z": [[0, 1]]}
+    generator = SimpleNamespace(config={"random_regions": original})
+    def sample(q, mode):
+        assert mode == "left_only"
+        assert generator.config["random_regions"]["left"] == selected
+        assert generator.config["random_regions"]["right"] == original["right"]
+        raise RuntimeError("test cleanup")
+    generator._sample_random_endpoint = sample
+    with pytest.raises(RuntimeError, match="test cleanup"):
+        start_goal_sources._sample_named_endpoint(generator, np.zeros(14), "left", "left_ood", {"left_ood": selected})
+    assert generator.config["random_regions"] is original
+
+
+def test_generalization_random_boxes_are_disjoint_from_training_random():
+    path = REGIONS.with_name("EnvWarehouse-RobotMarvinBimanual-regions-matrix-generalization.yaml")
+    cfg = yaml.safe_load(path.read_text())
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import validate_config
+    validate_config(cfg)
+    assert len(cfg["placement_regions"]) == 20
+    assert len(cfg["named_random_regions"]) == 6
+    for name, cell in cfg["placement_regions"].items():
+        if "_adjacent_" not in name:
+            continue
+        arm = name.split("_")[0]
+        for training_name in cfg["arm_placement_regions"][arm]:
+            reference = cfg["placement_regions"][training_name]["translation"]
+            assert any(all(b < c or d < a for a, b in cell["translation"][axis]
+                           for c, d in reference[axis]) for axis in "xyz")
+    for name, box in cfg["named_random_regions"].items():
+        arm = name.split("_")[0]
+        reference = cfg["random_regions"][arm]
+        assert any(all(b < c or d < a for a, b in box[axis] for c, d in reference[axis]) for axis in "xyz")
+
+
+def test_region_overrides_validate_names_and_source(tmp_path):
+    path = REGIONS.with_name("EnvWarehouse-RobotMarvinBimanual-regions-matrix-generalization.yaml")
+    with pytest.raises(ValueError, match="another arm"):
+        start_goal_sources.request_from_regions(path, request_id="x", seed=1, sample_index=0,
+                                               region_overrides={"goal.left": "right_table"})
+    with pytest.raises(ValueError, match="unknown region"):
+        start_goal_sources.request_from_regions(path, request_id="x", seed=1, sample_index=0,
+                                               region_overrides={"goal.left": "left_missing"})
+    with pytest.raises(ValueError, match="require start_goal_source"):
+        start_goal_sources.request_from_config_source(CONFIG, source="dataset", source_path=None,
+            sample_index=0, seed=1, request_id="x", region_overrides={"goal.left": "left_table"})

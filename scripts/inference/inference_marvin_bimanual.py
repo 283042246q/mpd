@@ -832,6 +832,9 @@ def _build_parser():
         ),
     )
     parser.add_argument("--seed", type=int, default=12345)
+    for arm in ("left", "right"):
+        for endpoint in ("start", "goal"):
+            parser.add_argument(f"--{arm}-{endpoint}-region", help="override one arm's regions YAML selection")
     parser.add_argument(
         "--request-id",
         help="request ID for a generated request (a UUID-based ID is used by default)",
@@ -892,7 +895,14 @@ def _build_parser():
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    region_overrides = {
+        f"{endpoint}.{arm}": getattr(args, f"{arm}_{endpoint}_region")
+        for arm in ("left", "right") for endpoint in ("start", "goal")
+        if getattr(args, f"{arm}_{endpoint}_region") is not None
+    }
     if args.request is not None and (
+        region_overrides
+        or
         args.start_goal_source is not None
         or args.start_goal_file is not None
         or args.request_id is not None
@@ -948,6 +958,7 @@ def main(argv=None):
                     sample_index=args.sample_index,
                     seed=args.seed,
                     request_id=generated_request_id,
+                    region_overrides=region_overrides,
                 )
             except StartGoalSamplingError as error:
                 raise NoValidTrajectoryError(str(error)) from error

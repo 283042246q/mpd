@@ -1,0 +1,756 @@
+# Current training placement cells, adjacent held-out cells, and named random supports.
+# *_adjacent_* are uncalibrated generalization probes, not guaranteed reachable boxes.
+# *_random_*_ood use joint/FK rejection (free orientation), with complete collision checks.
+# Their XYZ supports are disjoint from the corresponding arm's training random box;
+# they may overlap placement training data, so OOD means random-support OOD only.
+# All sampling uses fresh system entropy; CLI region selections override the four YAML fields.
+schema: marvin_bimanual_regions/v1
+env_id: EnvWarehouseMarvinBimanual
+robot_id: RobotMarvinBimanual
+task_family: independent
+task_mode: dual_independent
+sampler: region_ik
+planner: RRTConnect
+random_to_placement_fraction: 0.5
+seed: 12345
+state_validity_resolution: 0.002
+planner_range: 0.35
+min_distance_robot_env: 0.02
+state_sample_tries: 20000
+ik_tries: 30
+ik_iterations: 100
+ik_reference_seed_fraction: 0.5
+ik_position_tolerance: 0.003
+ik_orientation_tolerance_deg: 2.0
+max_sampling_attempts: 100
+sampling_timeout_seconds: 120.0
+disabled_self_collision_pairs:
+- - Link5_R
+  - Link7_R
+inference_selection:
+  start:
+    left: left_table
+    right: right_table
+  goal:
+    left: left_cabinet_upper
+    right: right_cabinet
+random_regions:
+  left:
+    x:
+    - - 0.2
+      - 0.85
+    y:
+    - - 0.02
+      - 0.6
+    z:
+    - - -0.05
+      - 0.6
+  right:
+    x:
+    - - 0.2
+      - 0.85
+    y:
+    - - -0.6
+      - -0.02
+    z:
+    - - -0.05
+      - 0.6
+placement_regions:
+  left_table:
+    translation:
+      x:
+      - - 0.5
+        - 0.79
+      y:
+      - - 0.03
+        - 0.48
+      z:
+      - - -0.015
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_table_cross_y:
+    translation:
+      x:
+      - - 0.46
+        - 0.72
+      y:
+      - - -0.27
+        - -0.145
+      z:
+      - - -0.01
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_table_cross_x:
+    translation:
+      x:
+      - - 0.745
+        - 0.83
+      y:
+      - - -0.17
+        - -0.005
+      z:
+      - - -0.005
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_table:
+    translation:
+      x:
+      - - 0.42
+        - 0.79
+      y:
+      - - -0.49
+        - -0.04
+      z:
+      - - -0.015
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_table_cross_y:
+    translation:
+      x:
+      - - 0.55
+        - 0.79
+      y:
+      - - 0.15
+        - 0.195
+      z:
+      - - 0.03
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_table_cross_x:
+    translation:
+      x:
+      - - 0.75
+        - 0.83
+      y:
+      - - 0.007
+        - 0.17
+      z:
+      - - -0.005
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cabinet:
+    translation:
+      x:
+      - - 0.36
+        - 0.48
+      y:
+      - - 0.66
+        - 0.72
+      z:
+      - - 0.17
+        - 0.24
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - -1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cabinet_lower_xedge:
+    translation:
+      x:
+      - - 0.505
+        - 0.6
+      y:
+      - - 0.645
+        - 0.76
+      z:
+      - - 0.17
+        - 0.29
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - -1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cabinet_lower_yedge:
+    translation:
+      x:
+      - - 0.31
+        - 0.49
+      y:
+      - - 0.765
+        - 0.85
+      z:
+      - - 0.185
+        - 0.29
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - -1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cabinet_upper:
+    translation:
+      x:
+      - - 0.365
+        - 0.425
+      y:
+      - - 0.625
+        - 0.675
+      z:
+      - - 0.48
+        - 0.55
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - -1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cabinet:
+    translation:
+      x:
+      - - 0.34
+        - 0.4
+      y:
+      - - -0.73
+        - -0.68
+      z:
+      - - 0.18
+        - 0.24
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - -1
+      - - 0
+        - 1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - 0
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cabinet_lower_xedge:
+    translation:
+      x:
+      - - 0.47
+        - 0.54
+      y:
+      - - -0.77
+        - -0.66
+      z:
+      - - 0.17
+        - 0.29
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - -1
+      - - 0
+        - 1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - 0
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cabinet_lower_yedge:
+    translation:
+      x:
+      - - 0.34
+        - 0.47
+      y:
+      - - -0.86
+        - -0.775
+      z:
+      - - 0.185
+        - 0.285
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - -1
+      - - 0
+        - 1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - 0
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cabinet_upper:
+    translation:
+      x:
+      - - 0.365
+        - 0.445
+      y:
+      - - -0.75
+        - -0.645
+      z:
+      - - 0.495
+        - 0.545
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - -1
+      - - 0
+        - 1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - 0
+        - 15
+      z:
+      - - -15
+        - 15
+  left_table_adjacent_above:
+    translation:
+      x:
+      - - 0.5
+        - 0.72
+      y:
+      - - 0.05
+        - 0.4
+      z:
+      - - 0.1
+        - 0.16
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cabinet_adjacent_front:
+    translation:
+      x:
+      - - 0.36
+        - 0.44
+      y:
+      - - 0.625
+        - 0.64
+      z:
+      - - 0.18
+        - 0.24
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - -1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  left_cross_adjacent_outer:
+    translation:
+      x:
+      - - 0.5
+        - 0.68
+      y:
+      - - -0.3
+        - -0.28
+      z:
+      - - 0.03
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_table_adjacent_above:
+    translation:
+      x:
+      - - 0.5
+        - 0.72
+      y:
+      - - -0.4
+        - -0.05
+      z:
+      - - 0.1
+        - 0.16
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cabinet_adjacent_front:
+    translation:
+      x:
+      - - 0.34
+        - 0.4
+      y:
+      - - -0.65
+        - -0.625
+      z:
+      - - 0.18
+        - 0.24
+    rotation:
+      base:
+      - - 1
+        - 0
+        - 0
+      - - 0
+        - 0
+        - -1
+      - - 0
+        - 1
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - 0
+        - 15
+      z:
+      - - -15
+        - 15
+  right_cross_adjacent_outer:
+    translation:
+      x:
+      - - 0.55
+        - 0.72
+      y:
+      - - 0.205
+        - 0.23
+      z:
+      - - 0.03
+        - 0.09
+    rotation:
+      base:
+      - - 0
+        - 0
+        - 1
+      - - 0
+        - 1
+        - 0
+      - - -1
+        - 0
+        - 0
+      x:
+      - - -15
+        - 15
+      y:
+      - - -15
+        - 15
+      z:
+      - - -15
+        - 15
+arm_placement_regions:
+  left:
+  - left_table
+  - left_table_cross_y
+  - left_table_cross_x
+  - left_cabinet
+  - left_cabinet_lower_xedge
+  - left_cabinet_lower_yedge
+  - left_cabinet_upper
+  right:
+  - right_table
+  - right_table_cross_y
+  - right_table_cross_x
+  - right_cabinet
+  - right_cabinet_lower_xedge
+  - right_cabinet_lower_yedge
+  - right_cabinet_upper
+named_random_regions:
+  left_random_shelf_lower_ood:
+    x:
+    - - 0.36
+      - 0.54
+    y:
+    - - 0.645
+      - 0.76
+    z:
+    - - 0.17
+      - 0.29
+  left_random_shelf_upper_ood:
+    x:
+    - - 0.365
+      - 0.425
+    y:
+    - - 0.625
+      - 0.675
+    z:
+    - - 0.48
+      - 0.55
+  left_random_cross_ood:
+    x:
+    - - 0.46
+      - 0.72
+    y:
+    - - -0.27
+      - -0.145
+    z:
+    - - -0.01
+      - 0.09
+  right_random_shelf_lower_ood:
+    x:
+    - - 0.36
+      - 0.54
+    y:
+    - - -0.76
+      - -0.645
+    z:
+    - - 0.17
+      - 0.29
+  right_random_shelf_upper_ood:
+    x:
+    - - 0.365
+      - 0.445
+    y:
+    - - -0.75
+      - -0.645
+    z:
+    - - 0.495
+      - 0.545
+  right_random_cross_ood:
+    x:
+    - - 0.55
+      - 0.79
+    y:
+    - - 0.15
+      - 0.195
+    z:
+    - - 0.03
+      - 0.09

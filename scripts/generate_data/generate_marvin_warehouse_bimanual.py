@@ -307,8 +307,8 @@ def file_sha256(path):
 class MarvinWarehouseGenerator:
     def __init__(self, config, seed, progress_label=None):
         self.config = validate_config(config)
-        self.seed = int(seed)
-        self.rng = np.random.default_rng(seed)
+        self.seed = int(np.random.SeedSequence().generate_state(1)[0]) if seed is None else int(seed)
+        self.rng = np.random.default_rng(self.seed)
         self.progress_label = progress_label
         self.stats = Counter()
         self.regions = _load_regions(config)
