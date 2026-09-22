@@ -1,0 +1,66 @@
+schema: marvin_cooperative_prior_benchmark/v1
+
+# Difficulty measures the coordinated object transfer, not merely Cartesian
+# distance. All endpoint pairs are sampled once and frozen before the four
+# inference modes run.
+difficulty_definitions:
+  easy: Short longitudinal transfer between adjacent central table cells.
+  medium: Full-depth or diagonal transfer with a larger reach/yaw change.
+  hard: Lateral cross-center transfer between left/right offset cells.
+
+scenarios:
+  easy_near_to_middle:
+    difficulty: easy
+    start_region: shared_near
+    goal_region: shared_middle
+    transition: adjacent_longitudinal
+    description: Short forward transfer in the largest paired-IK basin.
+
+  easy_middle_to_far:
+    difficulty: easy
+    start_region: shared_middle
+    goal_region: shared_far
+    transition: adjacent_longitudinal
+    description: Short forward transfer from the middle to far table cell.
+
+  medium_near_to_far:
+    difficulty: medium
+    start_region: shared_near
+    goal_region: shared_far
+    transition: full_depth_longitudinal
+    description: Long forward transfer across the shared table workspace.
+
+  medium_far_to_near:
+    difficulty: medium
+    start_region: shared_far
+    goal_region: shared_near
+    transition: full_depth_longitudinal_reverse
+    description: Reverse long transfer, testing direction symmetry of the prior.
+
+  medium_near_to_left_offset:
+    difficulty: medium
+    start_region: shared_near
+    goal_region: shared_left_offset
+    transition: diagonal
+    description: Diagonal transfer toward positive workspace y.
+
+  medium_near_to_right_offset:
+    difficulty: medium
+    start_region: shared_near
+    goal_region: shared_right_offset
+    transition: diagonal
+    description: Diagonal transfer toward negative workspace y.
+
+  hard_left_to_right_offset:
+    difficulty: hard
+    start_region: shared_left_offset
+    goal_region: shared_right_offset
+    transition: lateral_cross_center
+    description: Coordinated lateral box transport across the center line.
+
+  hard_right_to_left_offset:
+    difficulty: hard
+    start_region: shared_right_offset
+    goal_region: shared_left_offset
+    transition: lateral_cross_center_reverse
+    description: Reverse coordinated lateral transport across the center line.

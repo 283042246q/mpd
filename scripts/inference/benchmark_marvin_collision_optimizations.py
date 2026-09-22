@@ -144,13 +144,21 @@ def execute_case(config_path, artifact_dir, args):
             "--request", str(args.request), "--output-dir", str(artifact_dir),
             "--device", args.device, "--sim-backend", "none",
         ]
+    backend = getattr(args, "backend", "mpd")
+    if backend != "mpd":
+        command.extend(("--backend", str(backend)))
+    monitor_gpu = str(args.device).startswith("cuda")
     device_index = int(args.device.split(":", 1)[1]) if ":" in args.device else 0
     samples = []
     stop = threading.Event()
-    monitor = threading.Thread(
-        target=_monitor_gpu,
-        args=(stop, samples, device_index, args.gpu_poll_interval),
-        daemon=True,
+    monitor = (
+        threading.Thread(
+            target=_monitor_gpu,
+            args=(stop, samples, device_index, args.gpu_poll_interval),
+            daemon=True,
+        )
+        if monitor_gpu
+        else None
     )
     started = time.perf_counter()
     timed_out = False
@@ -163,7 +171,8 @@ def execute_case(config_path, artifact_dir, args):
             stderr=stderr,
             text=True,
         )
-        monitor.start()
+        if monitor is not None:
+            monitor.start()
         try:
             returncode = process.wait(timeout=args.timeout_s)
         except subprocess.TimeoutExpired:
@@ -176,7 +185,8 @@ def execute_case(config_path, artifact_dir, args):
                 returncode = process.wait()
         finally:
             stop.set()
-            monitor.join(timeout=10)
+            if monitor is not None:
+                monitor.join(timeout=10)
     elapsed = time.perf_counter() - started
     stdout_text = stdout_path.read_text(errors="replace")
     stderr_text = stderr_path.read_text(errors="replace")
@@ -206,6 +216,7 @@ def execute_case(config_path, artifact_dir, args):
         "collision_geometry": payload.get("collision_geometry"),
         "validation": payload.get("validation"),
         "candidates": payload.get("candidates"),
+        "cooperative_inference": payload.get("cooperative_inference"),
         "command": command,
         "artifact_dir": str(artifact_dir),
     }
