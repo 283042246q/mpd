@@ -1,0 +1,186 @@
+schema: marvin_region_model_benchmark/v1
+
+# Difficulty is an experiment stratum, not a promise that every sampled pair
+# has a solution.  Endpoint sampling shortfalls are reported separately from
+# MPD failures.
+scenarios:
+  dataset_exact:
+    difficulty: easy
+    support: dataset_exact
+    transition: dataset_exact
+    source: dataset
+    sample_indices: [0, 1, 2, 3, 4, 5, 6, 7]
+    description: Exact held-in-distribution dataset endpoints.
+
+  id_table_local:
+    difficulty: easy
+    support: in_distribution
+    transition: id_to_id
+    start: {left: left_table, right: right_table}
+    goal: {left: left_table, right: right_table}
+    description: Both arms remain in their own table cells.
+
+  id_single_shelf_left:
+    difficulty: easy
+    support: in_distribution
+    transition: id_to_id
+    start: {left: left_table, right: right_table}
+    goal: {left: left_cabinet, right: right_table}
+    description: Left arm moves to the lower shelf while the right stays local.
+
+  id_single_shelf_right:
+    difficulty: easy
+    support: in_distribution
+    transition: id_to_id
+    start: {left: left_table, right: right_table}
+    goal: {left: left_table, right: right_cabinet}
+    description: Right arm moves to the lower shelf while the left stays local.
+
+  id_dual_lower_shelf:
+    difficulty: medium
+    support: in_distribution
+    transition: id_to_id
+    start: {left: left_table, right: right_table}
+    goal: {left: left_cabinet, right: right_cabinet}
+    description: Both arms move from table to lower shelf.
+
+  id_dual_upper_shelf:
+    difficulty: medium
+    support: in_distribution
+    transition: id_to_id
+    start: {left: left_table, right: right_table}
+    goal: {left: left_cabinet_upper, right: right_cabinet_upper}
+    description: Both arms move from table to the second shelf level.
+
+  id_random_to_placement:
+    difficulty: medium
+    support: in_distribution
+    transition: id_to_id
+    start: {left: random, right: random}
+    goal: {left: left_table, right: right_cabinet}
+    description: Training random support to structured placements.
+
+  id_cross_swap:
+    difficulty: hard
+    support: shared_workspace_id
+    transition: id_to_id
+    workspace_overlap: true
+    start: {left: left_table, right: right_table}
+    goal: {left: left_table_cross_y, right: right_table_cross_y}
+    description: Both arms cross the center line into the other arm's table half.
+
+  structured_table_approach:
+    difficulty: hard
+    support: structured_ood
+    transition: id_to_structured_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_table_approach_ood, right: right_table_approach_ood}
+    description: Position-OOD pre-grasp layer with training orientation support.
+
+  structured_cabinet_front:
+    difficulty: hard
+    support: structured_ood
+    transition: id_to_structured_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_cabinet_front_approach_ood, right: right_cabinet_front_approach_ood}
+    description: Position-OOD approach points just in front of both cabinets.
+
+  structured_mixed_lateral:
+    difficulty: hard
+    support: structured_ood
+    transition: structured_ood_to_structured_ood
+    start: {left: left_table_near_edge_ood, right: right_table_near_edge_ood}
+    goal: {left: left_cabinet_lower_lateral_ood, right: right_cabinet_upper}
+    description: Two position-OOD table starts and one lateral shelf extrapolation.
+
+  strict_high_dual:
+    difficulty: hard
+    support: strict_random_ood
+    transition: id_to_random_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_random_ood_high, right: right_random_ood_high}
+    description: Free-orientation vertical extrapolation for both arms.
+
+  strict_forward_single:
+    difficulty: hard
+    support: strict_random_ood
+    transition: id_to_random_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_random_ood_forward, right: right_cabinet}
+    description: Left radial reach-boundary extrapolation with an ID right goal.
+
+  strict_forward_dual:
+    difficulty: extreme
+    support: strict_random_ood
+    transition: id_to_random_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_random_ood_forward, right: right_random_ood_forward}
+    description: Simultaneous radial reach-boundary extrapolation.
+
+  shared_centerline_left:
+    difficulty: extreme
+    support: shared_workspace_ood
+    transition: id_to_shared_ood
+    workspace_overlap: true
+    start: {left: left_table, right: right_table}
+    goal: {left: left_random_ood_centerline, right: right_table}
+    description: Left arm enters the shared centerline while right remains active.
+
+  shared_centerline_right:
+    difficulty: extreme
+    support: shared_workspace_ood
+    transition: id_to_shared_ood
+    workspace_overlap: true
+    start: {left: left_table, right: right_table}
+    goal: {left: left_table, right: right_random_ood_centerline}
+    description: Right arm enters the shared centerline while left remains active.
+
+  shared_centerline_dual:
+    difficulty: extreme
+    support: shared_workspace_ood
+    transition: id_to_shared_ood
+    workspace_overlap: true
+    start: {left: left_table, right: right_table}
+    goal: {left: left_random_ood_centerline, right: right_random_ood_centerline}
+    description: Both end effectors enter adjacent centerline slabs; inter-arm collision dominates.
+
+  structured_sparse_lateral_dual:
+    difficulty: extreme
+    support: structured_ood
+    transition: structured_ood_to_structured_ood
+    start: {left: left_table_approach_ood, right: right_table_approach_ood}
+    goal: {left: left_cabinet_upper_lateral_ood, right: right_cabinet_upper_lateral_ood}
+    expected_sampling: sparse
+    description: Deliberately sparse reach-boundary case; shortfalls are expected and reported.
+
+  structured_return_to_id:
+    difficulty: hard
+    support: structured_ood
+    transition: structured_ood_to_id
+    start: {left: left_table_approach_ood, right: right_table_approach_ood}
+    goal: {left: left_table, right: right_cabinet}
+    description: Reverse direction from structured position OOD into training support.
+
+  strict_high_to_id:
+    difficulty: extreme
+    support: strict_random_ood
+    transition: random_ood_to_id
+    start: {left: left_random_ood_high, right: right_random_ood_high}
+    goal: {left: left_table, right: right_table}
+    description: Reverse direction from strict free-orientation OOD into training support.
+
+  strict_high_to_forward:
+    difficulty: extreme
+    support: strict_random_ood
+    transition: random_ood_to_random_ood
+    start: {left: left_random_ood_high, right: right_random_ood_high}
+    goal: {left: left_random_ood_forward, right: right_random_ood_forward}
+    description: Both endpoints are outside every training position support.
+
+  mixed_structured_random_ood:
+    difficulty: extreme
+    support: mixed_ood
+    transition: id_to_mixed_ood
+    start: {left: left_table, right: right_table}
+    goal: {left: left_cabinet_front_approach_ood, right: right_random_ood_high}
+    description: Structured task-position OOD on one arm and strict random OOD on the other.
