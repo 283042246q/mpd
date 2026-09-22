@@ -1,7 +1,7 @@
 # Rigid cooperative transport using the v3 independent dual-arm checkpoint as
 # a generic 14-D motion prior. The independent runtime config and entrypoint
 # remain unchanged.
-model_dir_ddpm_bspline: '${HOME}/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_dual_ee_variant_D_warmstart_from_380k'
+model_dir_ddpm_bspline: '/home/eric/Projects/MotionPlanningDiffusion/mpd/logs/marvin_bimanual/warehouse_independent_v3_reversed_variant_D/1726484688'
 model_selection: bspline
 
 runtime:
@@ -16,7 +16,7 @@ runtime:
 
 # The normalization statistics and dual-EE context still come from the
 # independent training dataset/checkpoint.
-dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-res002-nosimplifier-combined-10170
+dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-gpu-combined-reversed
 dataset_file_merged: dataset_merged.hdf5
 planning_env_id: EnvWarehouseMarvinBimanual
 robot_model: marvin_bimanual

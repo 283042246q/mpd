@@ -1,0 +1,152 @@
+{
+  "schema": "marvin_bimanual_request/v2",
+  "request_id": "marvin-cooperative-6223ab67-0de5-4fa9-8345-ec341b6fcdaf",
+  "task_mode": "cooperative_rigid",
+  "runtime_mode": "snapshot_no_time",
+  "robot_model": "marvin_bimanual",
+  "planning_frame": "world",
+  "scene_id": "EnvWarehouseMarvinBimanual",
+  "scene_version": "marvin_warehouse_v2",
+  "joint_names": [
+    "Joint1_L",
+    "Joint2_L",
+    "Joint3_L",
+    "Joint4_L",
+    "Joint5_L",
+    "Joint6_L",
+    "Joint7_L",
+    "Joint1_R",
+    "Joint2_R",
+    "Joint3_R",
+    "Joint4_R",
+    "Joint5_R",
+    "Joint6_R",
+    "Joint7_R"
+  ],
+  "q_start": [
+    -1.1492097523939797,
+    -0.8303842658165868,
+    0.11167859514225983,
+    -2.3114116463727803,
+    0.4955650853141791,
+    0.03747353284852574,
+    -1.5707988681058511,
+    -0.8769718955252954,
+    1.5798499566582977,
+    1.6865038492607631,
+    -2.3956651612305118,
+    0.08235822585230053,
+    0.1345459949011879,
+    -0.001525943046069675
+  ],
+  "q_goal": [
+    0.025406914811970892,
+    -0.9361163622374864,
+    -0.6735643412097226,
+    -1.800682227931697,
+    1.420440913105376,
+    -0.6431874651637538,
+    -1.0780066919935782,
+    -1.6461439937887112,
+    1.4413216160330264,
+    1.9598054796305038,
+    -1.8923385960927597,
+    -0.15648761508591708,
+    0.33913340387044877,
+    0.5661982021240599
+  ],
+  "q_velocity_start": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "q_acceleration_start": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "left_goal_pose": {
+    "frame_id": "world",
+    "pose_xyzw": [
+      0.6469900710163575,
+      0.0922185812230866,
+      0.2658985252152314,
+      0.046360166889595156,
+      0.7055853845750838,
+      -0.046360166889595156,
+      0.7055853845750838
+    ]
+  },
+  "right_goal_pose": {
+    "frame_id": "world",
+    "pose_xyzw": [
+      0.6155874570799479,
+      -0.14571812430584355,
+      0.2658985252152314,
+      0.046360166889595156,
+      0.7055853845750838,
+      -0.046360166889595156,
+      0.7055853845750838
+    ]
+  },
+  "object_goal_pose": {
+    "frame_id": "world",
+    "pose_xyzw": [
+      0.6312887640481527,
+      -0.026749771541378475,
+      0.2658985252152314,
+      0.046360166889595156,
+      0.7055853845750838,
+      -0.046360166889595156,
+      0.7055853845750838
+    ]
+  },
+  "grasp_profile": "default_box",
+  "world_version": 0,
+  "deadline_unix_ns": 0,
+  "seed": 12345,
+  "scene": {
+    "start_goal_source": {
+      "type": "regions",
+      "path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/start_goal_regions/EnvWarehouse-RobotMarvinBimanual-cooperative-regions.yaml",
+      "sampling": "deterministic_seed",
+      "matrix_index": 0,
+      "start_region": "shared_near",
+      "goal_region": "shared_far"
+    },
+    "object_start_state_xyz_yaw": [
+      0.4381868817973736,
+      -0.02931866564643954,
+      0.27784192743996405,
+      0.07382938383895327
+    ],
+    "object_goal_state_xyz_yaw": [
+      0.6312887640481527,
+      -0.026749771541378475,
+      0.2658985252152314,
+      -0.1312204774837597
+    ]
+  }
+}

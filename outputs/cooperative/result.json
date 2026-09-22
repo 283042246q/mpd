@@ -1,0 +1,10 @@
+{
+  "created_unix_ns": 1790067600106077906,
+  "error": {
+    "message": "MPD produced no dense-valid trajectory",
+    "type": "NoValidTrajectoryError"
+  },
+  "request_id": "marvin-cooperative-e9e427b8-29de-489e-84f1-0eab9a39bfd3",
+  "schema": "marvin_bimanual_result/v2",
+  "status": "no_valid_trajectory"
+}
