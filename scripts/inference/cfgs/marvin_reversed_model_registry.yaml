@@ -2,18 +2,18 @@ schema: marvin_bimanual_model_registry/v1
 dataset_subdir: EnvWarehouse-RobotMarvinBimanual-independent-v3-gpu-combined-reversed
 dataset_file_merged: dataset_merged.hdf5
 
-# B/C/D are pinned to the two lowest finite validation-loss full EMA
-# checkpoints available on 2026-09-22.  Planning success, rather than
-# validation loss, is what this benchmark compares.
+# A/B/C use their two selected full EMA checkpoints.  D additionally keeps
+# 600k as a planning-quality candidate requested after the initial benchmark.
+# Planning success, rather than validation loss, is the final comparison.
 models:
   A:
-    enabled: false
+    enabled: true
     run_dir: logs/marvin_bimanual/warehouse_independent_v3_reversed_variant_A/1726484688
     network_variant: A
     selection:
       type: top_validation
       top_k: 2
-    note: Flip enabled to true after the reversed-A run has full checkpoints.
+    note: Resolves to 835k and 660k from the completed reversed-A run.
 
   B:
     enabled: true
@@ -56,3 +56,6 @@ models:
         - step: 665000
           file: ema_model__iter_665000.pth
           val_loss: 0.013797036372125149
+        - step: 600000
+          file: ema_model__iter_600000.pth
+          val_loss: 0.013855262659490108

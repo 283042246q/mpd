@@ -1,8 +1,7 @@
 # Marvin region × model benchmark
 
-This benchmark compares the two selected checkpoints of reversed-data variants
-B, C, and D on exactly the same frozen start/goal requests.  Variant A has the
-same registry interface and is disabled until a reversed-A run exists.
+This benchmark compares selected checkpoints of reversed-data variants A, B,
+C, and D on exactly the same frozen start/goal requests.
 
 ## What is covered
 
@@ -36,9 +35,10 @@ The model registry pins these full EMA checkpoints:
 
 | Variant | checkpoint 1 | checkpoint 2 |
 | --- | ---: | ---: |
+| A | 835k | 660k |
 | B | 955k | 715k |
 | C | 715k | 835k |
-| D | 305k | 665k |
+| D | 305k | 665k (plus requested 600k) |
 
 They are the two lowest finite validation-loss saved checkpoints found in each
 reversed-data run when the registry was created.  The benchmark measures their
@@ -51,7 +51,7 @@ of 32 candidates.  Use four batches for the 4 × 32 quality setting.
 
 ## One-click execution
 
-Run all 22 scenarios, one frozen request per scenario, six checkpoints, and one
+Run all 22 scenarios, one frozen request per scenario, nine checkpoints, and one
 32-candidate batch:
 
 ```bash
@@ -70,8 +70,9 @@ For the final 4 × 32 comparison, add:
 ```
 
 Each request/seed trial stops at its first successful batch.  A failed trial
-runs all four batches, so the maximum is 528 subprocesses for the default 22
-tasks × 6 checkpoints × 1 seed × 4 batches.
+runs all four batches, so the maximum is 792 subprocesses for the configured 22
+tasks × 9 checkpoints × 1 seed × 4 batches. Sampling shortfalls reduce the
+actual count.
 
 It is often more convenient to freeze tasks first and run later.  Use the same
 arguments and output directory for both commands:
@@ -93,6 +94,23 @@ conda run --no-capture-output -n mpd-splines-public \
 Runs are resumable.  Existing per-batch reports are reused, while immutable
 settings prevent an accidental mixture of different tasks, checkpoints,
 candidate budgets, or seeds in one output directory.
+
+The manifest is also safely extensible: newly registered checkpoint IDs are
+appended to an existing experiment, but existing checkpoint definitions and
+the frozen task/budget fields cannot change. Reusing the original output
+directory therefore runs only missing checkpoint batches and retains the exact
+same requests.
+
+For the existing 4 × 32 result directory, this command reuses all completed
+B/C/D reports and runs only A-835k, A-660k, and D-600k:
+
+```bash
+conda run --no-capture-output -n mpd-splines-public \
+  python scripts/inference/benchmark_marvin_region_models.py \
+  --stage run \
+  --output-dir scripts/inference/logs/marvin-region-model-benchmark-4x32 \
+  --candidate-batches 4 --candidates-per-batch 32 --device cuda:0
+```
 
 Useful smaller runs include:
 
@@ -133,16 +151,22 @@ success or after exhausting all candidate batches.  `fault`, `timeout`, and
 `cuda_oom` remain visible in status counts and are not silently treated as
 normal no-solution results.
 
-## Enabling future variant A
+`mean_wall_seconds` is the average end-to-end wall time for one
+model × frozen request × base-seed trial. It sums every attempted 32-candidate
+subprocess until the first successful batch, or all four subprocesses when the
+trial fails. It includes model/dataset/environment startup and dense validation,
+but excludes endpoint sampling and other checkpoints. It is therefore the
+latency of the current early-stop benchmark policy, not pure network inference
+time.
 
-In
-`scripts/inference/cfgs/marvin_reversed_model_registry.yaml`, point A's
-`run_dir` at the completed run and set `enabled: true`.  Its
-`top_validation/top_k: 2` policy automatically resolves the two best saved full
-checkpoints.  Then run with:
+## Variant selection
+
+Variant A is enabled. Its `top_validation/top_k: 2` policy resolves 835k and
+660k from the completed run. All variants are selected by default; an explicit
+subset remains available, for example:
 
 ```text
---variants A B C D
+--variants A D
 ```
 
 Use `--strict-models` when a missing/mismatched run should abort preparation;

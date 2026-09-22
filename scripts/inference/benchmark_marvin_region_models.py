@@ -393,8 +393,62 @@ def materialize_experiment(output: Path, task_report: dict, cases: list, skipped
         "device": args.device,
         "timeout_s": float(args.timeout_s),
     }
-    _immutable_json(output / "manifest.json", manifest)
-    return manifest
+    manifest_path = output / "manifest.json"
+    if not manifest_path.is_file():
+        _atomic_json(manifest_path, manifest)
+        return manifest
+
+    # A completed benchmark can be extended with additional checkpoints while
+    # preserving the frozen tasks and inference budget.  Existing checkpoint
+    # definitions remain immutable: an ID collision with different content is
+    # rejected instead of silently mixing experiments.
+    existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+    extensible = {"models", "skipped_models"}
+    for key, value in manifest.items():
+        if key not in extensible and existing.get(key) != value:
+            raise ValueError(
+                f"Existing experiment differs at {key!r}; use a new output directory: {manifest_path}"
+            )
+    merged_models = list(existing.get("models", []))
+    by_id = {model["id"]: model for model in merged_models}
+    for model in manifest["models"]:
+        previous = by_id.get(model["id"])
+        if previous is not None and previous != model:
+            raise ValueError(
+                f"Checkpoint definition changed for {model['id']}; use a new output directory"
+            )
+        if previous is None:
+            merged_models.append(model)
+            by_id[model["id"]] = model
+    merged_skipped = list(existing.get("skipped_models", []))
+    for item in manifest["skipped_models"]:
+        if item not in merged_skipped:
+            merged_skipped.append(item)
+    existing["models"] = merged_models
+    existing["skipped_models"] = merged_skipped
+    _atomic_json(manifest_path, existing)
+    return existing
+
+
+def resume_counts(output: Path, manifest: dict, task_report: dict) -> dict:
+    """Count reusable reports and the maximum number of subprocesses still needed."""
+    existing, pending = 0, 0
+    for model in manifest["models"]:
+        for task in task_report["tasks"]:
+            for seed in manifest["seeds"]:
+                group = (
+                    output / "runs" / model["id"] / task["scenario"]
+                    / f"task-{task['task_index']:03d}" / f"seed-{seed}"
+                )
+                for batch in range(manifest["candidate_batches"]):
+                    report = group / f"batch-{batch:02d}/benchmark-result.json"
+                    if report.is_file():
+                        existing += 1
+                        if json.loads(report.read_text(encoding="utf-8")).get("status") == "success":
+                            break
+                    else:
+                        pending += 1
+    return {"existing_batch_reports": existing, "pending_batch_runs_max": pending}
 
 
 def run_experiment(output: Path, manifest: dict, task_report: dict, args) -> None:
@@ -412,7 +466,9 @@ def run_experiment(output: Path, manifest: dict, task_report: dict, args) -> Non
                     report_path = artifact / "benchmark-result.json"
                     if report_path.is_file():
                         row = json.loads(report_path.read_text(encoding="utf-8"))
+                        reused = True
                     else:
+                        reused = False
                         request = deepcopy(original)
                         request["seed"] = int(seed) + batch
                         request_path = artifact / "input-request.json"
@@ -442,11 +498,12 @@ def run_experiment(output: Path, manifest: dict, task_report: dict, args) -> Non
                             "max_batches": manifest["candidate_batches"],
                         })
                         _immutable_json(report_path, row)
-                    print(
-                        f"{model['id']} {task['scenario']} task={task['task_index']} "
-                        f"seed={seed} batch={batch}: {row['status']}",
-                        flush=True,
-                    )
+                    if not reused:
+                        print(
+                            f"{model['id']} {task['scenario']} task={task['task_index']} "
+                            f"seed={seed} batch={batch}: {row['status']}",
+                            flush=True,
+                        )
                     summarize_experiment(output, manifest, task_report)
                     if row["status"] == "success":
                         break
@@ -584,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--regions", type=Path, default=DEFAULT_REGIONS)
     parser.add_argument("--scenarios", nargs="+")
     parser.add_argument("--difficulties", nargs="+", choices=DIFFICULTIES)
-    parser.add_argument("--variants", nargs="+", choices=tuple("ABCD"), default=list("BCD"))
+    parser.add_argument("--variants", nargs="+", choices=tuple("ABCD"), default=list("ABCD"))
     parser.add_argument("--strict-models", action="store_true")
     parser.add_argument("--tasks-per-scenario", type=int, default=1)
     parser.add_argument("--max-task-attempts", type=int, default=30)
@@ -647,14 +704,19 @@ def main(argv=None) -> int:
             parser.error(f"prepare tasks first: {task_path}")
         task_report = json.loads(task_path.read_text(encoding="utf-8"))
     manifest = materialize_experiment(output, task_report, cases, skipped, args)
+    resume = resume_counts(output, manifest, task_report)
     print(json.dumps({
         "tasks": len(task_report["tasks"]),
         "models": [item["id"] for item in manifest["models"]],
         "skipped_models": skipped,
-        "maximum_trial_groups": len(task_report["tasks"]) * len(cases) * len(args.seeds),
-        "maximum_subprocess_runs": (
-            len(task_report["tasks"]) * len(cases) * len(args.seeds) * args.candidate_batches
+        "maximum_trial_groups": (
+            len(task_report["tasks"]) * len(manifest["models"]) * len(args.seeds)
         ),
+        "maximum_subprocess_runs": (
+            len(task_report["tasks"]) * len(manifest["models"])
+            * len(args.seeds) * args.candidate_batches
+        ),
+        **resume,
         "sampling_shortfalls": manifest["sampling_shortfalls"],
     }, indent=2), flush=True)
     if args.stage == "prepare":

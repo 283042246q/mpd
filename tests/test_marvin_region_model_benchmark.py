@@ -13,7 +13,9 @@ from scripts.inference.benchmark_marvin_region_models import (
     _aggregate,
     load_model_cases,
     load_scenarios,
+    materialize_experiment,
     prepare_tasks,
+    resume_counts,
 )
 
 
@@ -56,13 +58,17 @@ def test_catalog_covers_all_difficulties_ood_and_shared_workspace():
     )
 
 
-def test_checked_in_registry_pins_two_b_c_d_and_leaves_a_interface_disabled():
+def test_checked_in_registry_enables_a_top_two_and_adds_d_600k():
     registry = yaml.safe_load(DEFAULT_MODELS.read_text())
-    assert registry["models"]["A"]["enabled"] is False
+    assert registry["models"]["A"]["enabled"] is True
     assert registry["models"]["A"]["selection"] == {
         "type": "top_validation", "top_k": 2
     }
-    expected = {"B": [955000, 715000], "C": [715000, 835000], "D": [305000, 665000]}
+    expected = {
+        "B": [955000, 715000],
+        "C": [715000, 835000],
+        "D": [305000, 665000, 600000],
+    }
     for variant, steps in expected.items():
         selection = registry["models"][variant]["selection"]
         assert selection["type"] == "explicit"
@@ -181,3 +187,45 @@ def test_infrastructure_error_is_not_a_planning_failure():
     assert row["infrastructure_or_contract_trials"] == 1
     assert row["planning_success_rate"] == 0
     assert row["end_to_end_success_rate"] == 0
+
+
+def test_manifest_can_add_checkpoints_and_resume_existing_batches(tmp_path):
+    args = SimpleNamespace(
+        candidates_per_batch=32, seeds=[7], candidate_batches=2,
+        device="cuda:0", timeout_s=600.0,
+    )
+    task_report = {
+        "tasks": [{"scenario": "test", "task_index": 0}],
+        "scenarios": {"test": {"shortfall": 0}},
+    }
+
+    def case(name):
+        return {
+            "id": name, "variant": name[0], "step": 10, "val_loss": 0.1,
+            "run_dir": "/run", "checkpoint": f"/{name}.pth",
+            "fingerprint": {"size": 1, "mtime_ns": 1, "sha256": "a" * 64},
+            "config": {"runtime_top_k_valid_trajectories": 8},
+        }
+
+    first = materialize_experiment(tmp_path, task_report, [case("A-10")], [], args)
+    assert [item["id"] for item in first["models"]] == ["A-10"]
+    result = tmp_path / "runs/A-10/test/task-000/seed-7/batch-00/benchmark-result.json"
+    result.parent.mkdir(parents=True)
+    result.write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+    extended = materialize_experiment(
+        tmp_path, task_report, [case("A-10"), case("D-20")], [], args
+    )
+    assert [item["id"] for item in extended["models"]] == ["A-10", "D-20"]
+    assert resume_counts(tmp_path, extended, task_report) == {
+        "existing_batch_reports": 1,
+        "pending_batch_runs_max": 2,
+    }
+
+    changed = SimpleNamespace(**{**vars(args), "candidate_batches": 4})
+    try:
+        materialize_experiment(tmp_path, task_report, [case("A-10")], [], changed)
+    except ValueError as error:
+        assert "candidate_batches" in str(error)
+    else:
+        raise AssertionError("changing a frozen inference budget must be rejected")
