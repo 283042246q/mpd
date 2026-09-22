@@ -188,25 +188,51 @@ def test_named_random_endpoint_restores_workspace_and_freezes_other_arm():
     assert generator.config["random_regions"] is original
 
 
-def test_generalization_random_boxes_are_disjoint_from_training_random():
+def test_generalization_ood_boxes_are_strictly_disjoint_from_training_support():
     path = REGIONS.with_name("EnvWarehouse-RobotMarvinBimanual-regions-matrix-generalization.yaml")
     cfg = yaml.safe_load(path.read_text())
     from scripts.generate_data.generate_marvin_warehouse_bimanual import validate_config
     validate_config(cfg)
-    assert len(cfg["placement_regions"]) == 20
+    assert len(cfg["placement_regions"]) == 14
+    assert len(cfg["placement_ood_regions"]) == 10
     assert len(cfg["named_random_regions"]) == 6
-    for name, cell in cfg["placement_regions"].items():
-        if "_adjacent_" not in name:
-            continue
-        arm = name.split("_")[0]
-        for training_name in cfg["arm_placement_regions"][arm]:
-            reference = cfg["placement_regions"][training_name]["translation"]
-            assert any(all(b < c or d < a for a, b in cell["translation"][axis]
-                           for c, d in reference[axis]) for axis in "xyz")
+    bases = {
+        "table_near_edge_ood": "table",
+        "table_approach_ood": "table",
+        "cabinet_front_approach_ood": "cabinet",
+        "cabinet_lower_lateral_ood": "cabinet",
+        "cabinet_upper_lateral_ood": "cabinet_upper",
+    }
+    for name, cell in cfg["placement_ood_regions"].items():
+        arm, role = name.split("_", 1)
+        assert cell["rotation"] == cfg["placement_regions"][f"{arm}_{bases[role]}"]["rotation"]
+        for training_name, training in cfg["placement_regions"].items():
+            assert not start_goal_sources._positive_xyz_overlap(
+                cell["translation"], training["translation"]
+            ), (name, training_name)
     for name, box in cfg["named_random_regions"].items():
-        arm = name.split("_")[0]
-        reference = cfg["random_regions"][arm]
-        assert any(all(b < c or d < a for a, b in box[axis] for c, d in reference[axis]) for axis in "xyz")
+        for arm, reference in cfg["random_regions"].items():
+            assert not start_goal_sources._positive_xyz_overlap(box, reference), (name, arm)
+        for training_name, training in cfg["placement_regions"].items():
+            assert not start_goal_sources._positive_xyz_overlap(
+                box, training["translation"]
+            ), (name, training_name)
+    prepared = yaml.safe_load(path.read_text())
+    start_goal_sources._prepare_ood_regions(prepared)
+    assert len(prepared["placement_regions"]) == 24
+
+
+def test_ood_validation_rejects_training_support_overlap():
+    path = REGIONS.with_name("EnvWarehouse-RobotMarvinBimanual-regions-matrix-generalization.yaml")
+    cfg = yaml.safe_load(path.read_text())
+    cfg["named_random_regions"]["left_random_ood_high"] = cfg["random_regions"]["left"]
+    with pytest.raises(ValueError, match="training random support"):
+        start_goal_sources._prepare_ood_regions(cfg)
+    cfg = yaml.safe_load(path.read_text())
+    cfg["placement_ood_regions"]["left_table_near_edge_ood"]["translation"] = \
+        cfg["placement_regions"]["left_table"]["translation"]
+    with pytest.raises(ValueError, match="overlaps training placement"):
+        start_goal_sources._prepare_ood_regions(cfg)
 
 
 def test_region_overrides_validate_names_and_source(tmp_path):

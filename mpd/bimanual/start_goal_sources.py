@@ -152,6 +152,59 @@ def _choose_region(value, rng, *, field):
     return choices[int(rng.integers(len(choices)))]
 
 
+def _positive_xyz_overlap(first, second):
+    """Return true only for positive-volume overlap; touching faces are OOD-safe."""
+    return all(
+        any(min(a_high, b_high) > max(a_low, b_low)
+            for a_low, a_high in first[axis]
+            for b_low, b_high in second[axis])
+        for axis in "xyz"
+    )
+
+
+def _prepare_ood_regions(config):
+    """Validate inference-only OOD catalogs and expose structured cells to IK."""
+    from scripts.generate_data.generate_marvin_warehouse_bimanual import (
+        _axis_intervals,
+        _workspace_boxes,
+    )
+
+    placement = dict(config.get("placement_regions", {}))
+    structured = config.get("placement_ood_regions", {})
+    random_catalog = config.get("named_random_regions", {})
+    duplicates = set(placement) & set(structured)
+    if duplicates:
+        raise ValueError(f"placement OOD names duplicate training cells: {sorted(duplicates)}")
+    for name, region in structured.items():
+        arm = name.split("_", 1)[0]
+        if arm not in ("left", "right"):
+            raise ValueError(f"placement OOD region requires left/right prefix: {name}")
+        for component in ("translation", "rotation"):
+            for axis in "xyz":
+                _axis_intervals(region.get(component, {}).get(axis, []), field=f"{name}.{component}.{axis}")
+        base = np.asarray(region["rotation"].get("base"), dtype=float)
+        if base.shape != (3, 3) or not np.allclose(base.T @ base, np.eye(3)) or not np.isclose(np.linalg.det(base), 1):
+            raise ValueError(f"{name}.rotation.base must be a rotation matrix")
+        for training_name, training in placement.items():
+            if _positive_xyz_overlap(region["translation"], training["translation"]):
+                raise ValueError(f"placement OOD {name} overlaps training placement {training_name}")
+    for name, region in random_catalog.items():
+        arm = name.split("_", 1)[0]
+        if arm not in ("left", "right"):
+            raise ValueError(f"random OOD region requires left/right prefix: {name}")
+        boxes = _workspace_boxes(region, field=name)
+        for box in boxes:
+            for training_arm, training_random in config.get("random_regions", {}).items():
+                for training_box in _workspace_boxes(training_random, field=f"random_regions.{training_arm}"):
+                    if _positive_xyz_overlap(box, training_box):
+                        raise ValueError(f"random OOD {name} overlaps {training_arm} training random support")
+            for training_name, training in placement.items():
+                if _positive_xyz_overlap(box, training["translation"]):
+                    raise ValueError(f"random OOD {name} overlaps training placement {training_name}")
+    config["placement_regions"] = {**placement, **structured}
+    return random_catalog
+
+
 def request_from_regions(
     path: Path,
     *,
@@ -167,6 +220,7 @@ def request_from_regions(
     config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(config, dict) or config.get("schema") != "marvin_bimanual_regions/v1":
         raise ValueError("regions file schema must be marvin_bimanual_regions/v1")
+    random_catalog = _prepare_ood_regions(config)
     selection = config.get("inference_selection", {})
     start_selection = dict(selection.get("start", {"left": "random", "right": "random"}))
     goal_selection = dict(selection.get("goal", {}))
@@ -179,7 +233,6 @@ def request_from_regions(
         raise ValueError("inference_selection.start must define left and right selections")
     if not isinstance(goal_selection, dict):
         raise ValueError("inference_selection.goal must define left and right regions")
-    random_catalog = config.get("named_random_regions", {})
     for endpoint, selections in (("start", start_selection), ("goal", goal_selection)):
         for arm in ("left", "right"):
             value = selections.get(arm, "random" if endpoint == "start" else None)
