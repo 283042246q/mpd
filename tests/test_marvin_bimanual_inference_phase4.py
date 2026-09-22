@@ -6,6 +6,7 @@ import numpy as np
 
 from mpd.bimanual.runtime_contract import JOINT_NAMES, SCHEMA
 from scripts.runtime.infer_server import ResidentPlannerService
+from scripts.runtime.infer_once_marvin_bimanual import run_one_shot
 from scripts.runtime.runtime_engine_marvin_bimanual import (
     MarvinBimanualRuntimeEngine,
     PlanArtifacts,
@@ -35,10 +36,12 @@ class _Session:
     def __init__(self, _config, _output, _device, callback):
         type(self).loads += 1
         self.instance_id = "resident-test"
+        self.scene = {"frame_id": "world", "obstacles": []}
         callback("WARMING")
 
     def health(self):
         return {
+            "instance_id": self.instance_id,
             "loads": 1,
             "checkpoint_sha256": "a" * 64,
             "config_sha256": "b" * 64,
@@ -101,6 +104,33 @@ def test_resident_engine_constructs_session_once():
     np.testing.assert_array_equal(
         first.trajectory_arrays["positions"], second.trajectory_arrays["positions"]
     )
+
+
+def test_one_shot_and_resident_use_identical_engine_contract(tmp_path):
+    request = _request("equivalent", world_version=7)
+    request_path = tmp_path / "request.json"
+    request_path.write_text(__import__("json").dumps(request), encoding="utf-8")
+
+    def factory(config, output, device):
+        return MarvinBimanualRuntimeEngine(
+            config, output, device, lambda _: None, session_factory=_Session
+        )
+
+    one_shot = run_one_shot(
+        request_path,
+        tmp_path / "one-shot",
+        device="cpu",
+        backend="mpd",
+        engine_factory=factory,
+    )
+    resident_engine = factory(Path("unused"), tmp_path / "resident", "cpu")
+    resident = resident_engine.plan(request)
+    assert one_shot["positions"] == resident.result_payload["positions"]
+    assert one_shot["world_version"] == resident.result_payload["world_version"]
+    with np.load(tmp_path / "one-shot" / "trajectory.npz") as archive:
+        np.testing.assert_array_equal(
+            archive["positions"], resident.trajectory_arrays["positions"]
+        )
 
 
 def test_service_has_deadline_stale_and_atomic_artifacts(tmp_path):

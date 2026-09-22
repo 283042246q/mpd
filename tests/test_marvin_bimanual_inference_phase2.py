@@ -72,7 +72,7 @@ def _scene():
 def test_locked_local_asset_and_tcp_rigid_body_mapping():
     gate = validate_marvin_urdf()
     assert gate["urdf_sha256"] == "41e057811aef172f568a3353b84f1185780f9c65921275c128bf13fad96ab180"
-    assert gate["asset_manifest_sha256"] == "0086fa3d8ee69cb54f5d4159926f919fbd551ff3c96635d385a464f54539b06e"
+    assert gate["asset_manifest_sha256"] == "99d6a1b91e1da8721a881bcdd7ee89518ad604334b85ea8b508adc5b765fd802"
     assert gate["tcp_frame_names"] == TCP_FRAME_NAMES
     assert gate["tcp_body_names"] == TCP_BODY_NAMES
     assert gate["tcp_offsets_xyz"] == ((0.0, 0.0, 0.21),) * 2

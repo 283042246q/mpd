@@ -23,7 +23,6 @@ from scripts.inference.inference_marvin_bimanual import (
     InferenceConfigurationError,
     NoValidTrajectoryError,
     _failure,
-    _real_plan,
     _sha256_file,
     _stub_plan,
     _write_json,
@@ -40,6 +39,7 @@ def run_one_shot(
     backend: str = "mpd",
     stub_points: int = 64,
     stub_duration: float = 2.0,
+    engine_factory=None,
 ) -> dict:
     """Validate one request, run one plan, and atomically publish its files."""
     request_path = Path(request_path).expanduser().resolve()
@@ -49,9 +49,19 @@ def run_one_shot(
     if request.runtime_mode != "snapshot_no_time":
         raise ContractError("one-shot Phase-3 runtime requires snapshot_no_time")
     if backend == "mpd":
-        result, arrays, scene = _real_plan(
-            request, Path(config_path).expanduser().resolve(), device
+        if engine_factory is None:
+            from scripts.runtime.runtime_engine_marvin_bimanual import (
+                MarvinBimanualRuntimeEngine,
+            )
+
+            engine_factory = MarvinBimanualRuntimeEngine
+        engine = engine_factory(
+            Path(config_path).expanduser().resolve(), output_dir, device
         )
+        artifacts = engine.plan(raw_request)
+        result = artifacts.result_payload
+        arrays = artifacts.trajectory_arrays
+        scene = engine.scene_payload
     elif backend == "contract_stub":
         result, arrays, scene = _stub_plan(request, stub_points, stub_duration)
     else:

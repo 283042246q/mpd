@@ -185,11 +185,14 @@ def _stub_plan(request: BimanualRequest, points: int, duration_s: float):
     goal = np.asarray(request.q_goal or request.q_start, dtype=np.float64)
     count = max(2, int(points))
     alpha = np.linspace(0.0, 1.0, count)[:, None]
-    positions = start + alpha * (goal - start)
     times = np.linspace(0.0, float(duration_s), count)
-    edge_order = 2 if count > 2 else 1
-    velocities = np.gradient(positions, times, axis=0, edge_order=edge_order)
-    accelerations = np.gradient(velocities, times, axis=0, edge_order=edge_order)
+    delta = goal - start
+    blend = 10.0 * alpha**3 - 15.0 * alpha**4 + 6.0 * alpha**5
+    blend_velocity = (30.0 * alpha**2 - 60.0 * alpha**3 + 30.0 * alpha**4) / duration_s
+    blend_acceleration = (60.0 * alpha - 180.0 * alpha**2 + 120.0 * alpha**3) / duration_s**2
+    positions = start + blend * delta
+    velocities = blend_velocity * delta
+    accelerations = blend_acceleration * delta
     result = {
         "schema": RESULT_SCHEMA,
         "request_id": request.request_id,

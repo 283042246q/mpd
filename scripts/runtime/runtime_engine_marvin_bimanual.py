@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import time
 import sys
@@ -87,6 +88,7 @@ class MarvinBimanualPlanningSession:
         self.tensor_args = {"device": self.device, "dtype": torch.float32}
         raw_config = load_params_from_yaml(self.config_path)
         _validate_runtime_config(raw_config)
+        self.raw_config = raw_config
         self.config = DotMap(raw_config)
         self.model_dir = _resolve_model_dir(raw_config)
         self.args_path = self.model_dir / "args.yaml"
@@ -129,6 +131,7 @@ class MarvinBimanualPlanningSession:
         self.planning_task, train_subset, _, _, _ = get_planning_task_and_dataset(
             **args_train
         )
+        self.dataset = train_subset.dataset
         if not isinstance(self.planning_task, BimanualPlanningTask):
             raise InferenceConfigurationError("Loader did not construct BimanualPlanningTask")
         if not isinstance(self.planning_task.robot, RobotMarvinBimanual):
@@ -200,6 +203,14 @@ class MarvinBimanualPlanningSession:
         if request.scene_hash and request.scene_hash != self.scene_sha256:
             raise InferenceConfigurationError("request scene_hash does not match Warehouse scene")
         fix_random_seed(request.seed)
+        self.planning_task.task_mode = request.task_mode
+        self.planning_task.active_joint_mask = torch.ones(
+            14, dtype=torch.bool, device=self.device
+        )
+        if request.task_mode == "left_only":
+            self.planning_task.active_joint_mask[7:] = False
+        elif request.task_mode == "right_only":
+            self.planning_task.active_joint_mask[:7] = False
         q_start = torch.as_tensor(request.q_start, **self.tensor_args)
         q_goal = torch.as_tensor(request.q_goal or request.q_start, **self.tensor_args)
         q_velocity_start = torch.as_tensor(request.q_velocity_start, **self.tensor_args)
@@ -217,6 +228,117 @@ class MarvinBimanualPlanningSession:
         ]
         ee_goal = torch.as_tensor(np.stack(goal_matrices), **self.tensor_args)
         active_mask = torch.as_tensor(request.active_ee_mask, **self.tensor_args)
+        self.planning_task.active_ee_mask = active_mask
+        cooperative_adapter = None
+        cooperative_generator = None
+        plan_kwargs = {}
+        if request.task_mode == "cooperative_rigid":
+            if self.raw_config.get("task_mode") != "cooperative_rigid":
+                raise InferenceConfigurationError(
+                    "cooperative request requires a cooperative_rigid runtime config"
+                )
+            import yaml
+
+            from mpd.bimanual.cooperative_prior import CooperativePriorAdapter
+            from scripts.generate_data.generate_marvin_warehouse_cooperative import (
+                MarvinWarehouseCooperativeGenerator,
+                validate_config as validate_cooperative_config,
+            )
+
+            generation_path = Path(
+                self.raw_config["cooperative_generation_config"]
+            )
+            if not generation_path.is_absolute():
+                generation_path = (
+                    self.config_path.parent / generation_path
+                ).resolve()
+            cooperative_config = validate_cooperative_config(
+                yaml.safe_load(generation_path.read_text(encoding="utf-8"))
+            )
+            for section, values in self.raw_config.get(
+                "cooperative_generator_overrides", {}
+            ).items():
+                if not isinstance(values, dict) or section not in cooperative_config:
+                    raise InferenceConfigurationError(
+                        f"invalid cooperative_generator_overrides section {section!r}"
+                    )
+                cooperative_config[section].update(values)
+            validate_cooperative_config(cooperative_config)
+            cooperative_generator = MarvinWarehouseCooperativeGenerator(
+                cooperative_config,
+                request.seed,
+                progress_label="cooperative-resident-inference",
+            )
+            self.planning_task.object_to_left_grasp = torch.as_tensor(
+                cooperative_generator.object_to_left, **self.tensor_args
+            )
+            self.planning_task.object_to_right_grasp = torch.as_tensor(
+                cooperative_generator.object_to_right, **self.tensor_args
+            )
+            if request.object_goal_pose is not None:
+                self.planning_task.set_object_goal(
+                    torch.as_tensor(
+                        _pose_xyzw_to_matrix(request.object_goal_pose),
+                        **self.tensor_args,
+                    )
+                )
+            scene_request = dict(request.scene or {})
+            source = scene_request.get("object_start_state_xyz_yaw")
+            target = scene_request.get("object_goal_state_xyz_yaw")
+            if source is None:
+                source = cooperative_generator.object_state_from_q(
+                    np.asarray(request.q_start, dtype=np.float64)
+                ).tolist()
+            if target is None and request.q_goal is not None:
+                target = cooperative_generator.object_state_from_q(
+                    np.asarray(request.q_goal, dtype=np.float64)
+                ).tolist()
+            if target is None and request.object_goal_pose is not None:
+                x, y, z, qx, qy, qz, qw = request.object_goal_pose
+                yaw = math.atan2(
+                    2.0 * (qw * qz + qx * qy),
+                    1.0 - 2.0 * (qy * qy + qz * qz),
+                )
+                target = [x, y, z, yaw]
+            if target is None:
+                raise ContractError("cooperative request has no resolvable object goal")
+            self.planning_task.set_q_pos_start_goal(q_start, q_goal)
+            self.planning_task.parametric_trajectory.set_boundary_conditions(
+                q_pos_start=q_start,
+                q_pos_goal=q_goal,
+                q_vel_start=q_velocity_start,
+                q_vel_goal=torch.zeros_like(q_goal),
+                q_acc_start=q_acceleration_start,
+                q_acc_goal=torch.zeros_like(q_goal),
+            )
+            cooperative_adapter = CooperativePriorAdapter(
+                cooperative_generator,
+                self.planning_task,
+                self.dataset,
+                self.raw_config["cooperative_inference"].get("projection", {}),
+            )
+            cooperative_adapter.set_task(
+                source, target, request.q_start, request.q_goal
+            )
+            options = self.raw_config["cooperative_inference"]
+            if options["prior_mode"] == "reference_residual":
+                plan_kwargs["initial_control_points_normalized"] = (
+                    cooperative_adapter.build_reference_normalized()
+                )
+                fraction = float(options.get("reference_noise_fraction", 0.4))
+                if not 0.0 < fraction <= 1.0:
+                    raise InferenceConfigurationError(
+                        "reference_noise_fraction must lie in (0, 1]"
+                    )
+                plan_kwargs["initial_noise_timestep"] = int(
+                    round(fraction * (self.planner.model.n_diffusion_steps - 1))
+                )
+            if bool(options.get("closed_chain_projection", True)):
+                plan_kwargs["control_point_postprocessor"] = (
+                    cooperative_adapter.project_normalized
+                )
+        else:
+            self.planning_task.object_goal_pose = None
         started = time.perf_counter()
         results = self.planner.plan_trajectory(
             q_start,
@@ -227,17 +349,53 @@ class MarvinBimanualPlanningSession:
             q_acc_start=q_acceleration_start,
             results_ns=DotMap(t_generator=0.0, t_guide=0.0),
             debug=False,
+            **plan_kwargs,
         )
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         elapsed = time.perf_counter() - started
         _deadline_guard(request)
-        valid_indices = torch.nonzero(results.valid_trajectory_mask).flatten()
-        if valid_indices.numel() == 0 or results.q_trajs_pos_best is None:
+        generic_valid_indices = torch.nonzero(
+            results.valid_trajectory_mask
+        ).flatten()
+        cooperative_audits = {}
+        if cooperative_adapter is None:
+            valid_indices = generic_valid_indices
+        else:
+            cooperative_valid = []
+            for candidate_index in generic_valid_indices.tolist():
+                audit = cooperative_adapter.audit_path(
+                    results.q_trajs_pos_iter_0[candidate_index]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                )
+                cooperative_audits[candidate_index] = audit
+                if audit.valid:
+                    cooperative_valid.append(candidate_index)
+            valid_indices = torch.as_tensor(
+                cooperative_valid, dtype=torch.long, device=self.device
+            )
+        if valid_indices.numel() == 0:
             raise NoValidTrajectoryError("MPD produced no dense-valid trajectory")
-        best_positions = results.q_trajs_pos_best
-        best_velocities = results.q_trajs_vel_best
-        best_accelerations = results.q_trajs_acc_best
+        scores = results.valid_trajectory_selection_scores
+        original_valid = generic_valid_indices.tolist()
+        score_by_candidate = (
+            {}
+            if scores is None
+            else {
+                index: scores[offset]
+                for offset, index in enumerate(original_valid)
+            }
+        )
+        ordered_values = sorted(
+            valid_indices.tolist(),
+            key=lambda index: float(score_by_candidate.get(index, 0.0)),
+        )
+        selected_index = int(ordered_values[0])
+        best_positions = results.q_trajs_pos_iter_0[selected_index]
+        best_velocities = results.q_trajs_vel_iter_0[selected_index]
+        best_accelerations = results.q_trajs_acc_iter_0[selected_index]
         report = self.planner.dense_validator.validate(
             q_position=best_positions.unsqueeze(0),
             q_velocity=best_velocities.unsqueeze(0),
@@ -253,12 +411,17 @@ class MarvinBimanualPlanningSession:
             raise NoValidTrajectoryError(
                 f"Selected trajectory failed final oracle: {report.failure_codes[0]}"
             )
-        scores = results.valid_trajectory_selection_scores
-        ordered = valid_indices if scores is None else valid_indices[torch.argsort(scores)]
+        ordered = torch.as_tensor(
+            ordered_values, dtype=torch.long, device=self.device
+        )
         top_count = min(
             int(self.config.runtime_top_k_valid_trajectories), ordered.numel()
         )
         top_indices = ordered[:top_count]
+        top_scores = torch.stack(
+            [score_by_candidate.get(int(index), torch.tensor(0.0, **self.tensor_args))
+             for index in top_indices]
+        )
         top_positions = results.q_trajs_pos_iter_0.index_select(0, top_indices)
         top_velocities = results.q_trajs_vel_iter_0.index_select(0, top_indices)
         top_accelerations = results.q_trajs_acc_iter_0.index_select(0, top_indices)
@@ -275,6 +438,18 @@ class MarvinBimanualPlanningSession:
             "minimum_right_self_clearance_m": report.minimum_right_self_clearance[0],
             "minimum_interarm_clearance_m": report.minimum_interarm_clearance[0],
         }
+        if cooperative_adapter is not None:
+            selected_audit = cooperative_audits[selected_index]
+            validation.update(
+                max_closure_translation_error_m=(
+                    selected_audit.max_closure_translation_m
+                ),
+                max_closure_rotation_error_rad=(
+                    selected_audit.max_closure_rotation_rad
+                ),
+                cooperative_points_checked=selected_audit.checked_points,
+                payload_collision=False,
+            )
         result = validate_result(
             _jsonable(
                 {
@@ -294,6 +469,11 @@ class MarvinBimanualPlanningSession:
                         "active_ee_mask": active_mask,
                         "left_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[0]),
                         "right_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[1]),
+                        "object_pose_xyzw": (
+                            None
+                            if request.object_goal_pose is None
+                            else list(request.object_goal_pose)
+                        ),
                     },
                     "model": {
                         "checkpoint_sha256": self.checkpoint_sha256,
@@ -320,10 +500,53 @@ class MarvinBimanualPlanningSession:
             "top_k_velocities": top_velocities.detach().cpu().numpy().astype(np.float64),
             "top_k_accelerations": top_accelerations.detach().cpu().numpy().astype(np.float64),
             "top_k_candidate_indices": top_indices.detach().cpu().numpy().astype(np.int64),
+            "top_k_scores": top_scores.detach().cpu().numpy().astype(np.float64),
             "joint_names": np.asarray(JOINT_NAMES, dtype=np.str_),
             "ee_goal_pose": ee_goal.detach().cpu().numpy().astype(np.float64),
             "active_ee_mask": active_mask.detach().cpu().numpy().astype(np.float64),
         }
+        if cooperative_adapter is not None:
+            from scripts.generate_data.generate_marvin_warehouse_cooperative import (
+                object_transform,
+            )
+
+            top_numpy = top_positions.detach().cpu().numpy()
+            top_object_states = np.stack(
+                [
+                    np.stack(
+                        [
+                            cooperative_generator.object_state_from_q(state)
+                            for state in trajectory
+                        ]
+                    )
+                    for trajectory in top_numpy
+                ]
+            ).astype(np.float64)
+            top_object_poses = np.stack(
+                [
+                    np.stack(
+                        [
+                            _matrix_to_pose_xyzw(
+                                object_transform(
+                                    state, cooperative_generator.base_rotation
+                                )
+                            )
+                            for state in trajectory
+                        ]
+                    )
+                    for trajectory in top_object_states
+                ]
+            ).astype(np.float64)
+            arrays.update(
+                object_path=top_object_states[0],
+                top_k_object_path=top_object_states,
+                object_path_pose_xyzw=top_object_poses[0],
+                top_k_object_path_pose_xyzw=top_object_poses,
+                payload_size_xyz=np.asarray(
+                    cooperative_generator.payload_size, dtype=np.float64
+                ),
+            )
+            cooperative_generator.close()
         return PlanArtifacts(result_payload=result, trajectory_arrays=arrays)
 
 
@@ -345,6 +568,11 @@ class MarvinBimanualRuntimeEngine:
 
     def health(self):
         return self._session.health()
+
+    @property
+    def scene_payload(self) -> dict[str, Any]:
+        """Return the immutable scene used by both resident and one-shot paths."""
+        return self._session.scene
 
     def plan(self, raw_request: dict[str, Any]) -> PlanArtifacts:
         try:

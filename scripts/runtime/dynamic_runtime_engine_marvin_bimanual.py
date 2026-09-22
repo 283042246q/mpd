@@ -122,6 +122,13 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
         return health
 
     def plan(self, raw_request: dict[str, Any]) -> PlanArtifacts:
+        import numpy as np
+        import torch
+
+        from torch_robotics.torch_kinematics_tree.geometrics.utils import (
+            link_pos_from_link_tensor,
+        )
+
         try:
             request = BimanualRequest.from_dict(raw_request)
             if request.runtime_mode != "snapshot_no_time":
@@ -137,8 +144,9 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
                 self.dynamic_world.valid_until_unix_ns,
                 now + int((float(self._session.config.trajectory_duration) + 1.0) * 1e9),
             )
+            trajectory_start_unix_ns = max(now, self.dynamic_world.stamp_unix_ns)
             self.dynamic_world.set_plan_start(
-                max(now, self.dynamic_world.stamp_unix_ns),
+                trajectory_start_unix_ns,
                 world_version=request.world_version,
             )
             artifacts = super().plan(raw_request)
@@ -149,6 +157,73 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
                 "world_version": request.world_version,
                 "valid_until_unix_ns": self.external_valid_until_unix_ns,
                 "active_objects": self.dynamic_world.active_count,
+            }
+            session = self._session
+            top_positions = np.asarray(
+                artifacts.trajectory_arrays["top_k_positions"], dtype=np.float64
+            )
+            if top_positions.ndim != 3 or top_positions.shape[-1] != 14:
+                raise DynamicWorldError("top-K positions must have shape [K,T,14]")
+            q = torch.as_tensor(top_positions, **session.tensor_args)
+            poses = torch.stack(
+                session.robot.fk_collision_spheres(q.reshape(-1, 14)), dim=-3
+            )
+            sphere_positions = link_pos_from_link_tensor(poses)[..., :3].reshape(
+                top_positions.shape[0],
+                top_positions.shape[1],
+                poses.shape[-3],
+                3,
+            )
+            top_spheres = sphere_positions.detach().cpu().numpy().astype(np.float64)
+            sphere_radii = (
+                session.robot.link_collision_spheres_radii.detach()
+                .cpu()
+                .numpy()
+                .astype(np.float64)
+            )
+            if "top_k_object_path_pose_xyzw" in artifacts.trajectory_arrays:
+                payload_poses = np.asarray(
+                    artifacts.trajectory_arrays["top_k_object_path_pose_xyzw"],
+                    dtype=np.float64,
+                )
+                payload_size = np.asarray(
+                    artifacts.trajectory_arrays["payload_size_xyz"],
+                    dtype=np.float64,
+                )
+                if payload_poses.shape[:2] != top_positions.shape[:2] or (
+                    payload_poses.shape[-1] != 7 or payload_size.shape != (3,)
+                ):
+                    raise DynamicWorldError("cooperative payload artifact is inconsistent")
+                top_spheres = np.concatenate(
+                    (top_spheres, payload_poses[..., None, :3]), axis=2
+                )
+                sphere_radii = np.concatenate(
+                    (sphere_radii, [0.5 * float(np.linalg.norm(payload_size))])
+                )
+            if not np.allclose(
+                artifacts.trajectory_arrays["positions"],
+                top_positions[0],
+                rtol=0.0,
+                atol=1e-7,
+            ):
+                raise DynamicWorldError(
+                    "selected trajectory is not top-K candidate zero"
+                )
+            artifacts.trajectory_arrays.update(
+                artifact_schema_version=np.asarray(2, dtype=np.int64),
+                best_trajectory_top_k_index=np.asarray(0, dtype=np.int64),
+                top_k_collision_sphere_positions=top_spheres,
+                collision_sphere_positions=top_spheres[0],
+                collision_sphere_radii=sphere_radii,
+                trajectory_start_unix_ns=np.asarray(
+                    trajectory_start_unix_ns, dtype=np.int64
+                ),
+            )
+            artifacts.result_payload["trajectory_artifact"] = {
+                "schema_version": 2,
+                "top_k_count": int(top_positions.shape[0]),
+                "best_trajectory_top_k_index": 0,
+                "trajectory_start_unix_ns": trajectory_start_unix_ns,
             }
             return artifacts
         except DynamicWorldError as error:

@@ -63,6 +63,8 @@ def test_strict_one_shot_publishes_bound_atomic_artifact(tmp_path):
     }
     with np.load(artifact / "trajectory.npz", allow_pickle=False) as trajectory:
         assert trajectory["positions"].shape == (6, 14)
+        np.testing.assert_allclose(trajectory["velocities"][[0, -1]], 0.0, atol=1e-12)
+        np.testing.assert_allclose(trajectory["accelerations"][[0, -1]], 0.0, atol=1e-12)
 
 
 def test_one_shot_rejects_non_snapshot_runtime(tmp_path):

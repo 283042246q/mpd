@@ -43,11 +43,11 @@ packages:
     declared_license:
     - Apache-2.0
     source_sha256:
-      config/controllers_bimanual.yaml: 68dcb8f84cd24a06a035bf6cfdd55101780cdb72e20d3284714e14b95cacf865
+      config/controllers_bimanual.yaml: 7f4dad55899d4f28829e7c20a591a67f6b4a8bb34b91b18eec1ddee522cb6e5f
       config/execution_bimanual.yaml: 872a006ed633cd1168e323522c37216856449e2c448f38ab20fecc6c7258e4a7
       config/pika_mounts.yaml: e2d2f507512df89b0ec063458b1d1d20dba2aec95e351eaf56026c88fa5f9f20
       config/planning_static.yaml: 4fbf94b1ab9cc189fc038f1ab0426688b6f00a0a5cdbad8420e9311525c58f45
-      package.xml: 3ad9932fbbac8022b1359ae178cdcc96d27c04ba426f1ad721f9849f4984860a
+      package.xml: 2de84030a1cbef36132ba24a5c6e17f25143bcacdd799393f2b6abe9d3ae0e34
       urdf/marvin_pika_bimanual.urdf.xacro: 9785ebab65a32f2048d99f6bab20bff6b652f873313f3a95fe2672af611f1448
 mesh_sources:
   meshes/marvin_description/base/base_link.STL:
@@ -352,12 +352,12 @@ files:
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_right_arm.xacro: e5d424c72a9dd99007e6f95890e02c7fc2d5b32e4c2abb70d95a93f3c3deaa27
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_description/urdf/parts/marvin_stand.xacro: 066313da6019e7d672fb14e40ecf04ecd65b98cd550860a6778ecdf04c4df945
   ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/controllers_bimanual.yaml
-  : 68dcb8f84cd24a06a035bf6cfdd55101780cdb72e20d3284714e14b95cacf865
+  : 7f4dad55899d4f28829e7c20a591a67f6b4a8bb34b91b18eec1ddee522cb6e5f
   ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/execution_bimanual.yaml
   : 872a006ed633cd1168e323522c37216856449e2c448f38ab20fecc6c7258e4a7
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/pika_mounts.yaml: e2d2f507512df89b0ec063458b1d1d20dba2aec95e351eaf56026c88fa5f9f20
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/config/planning_static.yaml: 4fbf94b1ab9cc189fc038f1ab0426688b6f00a0a5cdbad8420e9311525c58f45
-  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/package.xml: 3ad9932fbbac8022b1359ae178cdcc96d27c04ba426f1ad721f9849f4984860a
+  mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/package.xml: 2de84030a1cbef36132ba24a5c6e17f25143bcacdd799393f2b6abe9d3ae0e34
   ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/marvin_mpd_bimanual_bringup/urdf/marvin_pika_bimanual.urdf.xacro
   : 9785ebab65a32f2048d99f6bab20bff6b652f873313f3a95fe2672af611f1448
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/config/cameras.yaml: 68c127be596da5acc9cdc38542ebdad139cbde8b4b131ef907851b995cba25b3
@@ -373,4 +373,4 @@ files:
   ? mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/pika_gripper_description/urdf/pika_gripper_standalone.urdf.xacro
   : 9e06f3ea69956ad659bc988c1c8e9645185711975f71fcb85736edf9f673e9f0
   mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/sources/ros_marvin_pika_expanded.urdf: e22c6793c5c4427a4be04aafe3c37a8cb235ec7b38e3e1067d2326b1c5235b8f
-asset_sha256: 5c446f1d3094469681d9956d45897d5655e4c387d2a17002da21d09bfa6e7558
+asset_sha256: 99d6a1b91e1da8721a881bcdd7ee89518ad604334b85ea8b508adc5b765fd802
