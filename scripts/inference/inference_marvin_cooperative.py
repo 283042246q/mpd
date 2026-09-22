@@ -14,29 +14,24 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = (
-    REPO_ROOT
-    / "scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-cooperative-independent-prior.yaml"
+    REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-cooperative-independent-prior.yaml"
 )
 
 
 def _parser():
+    from scripts.inference import inference_marvin_bimanual
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument(
-        "--start-goal-source", choices=("regions", "seed_file"), default=None
-    )
+    parser.add_argument("--start-goal-source", choices=("regions", "seed_file"), default=None)
     parser.add_argument("--start-goal-file", type=Path)
     parser.add_argument("--sample-index", type=int, default=0)
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--request-id")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument(
-        "--backend", choices=("mpd", "contract_stub"), default="mpd"
-    )
-    parser.add_argument(
-        "--prior-mode", choices=("direct_project", "reference_residual")
-    )
+    parser.add_argument("--backend", choices=("mpd", "contract_stub"), default="mpd")
+    parser.add_argument("--prior-mode", choices=("direct_project", "reference_residual"))
     parser.add_argument("--n-trajectory-samples", type=int)
     parser.add_argument("--ddim-sampling-timesteps", type=int)
     parser.add_argument("--guide-steps", type=int)
@@ -53,6 +48,7 @@ def _parser():
     )
     parser.set_defaults(closed_chain_projection=None)
     parser.add_argument("--dry-run", action="store_true")
+    inference_marvin_bimanual.add_isaaclab_arguments(parser)
     return parser
 
 
@@ -84,9 +80,7 @@ def _runtime_config(args):
     # that were relative to the checked-in config.
     generation = Path(config["cooperative_generation_config"])
     if not generation.is_absolute():
-        config["cooperative_generation_config"] = str(
-            (config_path.parent / generation).resolve()
-        )
+        config["cooperative_generation_config"] = str((config_path.parent / generation).resolve())
     return config_path, config
 
 
@@ -122,9 +116,7 @@ def main(argv=None):
                     "request": str(request_path),
                     "source": request["scene"]["start_goal_source"],
                     "prior_mode": runtime_config["cooperative_inference"]["prior_mode"],
-                    "closed_chain_projection": runtime_config["cooperative_inference"][
-                        "closed_chain_projection"
-                    ],
+                    "closed_chain_projection": runtime_config["cooperative_inference"]["closed_chain_projection"],
                     "n_trajectory_samples": runtime_config["n_trajectory_samples"],
                 },
                 sort_keys=False,
@@ -138,20 +130,20 @@ def main(argv=None):
         yaml.safe_dump(runtime_config, stream, sort_keys=False)
         effective_config = Path(stream.name)
     try:
-        return inference_marvin_bimanual.main(
-            [
-                "--request",
-                str(request_path),
-                "--config",
-                str(effective_config),
-                "--output-dir",
-                str(output),
-                "--device",
-                args.device,
-                "--backend",
-                args.backend,
-            ]
-        )
+        delegated = [
+            "--request",
+            str(request_path),
+            "--config",
+            str(effective_config),
+            "--output-dir",
+            str(output),
+            "--device",
+            args.device,
+            "--backend",
+            args.backend,
+        ]
+        delegated.extend(inference_marvin_bimanual.isaaclab_arguments_from_namespace(args))
+        return inference_marvin_bimanual.main(delegated)
     finally:
         effective_config.unlink(missing_ok=True)
 

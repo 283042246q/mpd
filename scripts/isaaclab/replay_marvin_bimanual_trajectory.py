@@ -57,9 +57,7 @@ def parse_args():
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     if args.action_repeat < 0 or args.video_fps <= 0.0 or args.width < 1 or args.height < 1:
-        parser.error(
-            "action repeat must be non-negative; video fps, width, and height must be positive"
-        )
+        parser.error("action repeat must be non-negative; video fps, width, and height must be positive")
     args.enable_cameras = args.output_video is not None or args.screenshot is not None
     return args
 
@@ -120,9 +118,7 @@ def _jsonable(value):
 
 def _asset_metadata():
     if args_cli.robot_usd is None:
-        return convert_marvin_urdf_to_usd(
-            args_cli.asset_cache, force=args_cli.force_usd_conversion
-        )
+        return convert_marvin_urdf_to_usd(args_cli.asset_cache, force=args_cli.force_usd_conversion)
     return validate_marvin_usd(args_cli.robot_usd)
 
 
@@ -134,10 +130,7 @@ def _evaluation_trajectory(index):
         raise ValueError("--evaluation is not a Marvin bimanual Isaac Lab report")
     if report.get("artifact_hashes") != artifact.hashes:
         raise ValueError("--evaluation was produced from a different inference artifact")
-    matching = [
-        item for item in report.get("trajectories", [])
-        if int(item.get("top_k_index", -1)) == index
-    ]
+    matching = [item for item in report.get("trajectories", []) if int(item.get("top_k_index", -1)) == index]
     if len(matching) != 1:
         raise IndexError("evaluation JSON has no matching Top-K trajectory")
     entry = matching[0]
@@ -149,9 +142,7 @@ def _evaluation_trajectory(index):
 def _write_video(path, frames):
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = frames[0].shape[:2]
-    writer = cv2.VideoWriter(
-        str(path), cv2.VideoWriter_fourcc(*"mp4v"), args_cli.video_fps, (width, height)
-    )
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), args_cli.video_fps, (width, height))
     if not writer.isOpened():
         raise RuntimeError(f"Could not create {path}")
     for frame in frames:
@@ -207,6 +198,18 @@ def _draw_collision_crosses(draw, points, radius=0.045):
     )
 
 
+def _pose_xyzw_matrix(pose):
+    x, y, z, qx, qy, qz, qw = np.asarray(pose, dtype=np.float64)
+    rotation = np.asarray(
+        (
+            (1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)),
+            (2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)),
+            (2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)),
+        )
+    )
+    return np.concatenate((rotation, np.asarray([[x], [y], [z]])), axis=1)
+
+
 def _tcp_positions(robot, tcp_ids, env_origin):
     body_positions = _torch(robot.data.body_pos_w)[0, list(tcp_ids)].detach().cpu().numpy()
     body_positions -= _torch(env_origin).detach().cpu().numpy()[None]
@@ -218,20 +221,12 @@ def _tcp_positions(robot, tcp_ids, env_origin):
 def run_replay():
     index = args_cli.trajectory_index
     if index < 0 or index >= artifact.top_k_positions.shape[0]:
-        raise IndexError(
-            f"--trajectory-index must be in [0,{artifact.top_k_positions.shape[0] - 1}]"
-        )
+        raise IndexError(f"--trajectory-index must be in [0,{artifact.top_k_positions.shape[0] - 1}]")
     trajectory_cpu = artifact.top_k_positions[index]
     evaluation_entry = _evaluation_trajectory(index)
-    collision_waypoint = (
-        int(evaluation_entry.get("first_contact_waypoint", -1))
-        if evaluation_entry is not None
-        else -1
-    )
+    collision_waypoint = int(evaluation_entry.get("first_contact_waypoint", -1)) if evaluation_entry is not None else -1
     asset = _asset_metadata()
-    robot_cfg = build_marvin_articulation_cfg(
-        asset["usd_path"], enabled_self_collisions=False
-    )
+    robot_cfg = build_marvin_articulation_cfg(asset["usd_path"], enabled_self_collisions=False)
 
     @configclass
     class MarvinReplaySceneCfg(InteractiveSceneCfg):
@@ -255,21 +250,48 @@ def run_replay():
                 ),
             )
 
-    sim = sim_utils.SimulationContext(
-        sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
-    )
+    sim = sim_utils.SimulationContext(sim_utils.SimulationCfg(dt=0.005, device=args_cli.device))
     scene = InteractiveScene(MarvinReplaySceneCfg(num_envs=1, env_spacing=3.0))
     obstacle_summary = spawn_scene_obstacles(sim_utils, artifact.scene)
+    payload_poses_cpu = None
+    payload_view = None
+    if artifact.top_k_object_path_pose_xyzw is not None:
+        payload_poses_cpu = artifact.top_k_object_path_pose_xyzw[index]
+        payload_initial = payload_poses_cpu[0]
+        payload_cfg = sim_utils.CuboidCfg(
+            size=tuple(float(value) for value in artifact.payload_size_xyz),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.82, 0.55, 0.18), metallic=0.05, roughness=0.55
+            ),
+        )
+        payload_path = "/World/envs/env_0/CooperativePayload"
+        payload_cfg.func(
+            payload_path,
+            payload_cfg,
+            translation=tuple(float(value) for value in payload_initial[:3]),
+            # Spawn helpers consume wxyz; the portable artifact stores xyzw.
+            orientation=(
+                float(payload_initial[6]),
+                float(payload_initial[3]),
+                float(payload_initial[4]),
+                float(payload_initial[5]),
+            ),
+        )
+        payload_view = sim_utils.FrameView(payload_path, device=sim.device)
     sim.reset()
     robot = scene["robot"]
     camera = scene["camera"] if args_cli.enable_cameras else None
     joint_ids = resolve_canonical_joint_ids(robot)
     tcp_ids = resolve_tcp_body_ids(robot)
     trajectory = torch.as_tensor(trajectory_cpu, dtype=torch.float32, device=sim.device)
-    sim_dt = sim.get_physics_dt()
-    step_schedule = trajectory_physics_step_schedule(
-        artifact.time_from_start, sim_dt, args_cli.action_repeat
+    payload_poses = (
+        torch.as_tensor(payload_poses_cpu, dtype=torch.float32, device=sim.device)
+        if payload_poses_cpu is not None
+        else None
     )
+    payload_orientations_wxyz = payload_poses[:, [6, 3, 4, 5]] if payload_poses is not None else None
+    sim_dt = sim.get_physics_dt()
+    step_schedule = trajectory_physics_step_schedule(artifact.time_from_start, sim_dt, args_cli.action_repeat)
 
     if camera is not None:
         camera.set_world_poses_from_view(
@@ -280,6 +302,11 @@ def run_replay():
     initial[:, joint_ids] = trajectory[0]
     robot.write_joint_state_to_sim(initial, torch.zeros_like(initial))
     robot.set_joint_position_target(initial)
+    if payload_view is not None:
+        payload_view.set_world_poses(
+            positions=payload_poses[0:1, :3],
+            orientations=payload_orientations_wxyz[0:1],
+        )
     scene.reset()
     scene.write_data_to_sim()
     sim.step(render=args_cli.enable_cameras)
@@ -302,17 +329,31 @@ def run_replay():
     _draw_path(draw, tcp_paths[0], (0.15, 0.55, 1.0, 1.0))
     _draw_path(draw, tcp_paths[1], (0.95, 0.35, 0.15, 1.0))
 
+    if payload_poses_cpu is not None:
+        _draw_path(draw, payload_poses_cpu[:, :3], (0.25, 0.85, 0.35, 1.0))
+        _draw_goal_frames(draw, [_pose_xyzw_matrix(payload_poses_cpu[-1])], axis_length=0.08)
+
     if artifact.ee_goal_pose is not None:
         _draw_goal_frames(draw, artifact.ee_goal_pose)
 
     initial[:, joint_ids] = trajectory[0]
     robot.write_joint_state_to_sim(initial, torch.zeros_like(initial))
     robot.set_joint_position_target(initial)
+    if payload_view is not None:
+        payload_view.set_world_poses(
+            positions=payload_poses[0:1, :3],
+            orientations=payload_orientations_wxyz[0:1],
+        )
     frames = [_capture(camera, sim_dt)] if camera is not None else []
     for waypoint_index, waypoint in enumerate(trajectory):
         target = robot.data.joint_pos.clone()
         target[:, joint_ids] = waypoint[None]
         robot.set_joint_position_target(target)
+        if payload_view is not None:
+            payload_view.set_world_poses(
+                positions=payload_poses[waypoint_index : waypoint_index + 1, :3],
+                orientations=payload_orientations_wxyz[waypoint_index : waypoint_index + 1],
+            )
         scene.write_data_to_sim()
         for _ in range(int(step_schedule[waypoint_index])):
             sim.step(render=args_cli.enable_cameras)
@@ -365,6 +406,9 @@ def run_replay():
         "tcp_offsets_xyz": urdf_gate["tcp_offsets_xyz"],
         "left_tcp_path_points": int(tcp_paths[0].shape[0]),
         "right_tcp_path_points": int(tcp_paths[1].shape[0]),
+        "cooperative_payload_rendered": payload_view is not None,
+        "payload_size_xyz": (artifact.payload_size_xyz.tolist() if artifact.payload_size_xyz is not None else None),
+        "object_path_points": (int(payload_poses_cpu.shape[0]) if payload_poses_cpu is not None else 0),
         "first_collision_waypoint": collision_waypoint,
         "usd_path": asset["usd_path"].as_posix(),
         "usd_sha256": asset["usd_sha256"],

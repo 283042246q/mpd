@@ -33,10 +33,7 @@ from mpd.bimanual.runtime_contract import (
 )
 
 
-DEFAULT_CONFIG = (
-    REPO_ROOT
-    / "scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml"
-)
+DEFAULT_CONFIG = REPO_ROOT / "scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml"
 
 
 class InferenceConfigurationError(RuntimeError):
@@ -74,9 +71,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _sha256_json(value: Any) -> str:
-    encoded = json.dumps(
-        _jsonable(value), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    encoded = json.dumps(_jsonable(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -135,15 +130,11 @@ def _validate_runtime_config(config: dict) -> None:
     for key, wanted in expected.items():
         actual = _runtime_value(config, key)
         if actual != wanted:
-            raise InferenceConfigurationError(
-                f"runtime.{key} must be {wanted!r}, got {actual!r}"
-            )
+            raise InferenceConfigurationError(f"runtime.{key} must be {wanted!r}, got {actual!r}")
     if tuple(_runtime_value(config, "joint_names", ())) != JOINT_NAMES:
         raise InferenceConfigurationError("runtime.joint_names is not canonical")
     if config.get("task_mode") not in {"dual_independent", "cooperative_rigid"}:
-        raise InferenceConfigurationError(
-            "Marvin runtime task_mode must be dual_independent or cooperative_rigid"
-        )
+        raise InferenceConfigurationError("Marvin runtime task_mode must be dual_independent or cooperative_rigid")
     if config.get("task_mode") == "cooperative_rigid":
         cooperative = config.get("cooperative_inference", {})
         if cooperative.get("prior_mode") not in {
@@ -154,9 +145,7 @@ def _validate_runtime_config(config: dict) -> None:
                 "cooperative_inference.prior_mode must be direct_project or reference_residual"
             )
         if not config.get("cooperative_generation_config"):
-            raise InferenceConfigurationError(
-                "cooperative_generation_config is required for cooperative_rigid"
-            )
+            raise InferenceConfigurationError("cooperative_generation_config is required for cooperative_rigid")
 
 
 def _resolve_model_dir(config: dict) -> Path:
@@ -171,11 +160,11 @@ def _resolve_model_dir(config: dict) -> Path:
     # Training creates one timestamped run below the experiment directory.
     # Resolve that layout only when it is unambiguous; never guess between
     # multiple checkpoints because doing so would break reproducibility.
-    runs = sorted(
-        child
-        for child in configured.iterdir()
-        if child.is_dir() and (child / "args.yaml").is_file()
-    ) if configured.is_dir() else []
+    runs = (
+        sorted(child for child in configured.iterdir() if child.is_dir() and (child / "args.yaml").is_file())
+        if configured.is_dir()
+        else []
+    )
     if len(runs) == 1:
         return runs[0]
     if not runs:
@@ -238,6 +227,44 @@ def _stub_plan(request: BimanualRequest, points: int, duration_s: float):
             )
         )
         arrays["active_ee_mask"] = np.asarray(request.active_ee_mask, dtype=np.float64)
+    if request.task_mode == "cooperative_rigid":
+        scene_request = dict(request.scene or {})
+        object_start = np.asarray(scene_request.get("object_start_state_xyz_yaw"), dtype=np.float64)
+        object_goal = np.asarray(scene_request.get("object_goal_state_xyz_yaw"), dtype=np.float64)
+        if object_start.shape == (4,) and object_goal.shape == (4,) and request.object_goal_pose is not None:
+            yaw_delta = math.atan2(
+                math.sin(object_goal[3] - object_start[3]),
+                math.cos(object_goal[3] - object_start[3]),
+            )
+            object_path = object_start + alpha * np.r_[object_goal[:3] - object_start[:3], yaw_delta]
+            goal_matrix = _pose_xyzw_to_matrix(request.object_goal_pose)
+            cosine, sine = math.cos(-object_goal[3]), math.sin(-object_goal[3])
+            yaw_inverse = np.asarray([[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]])
+            base_rotation = yaw_inverse @ goal_matrix[:3, :3]
+            object_poses = []
+            for state in object_path:
+                cosine, sine = math.cos(state[3]), math.sin(state[3])
+                yaw_rotation = np.asarray([[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]])
+                transform = np.eye(4)
+                transform[:3, :3] = yaw_rotation @ base_rotation
+                transform[:3, 3] = state[:3]
+                object_poses.append(_matrix_to_pose_xyzw(transform))
+            object_poses = np.asarray(object_poses, dtype=np.float64)
+            arrays.update(
+                object_path=object_path,
+                top_k_object_path=object_path[None],
+                object_path_pose_xyzw=object_poses,
+                top_k_object_path_pose_xyzw=object_poses[None],
+                payload_size_xyz=np.asarray([0.30, 0.24, 0.20]),
+            )
+            result["cooperative_inference"] = {
+                "prior_mode": "contract_stub",
+                "payload": {
+                    "type": "box",
+                    "size_xyz": [0.30, 0.24, 0.20],
+                    "pose_source": "trajectory.npz:top_k_object_path_pose_xyzw",
+                },
+            }
     scene = {
         "schema": "mpd_isaaclab_scene",
         "schema_version": 1,
@@ -270,9 +297,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
 
     _deadline_guard(request)
     if device_text.startswith("cuda") and not torch.cuda.is_available():
-        raise InferenceConfigurationError(
-            f"CUDA device {device_text!r} requested but CUDA is unavailable"
-        )
+        raise InferenceConfigurationError(f"CUDA device {device_text!r} requested but CUDA is unavailable")
     tensor_args = {"device": torch.device(device_text), "dtype": torch.float32}
     fix_random_seed(request.seed)
     if tensor_args["device"].type == "cuda":
@@ -333,46 +358,35 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
 
     if request.task_mode == "cooperative_rigid":
         if raw_config.get("task_mode") != "cooperative_rigid":
-            raise InferenceConfigurationError(
-                "cooperative request requires a cooperative_rigid runtime config"
-            )
+            raise InferenceConfigurationError("cooperative request requires a cooperative_rigid runtime config")
         import yaml
 
         from mpd.bimanual.cooperative_prior import CooperativePriorAdapter
         from scripts.generate_data.generate_marvin_warehouse_cooperative import (
             MarvinWarehouseCooperativeGenerator,
+            object_transform,
             validate_config as validate_cooperative_config,
         )
 
         generation_path = Path(raw_config["cooperative_generation_config"])
         if not generation_path.is_absolute():
             generation_path = (config_path.resolve().parent / generation_path).resolve()
-        cooperative_config = validate_cooperative_config(
-            yaml.safe_load(generation_path.read_text(encoding="utf-8"))
-        )
+        cooperative_config = validate_cooperative_config(yaml.safe_load(generation_path.read_text(encoding="utf-8")))
         overrides = raw_config.get("cooperative_generator_overrides", {})
         for section, values in overrides.items():
             if not isinstance(values, dict) or section not in cooperative_config:
-                raise InferenceConfigurationError(
-                    f"invalid cooperative_generator_overrides section {section!r}"
-                )
+                raise InferenceConfigurationError(f"invalid cooperative_generator_overrides section {section!r}")
             cooperative_config[section].update(values)
         validate_cooperative_config(cooperative_config)
         cooperative_generator = MarvinWarehouseCooperativeGenerator(
             cooperative_config, request.seed, progress_label="cooperative-inference"
         )
         planning_task.task_mode = "cooperative_rigid"
-        planning_task.object_to_left_grasp = torch.as_tensor(
-            cooperative_generator.object_to_left, **tensor_args
-        )
-        planning_task.object_to_right_grasp = torch.as_tensor(
-            cooperative_generator.object_to_right, **tensor_args
-        )
+        planning_task.object_to_left_grasp = torch.as_tensor(cooperative_generator.object_to_left, **tensor_args)
+        planning_task.object_to_right_grasp = torch.as_tensor(cooperative_generator.object_to_right, **tensor_args)
         if request.object_goal_pose is not None:
             planning_task.set_object_goal(
-                torch.as_tensor(
-                    _pose_xyzw_to_matrix(request.object_goal_pose), **tensor_args
-                )
+                torch.as_tensor(_pose_xyzw_to_matrix(request.object_goal_pose), **tensor_args)
             )
 
     scene = export_isaaclab_scene_payload(planning_task.env, include_boxes=True)
@@ -394,11 +408,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     goal_values = (request.left_goal_pose, request.right_goal_pose)
     goal_matrices = []
     for supplied, fk_goal in zip(goal_values, fk_goals):
-        goal_matrices.append(
-            fk_goal.detach().cpu().numpy()
-            if supplied is None
-            else _pose_xyzw_to_matrix(supplied)
-        )
+        goal_matrices.append(fk_goal.detach().cpu().numpy() if supplied is None else _pose_xyzw_to_matrix(supplied))
     ee_goal = torch.as_tensor(np.stack(goal_matrices), **tensor_args)
     active_mask = torch.as_tensor(request.active_ee_mask, **tensor_args)
 
@@ -417,8 +427,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         target = dict(request.scene or {}).get("object_goal_state_xyz_yaw")
         if source is None or target is None:
             raise ContractError(
-                "cooperative request.scene must contain object_start_state_xyz_yaw "
-                "and object_goal_state_xyz_yaw"
+                "cooperative request.scene must contain object_start_state_xyz_yaw " "and object_goal_state_xyz_yaw"
             )
         planning_task.set_q_pos_start_goal(q_start, q_goal)
         planning_task.parametric_trajectory.set_boundary_conditions(
@@ -438,21 +447,13 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         cooperative_adapter.set_task(source, target, request.q_start, request.q_goal)
         cooperative_options = raw_config["cooperative_inference"]
         if cooperative_options["prior_mode"] == "reference_residual":
-            plan_kwargs["initial_control_points_normalized"] = (
-                cooperative_adapter.build_reference_normalized()
-            )
+            plan_kwargs["initial_control_points_normalized"] = cooperative_adapter.build_reference_normalized()
             fraction = float(cooperative_options.get("reference_noise_fraction", 0.4))
             if not 0.0 < fraction <= 1.0:
-                raise InferenceConfigurationError(
-                    "reference_noise_fraction must lie in (0, 1]"
-                )
-            plan_kwargs["initial_noise_timestep"] = int(
-                round(fraction * (planner.model.n_diffusion_steps - 1))
-            )
+                raise InferenceConfigurationError("reference_noise_fraction must lie in (0, 1]")
+            plan_kwargs["initial_noise_timestep"] = int(round(fraction * (planner.model.n_diffusion_steps - 1)))
         if bool(cooperative_options.get("closed_chain_projection", True)):
-            plan_kwargs["control_point_postprocessor"] = (
-                cooperative_adapter.project_normalized
-            )
+            plan_kwargs["control_point_postprocessor"] = cooperative_adapter.project_normalized
     results = planner.plan_trajectory(
         q_start,
         q_goal,
@@ -472,9 +473,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     else:
         cooperative_valid = []
         for candidate_index in generic_valid_indices.tolist():
-            audit = cooperative_adapter.audit_path(
-                results.q_trajs_pos_iter_0[candidate_index].detach().cpu().numpy()
-            )
+            audit = cooperative_adapter.audit_path(results.q_trajs_pos_iter_0[candidate_index].detach().cpu().numpy())
             cooperative_audits[candidate_index] = audit
             if audit.valid:
                 cooperative_valid.append(candidate_index)
@@ -490,8 +489,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     score_by_candidate = {}
     if results.valid_trajectory_selection_scores is not None:
         score_by_candidate = {
-            index: results.valid_trajectory_selection_scores[offset]
-            for offset, index in enumerate(original_valid)
+            index: results.valid_trajectory_selection_scores[offset] for offset, index in enumerate(original_valid)
         }
     ordered_valid = sorted(
         valid_indices.tolist(),
@@ -513,21 +511,15 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
         check_joint_acceleration=True,
     )
     if not bool(best_report.trajectory_valid_mask[0].item()):
-        raise NoValidTrajectoryError(
-            f"Selected trajectory failed final oracle: {best_report.failure_codes[0]}"
-        )
+        raise NoValidTrajectoryError(f"Selected trajectory failed final oracle: {best_report.failure_codes[0]}")
 
-    ordered_valid = torch.as_tensor(
-        ordered_valid, dtype=torch.long, device=valid_indices.device
-    )
+    ordered_valid = torch.as_tensor(ordered_valid, dtype=torch.long, device=valid_indices.device)
     top_k_count = min(int(config.runtime_top_k_valid_trajectories), ordered_valid.numel())
     if top_k_count < 1:
         raise InferenceConfigurationError("runtime_top_k_valid_trajectories must be positive")
     top_k_indices = ordered_valid[:top_k_count]
     if selected_index not in top_k_indices.tolist():
-        selected_tensor = torch.as_tensor(
-            [selected_index], dtype=top_k_indices.dtype, device=top_k_indices.device
-        )
+        selected_tensor = torch.as_tensor([selected_index], dtype=top_k_indices.dtype, device=top_k_indices.device)
         top_k_indices = torch.cat((selected_tensor, top_k_indices[: top_k_count - 1]))
     else:
         selected_offset = top_k_indices.tolist().index(selected_index)
@@ -591,12 +583,8 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     if tensor_args["device"].type == "cuda":
         free_bytes, total_bytes = torch.cuda.mem_get_info(tensor_args["device"])
         cuda_memory = {
-            "peak_allocated_bytes": torch.cuda.max_memory_allocated(
-                tensor_args["device"]
-            ),
-            "peak_reserved_bytes": torch.cuda.max_memory_reserved(
-                tensor_args["device"]
-            ),
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(tensor_args["device"]),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(tensor_args["device"]),
             "free_bytes_at_result": free_bytes,
             "total_bytes": total_bytes,
         }
@@ -617,11 +605,7 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
             "active_ee_mask": active_mask,
             "left_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[0]),
             "right_pose_xyzw": _matrix_to_pose_xyzw(goal_matrices[1]),
-            "object_pose_xyzw": (
-                None
-                if request.object_goal_pose is None
-                else list(request.object_goal_pose)
-            ),
+            "object_pose_xyzw": (None if request.object_goal_pose is None else list(request.object_goal_pose)),
         },
         "model": {
             "directory": model_dir,
@@ -659,14 +643,15 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
     if cooperative_adapter is not None:
         result["cooperative_inference"] = {
             "prior_mode": raw_config["cooperative_inference"]["prior_mode"],
-            "closed_chain_projection": bool(
-                raw_config["cooperative_inference"].get(
-                    "closed_chain_projection", True
-                )
-            ),
+            "closed_chain_projection": bool(raw_config["cooperative_inference"].get("closed_chain_projection", True)),
             **cooperative_adapter.statistics(),
             "generic_valid_candidates": int(generic_valid_indices.numel()),
             "cooperative_valid_candidates": int(valid_indices.numel()),
+            "payload": {
+                "type": "box",
+                "size_xyz": cooperative_generator.payload_size.tolist(),
+                "pose_source": "trajectory.npz:top_k_object_path_pose_xyzw",
+            },
         }
     result = validate_result(_jsonable(result), request=request)
     arrays = {
@@ -693,15 +678,36 @@ def _real_plan(request: BimanualRequest, config_path: Path, device_text: str):
                 robot.fk_right(top_positions[:, -1]),
             ),
             dim=1,
-        ).detach().cpu().numpy().astype(np.float64),
+        )
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.float64),
     }
     if cooperative_adapter is not None:
-        arrays["object_path"] = np.stack(
+        top_positions_numpy = top_positions.detach().cpu().numpy()
+        top_object_states = np.stack(
             [
-                cooperative_generator.object_state_from_q(state)
-                for state in best_positions.detach().cpu().numpy()
+                np.stack([cooperative_generator.object_state_from_q(state) for state in trajectory])
+                for trajectory in top_positions_numpy
             ]
         ).astype(np.float64)
+        top_object_poses = np.stack(
+            [
+                np.stack(
+                    [
+                        _matrix_to_pose_xyzw(object_transform(state, cooperative_generator.base_rotation))
+                        for state in trajectory
+                    ]
+                )
+                for trajectory in top_object_states
+            ]
+        ).astype(np.float64)
+        arrays["object_path"] = top_object_states[0]
+        arrays["top_k_object_path"] = top_object_states
+        arrays["object_path_pose_xyzw"] = top_object_poses[0]
+        arrays["top_k_object_path_pose_xyzw"] = top_object_poses
+        arrays["payload_size_xyz"] = np.asarray(cooperative_generator.payload_size, dtype=np.float64)
         cooperative_generator.close()
     return result, arrays, scene
 
@@ -766,11 +772,7 @@ def _run_isaaclab_backend(args, output_dir: Path) -> dict:
     )
     summary = {
         "schema": "marvin_bimanual_isaaclab_run/v1",
-        "status": (
-            "safety_validation_failed"
-            if evaluation.get("safety_false_negative")
-            else "completed"
-        ),
+        "status": ("safety_validation_failed" if evaluation.get("safety_false_negative") else "completed"),
         "artifact": output_dir.as_posix(),
         "evaluation": evaluation,
         "replay": None,
@@ -802,56 +804,9 @@ def _run_isaaclab_backend(args, output_dir: Path) -> dict:
     return summary
 
 
-def _build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--request",
-        type=Path,
-        help=(
-            "existing Marvin request JSON; when omitted, Phase 1/2 generates one "
-            "from --start-goal-source or the inference config"
-        ),
-    )
-    parser.add_argument(
-        "--start-goal-source",
-        choices=("auto", "dataset", "states_file", "regions"),
-        help="override start_goal_source when --request is omitted",
-    )
-    parser.add_argument(
-        "--start-goal-file",
-        type=Path,
-        help="override the states_file or regions YAML configured path",
-    )
-    parser.add_argument(
-        "--sample-index",
-        type=int,
-        default=0,
-        help=(
-            "eligible dataset/state index; -1 selects deterministically from --seed; "
-            "ignored for regions"
-        ),
-    )
-    parser.add_argument("--seed", type=int, default=12345)
-    for arm in ("left", "right"):
-        for endpoint in ("start", "goal"):
-            parser.add_argument(f"--{arm}-{endpoint}-region", help="override one arm's regions YAML selection")
-    parser.add_argument(
-        "--request-id",
-        help="request ID for a generated request (a UUID-based ID is used by default)",
-    )
-    destination = parser.add_mutually_exclusive_group()
-    destination.add_argument("--output-dir", type=Path)
-    destination.add_argument("--output", type=Path, help="Compatibility path for result.json")
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--device", default="cuda:0")
-    parser.add_argument(
-        "--backend",
-        choices=("mpd", "contract_stub"),
-        default="mpd",
-        help="contract_stub is for schema/wiring tests only",
-    )
-    parser.add_argument("--stub-points", type=int, default=64)
-    parser.add_argument("--stub-duration", type=float, default=2.0)
+def add_isaaclab_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the portable artifact -> Isaac Lab subprocess options."""
+
     parser.add_argument(
         "--sim-backend",
         choices=("none", "isaaclab"),
@@ -876,8 +831,10 @@ def _build_parser():
         type=Path,
         default=REPO_ROOT / ".cache/isaaclab/marvin_bimanual",
     )
-    parser.add_argument("--isaaclab-video", type=Path, default=None)
-    parser.add_argument("--isaaclab-screenshot", type=Path, default=None)
+    parser.add_argument("--isaaclab-video", "--output-video", dest="isaaclab_video", type=Path, default=None)
+    parser.add_argument(
+        "--isaaclab-screenshot", "--output-screenshot", dest="isaaclab_screenshot", type=Path, default=None
+    )
     headless = parser.add_mutually_exclusive_group()
     headless.add_argument("--isaaclab-headless", dest="isaaclab_headless", action="store_true")
     headless.add_argument("--no-isaaclab-headless", dest="isaaclab_headless", action="store_false")
@@ -890,6 +847,91 @@ def _build_parser():
     capture.add_argument("--isaaclab-capture", dest="isaaclab_capture", action="store_true")
     capture.add_argument("--no-isaaclab-capture", dest="isaaclab_capture", action="store_false")
     parser.set_defaults(isaaclab_capture=True)
+
+
+def isaaclab_arguments_from_namespace(args) -> list[str]:
+    """Serialize shared Isaac Lab options for a delegated inference CLI."""
+
+    values = [
+        "--sim-backend",
+        str(args.sim_backend),
+        "--isaaclab-conda-env",
+        str(args.isaaclab_conda_env),
+        "--isaaclab-device",
+        str(args.isaaclab_device),
+        "--isaaclab-action-repeat",
+        str(args.isaaclab_action_repeat),
+        "--isaaclab-timeout-s",
+        str(args.isaaclab_timeout_s),
+        "--isaaclab-trajectory-index",
+        str(args.isaaclab_trajectory_index),
+        "--isaaclab-video-fps",
+        str(args.isaaclab_video_fps),
+        "--isaaclab-width",
+        str(args.isaaclab_width),
+        "--isaaclab-height",
+        str(args.isaaclab_height),
+        "--isaaclab-asset-cache",
+        str(args.isaaclab_asset_cache),
+        "--isaaclab-headless" if args.isaaclab_headless else "--no-isaaclab-headless",
+        "--isaaclab-replay" if args.isaaclab_replay else "--no-isaaclab-replay",
+        "--isaaclab-capture" if args.isaaclab_capture else "--no-isaaclab-capture",
+    ]
+    if args.isaaclab_video is not None:
+        values.extend(("--isaaclab-video", str(args.isaaclab_video)))
+    if args.isaaclab_screenshot is not None:
+        values.extend(("--isaaclab-screenshot", str(args.isaaclab_screenshot)))
+    return values
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--request",
+        type=Path,
+        help=(
+            "existing Marvin request JSON; when omitted, Phase 1/2 generates one "
+            "from --start-goal-source or the inference config"
+        ),
+    )
+    parser.add_argument(
+        "--start-goal-source",
+        choices=("auto", "dataset", "states_file", "regions"),
+        help="override start_goal_source when --request is omitted",
+    )
+    parser.add_argument(
+        "--start-goal-file",
+        type=Path,
+        help="override the states_file or regions YAML configured path",
+    )
+    parser.add_argument(
+        "--sample-index",
+        type=int,
+        default=0,
+        help=("eligible dataset/state index; -1 selects deterministically from --seed; " "ignored for regions"),
+    )
+    parser.add_argument("--seed", type=int, default=12345)
+    for arm in ("left", "right"):
+        for endpoint in ("start", "goal"):
+            parser.add_argument(f"--{arm}-{endpoint}-region", help="override one arm's regions YAML selection")
+    parser.add_argument(
+        "--request-id",
+        help="request ID for a generated request (a UUID-based ID is used by default)",
+    )
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument("--output-dir", type=Path)
+    destination.add_argument("--output", type=Path, help="Compatibility path for result.json")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--backend",
+        choices=("mpd", "contract_stub"),
+        default="mpd",
+        help="contract_stub is for schema/wiring tests only",
+    )
+    parser.add_argument("--stub-points", type=int, default=64)
+    parser.add_argument("--stub-duration", type=float, default=2.0)
+    add_isaaclab_arguments(parser)
     return parser
 
 
@@ -897,13 +939,13 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     region_overrides = {
         f"{endpoint}.{arm}": getattr(args, f"{arm}_{endpoint}_region")
-        for arm in ("left", "right") for endpoint in ("start", "goal")
+        for arm in ("left", "right")
+        for endpoint in ("start", "goal")
         if getattr(args, f"{arm}_{endpoint}_region") is not None
     }
     if args.request is not None and (
         region_overrides
-        or
-        args.start_goal_source is not None
+        or args.start_goal_source is not None
         or args.start_goal_file is not None
         or args.request_id is not None
         or args.sample_index != 0
@@ -924,9 +966,7 @@ def main(argv=None):
         or args.isaaclab_width < 1
         or args.isaaclab_height < 1
     ):
-        raise SystemExit(
-            "Isaac Lab repeat must be non-negative; timeout, fps, width, and height must be positive"
-        )
+        raise SystemExit("Isaac Lab repeat must be non-negative; timeout, fps, width, and height must be positive")
     if args.isaaclab_trajectory_index < 0:
         raise SystemExit("--isaaclab-trajectory-index must be non-negative")
     if args.output is not None:
@@ -969,13 +1009,9 @@ def main(argv=None):
         request = BimanualRequest.from_dict(raw_request)
         request_id = request.request_id
         if args.backend == "contract_stub":
-            result, arrays, scene = _stub_plan(
-                request, args.stub_points, args.stub_duration
-            )
+            result, arrays, scene = _stub_plan(request, args.stub_points, args.stub_duration)
         else:
-            result, arrays, scene = _real_plan(
-                request, args.config.expanduser().resolve(), args.device
-            )
+            result, arrays, scene = _real_plan(request, args.config.expanduser().resolve(), args.device)
         _write_npz(trajectory_path, arrays)
         _write_json(scene_path, scene)
         _write_json(result_path, result)

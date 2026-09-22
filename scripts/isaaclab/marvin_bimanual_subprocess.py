@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import tempfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,12 +33,37 @@ def _conda_executable() -> str:
 def _clean_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for key in (
-        "AR", "CC", "CFLAGS", "CMAKE_PREFIX_PATH", "CPATH", "CPP", "CPPFLAGS",
-        "CUDA_HOME", "CUDA_PATH", "CXX", "CXXFLAGS", "GCC", "GXX", "LD",
-        "LDFLAGS", "LD_LIBRARY_PATH", "LIBRARY_PATH", "NM", "PYTHONHOME",
-        "PYTHONPATH", "RANLIB", "STRIP",
+        "AR",
+        "CC",
+        "CFLAGS",
+        "CMAKE_PREFIX_PATH",
+        "CPATH",
+        "CPP",
+        "CPPFLAGS",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "CXX",
+        "CXXFLAGS",
+        "GCC",
+        "GXX",
+        "LD",
+        "LDFLAGS",
+        "LD_LIBRARY_PATH",
+        "LIBRARY_PATH",
+        "NM",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "RANLIB",
+        "STRIP",
     ):
         environment.pop(key, None)
+    # Isaac/Kit and Warp compile kernels and shaders on first use.  The MPD
+    # launcher may run under a read-only home (containers, CI, robot service),
+    # so keep all generated caches in an explicitly writable runtime root.
+    runtime_cache = Path(tempfile.gettempdir()) / f"mpd-isaaclab-{os.getuid()}"
+    runtime_cache.mkdir(parents=True, exist_ok=True)
+    environment["XDG_CACHE_HOME"] = str(runtime_cache / "xdg")
+    environment["WARP_CACHE_PATH"] = str(runtime_cache / "warp")
     environment["TERM"] = environment.get("TERM") or "xterm-256color"
     return environment
 
@@ -106,21 +132,16 @@ def _run(
         except subprocess.TimeoutExpired as error:
             _terminate_group(process)
             raise RuntimeError(
-                f"Marvin Isaac Lab {tool} timed out after {timeout_s}s; log={log_path}\n"
-                f"{_log_tail(log_path)}"
+                f"Marvin Isaac Lab {tool} timed out after {timeout_s}s; log={log_path}\n" f"{_log_tail(log_path)}"
             ) from error
         finally:
             if process.poll() is None:
                 _terminate_group(process)
     if returncode not in accepted_returncodes:
-        raise RuntimeError(
-            f"Marvin Isaac Lab {tool} exited {returncode}; log={log_path}\n"
-            f"{_log_tail(log_path)}"
-        )
+        raise RuntimeError(f"Marvin Isaac Lab {tool} exited {returncode}; log={log_path}\n" f"{_log_tail(log_path)}")
     if not output_json.is_file():
         raise RuntimeError(
-            f"Marvin Isaac Lab {tool} did not create {output_json}; log={log_path}\n"
-            f"{_log_tail(log_path)}"
+            f"Marvin Isaac Lab {tool} did not create {output_json}; log={log_path}\n" f"{_log_tail(log_path)}"
         )
     try:
         payload = json.loads(output_json.read_text(encoding="utf-8"))
@@ -145,11 +166,16 @@ def run_marvin_isaaclab_evaluator(
 ) -> dict:
     cache = asset_cache or (REPO_ROOT / ".cache/isaaclab/marvin_bimanual")
     arguments = [
-        "--artifact", str(Path(artifact).expanduser().resolve()),
-        "--output", str(Path(output_json).expanduser().resolve()),
-        "--asset-cache", str(Path(cache).expanduser().resolve()),
-        "--device", str(device),
-        "--action-repeat", str(int(action_repeat)),
+        "--artifact",
+        str(Path(artifact).expanduser().resolve()),
+        "--output",
+        str(Path(output_json).expanduser().resolve()),
+        "--asset-cache",
+        str(Path(cache).expanduser().resolve()),
+        "--device",
+        str(device),
+        "--action-repeat",
+        str(int(action_repeat)),
         "--graceful-shutdown",
     ]
     arguments.extend(("--viz", "none" if headless else "kit"))
@@ -186,15 +212,24 @@ def run_marvin_isaaclab_replay(
 ) -> dict:
     cache = asset_cache or (REPO_ROOT / ".cache/isaaclab/marvin_bimanual")
     arguments = [
-        "--artifact", str(Path(artifact).expanduser().resolve()),
-        "--trajectory-index", str(int(trajectory_index)),
-        "--output-json", str(Path(output_json).expanduser().resolve()),
-        "--asset-cache", str(Path(cache).expanduser().resolve()),
-        "--device", str(device),
-        "--action-repeat", str(int(action_repeat)),
-        "--video-fps", str(float(video_fps)),
-        "--width", str(int(width)),
-        "--height", str(int(height)),
+        "--artifact",
+        str(Path(artifact).expanduser().resolve()),
+        "--trajectory-index",
+        str(int(trajectory_index)),
+        "--output-json",
+        str(Path(output_json).expanduser().resolve()),
+        "--asset-cache",
+        str(Path(cache).expanduser().resolve()),
+        "--device",
+        str(device),
+        "--action-repeat",
+        str(int(action_repeat)),
+        "--video-fps",
+        str(float(video_fps)),
+        "--width",
+        str(int(width)),
+        "--height",
+        str(int(height)),
         "--graceful-shutdown",
     ]
     if evaluation is not None:

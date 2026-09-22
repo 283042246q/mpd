@@ -17,8 +17,7 @@ ROBOT_DIR = REPO_ROOT / "mpd/torch_robotics/torch_robotics/data/urdf/robots/marv
 MARVIN_URDF = ROBOT_DIR / "marvin_pika_bimanual_mpd.urdf"
 ASSET_LOCK = ROBOT_DIR / "pika_assets.lock.yaml"
 CANONICAL_JOINT_NAMES = tuple(
-    [f"Joint{index}_L" for index in range(1, 8)]
-    + [f"Joint{index}_R" for index in range(1, 8)]
+    [f"Joint{index}_L" for index in range(1, 8)] + [f"Joint{index}_R" for index in range(1, 8)]
 )
 TCP_FRAME_NAMES = ("left_pika_gripper_tcp", "right_pika_gripper_tcp")
 # The massless TCP links are USD Xforms after URDF conversion, not rigid bodies.
@@ -83,11 +82,7 @@ def sha256_tree(path: Path) -> str:
     if not root.is_dir():
         raise FileNotFoundError(f"USD bundle directory not found: {root}")
     digest = hashlib.sha256()
-    files = sorted(
-        item
-        for item in root.rglob("*")
-        if item.is_file() and item.name != "marvin_bimanual_asset.json"
-    )
+    files = sorted(item for item in root.rglob("*") if item.is_file() and item.name != "marvin_bimanual_asset.json")
     if not files:
         raise ValueError(f"USD bundle directory is empty: {root}")
     for item in files:
@@ -112,11 +107,7 @@ def validate_marvin_urdf(path: Path = MARVIN_URDF) -> dict:
         raise FileNotFoundError(f"Marvin URDF not found: {path}")
     lock = yaml.safe_load(ASSET_LOCK.read_text())
     root = ET.parse(path).getroot()
-    movable = tuple(
-        joint.get("name")
-        for joint in root.findall("joint")
-        if joint.get("type") != "fixed"
-    )
+    movable = tuple(joint.get("name") for joint in root.findall("joint") if joint.get("type") != "fixed")
     links = {link.get("name") for link in root.findall("link")}
     if movable != CANONICAL_JOINT_NAMES:
         raise ValueError("Marvin URDF movable joints are not canonical left-then-right 14D")
@@ -150,16 +141,11 @@ def validate_marvin_urdf(path: Path = MARVIN_URDF) -> dict:
         actual_mesh_hash = sha256_file(mesh_path)
         if not expected_mesh_hash or actual_mesh_hash != expected_mesh_hash:
             raise ValueError(
-                f"Marvin mesh hash drift for {mesh_key}: "
-                f"expected={expected_mesh_hash}, actual={actual_mesh_hash}"
+                f"Marvin mesh hash drift for {mesh_key}: " f"expected={expected_mesh_hash}, actual={actual_mesh_hash}"
             )
         mesh_hashes[mesh_key] = actual_mesh_hash
 
-    tcp_joints = {
-        joint.get("name"): joint
-        for joint in root.findall("joint")
-        if joint.get("type") == "fixed"
-    }
+    tcp_joints = {joint.get("name"): joint for joint in root.findall("joint") if joint.get("type") == "fixed"}
     for arm, frame, body, xyz, rpy in zip(
         ("left", "right"),
         TCP_FRAME_NAMES,
@@ -278,6 +264,11 @@ class MarvinInferenceArtifact:
     active_ee_mask: np.ndarray | None
     mpd_tcp_pose_start: np.ndarray | None
     mpd_top_k_tcp_pose_final: np.ndarray | None
+    object_path: np.ndarray | None
+    top_k_object_path: np.ndarray | None
+    object_path_pose_xyzw: np.ndarray | None
+    top_k_object_path_pose_xyzw: np.ndarray | None
+    payload_size_xyz: np.ndarray | None
     hashes: dict
 
 
@@ -339,30 +330,37 @@ def load_inference_artifact(path: Path) -> MarvinInferenceArtifact:
             dtype=np.float64,
         )
         top_indices = np.asarray(
-            payload["top_k_candidate_indices"]
-            if "top_k_candidate_indices" in payload
-            else [0],
+            payload["top_k_candidate_indices"] if "top_k_candidate_indices" in payload else [0],
             dtype=np.int64,
         )
-        ee_goal_pose = (
-            np.asarray(payload["ee_goal_pose"], dtype=np.float64)
-            if "ee_goal_pose" in payload
-            else None
-        )
+        ee_goal_pose = np.asarray(payload["ee_goal_pose"], dtype=np.float64) if "ee_goal_pose" in payload else None
         active_ee_mask = (
-            np.asarray(payload["active_ee_mask"], dtype=np.float64)
-            if "active_ee_mask" in payload
-            else None
+            np.asarray(payload["active_ee_mask"], dtype=np.float64) if "active_ee_mask" in payload else None
         )
         mpd_tcp_pose_start = (
-            np.asarray(payload["mpd_tcp_pose_start"], dtype=np.float64)
-            if "mpd_tcp_pose_start" in payload
-            else None
+            np.asarray(payload["mpd_tcp_pose_start"], dtype=np.float64) if "mpd_tcp_pose_start" in payload else None
         )
         mpd_top_k_tcp_pose_final = (
             np.asarray(payload["mpd_top_k_tcp_pose_final"], dtype=np.float64)
             if "mpd_top_k_tcp_pose_final" in payload
             else None
+        )
+        object_path = np.asarray(payload["object_path"], dtype=np.float64) if "object_path" in payload else None
+        top_k_object_path = (
+            np.asarray(payload["top_k_object_path"], dtype=np.float64) if "top_k_object_path" in payload else None
+        )
+        object_path_pose_xyzw = (
+            np.asarray(payload["object_path_pose_xyzw"], dtype=np.float64)
+            if "object_path_pose_xyzw" in payload
+            else None
+        )
+        top_k_object_path_pose_xyzw = (
+            np.asarray(payload["top_k_object_path_pose_xyzw"], dtype=np.float64)
+            if "top_k_object_path_pose_xyzw" in payload
+            else None
+        )
+        payload_size_xyz = (
+            np.asarray(payload["payload_size_xyz"], dtype=np.float64) if "payload_size_xyz" in payload else None
         )
 
     horizon = positions.shape[0] if positions.ndim == 2 else -1
@@ -404,10 +402,7 @@ def load_inference_artifact(path: Path) -> MarvinInferenceArtifact:
         raise ValueError("active_ee_mask must have shape [2]")
     if mpd_tcp_pose_start is not None and mpd_tcp_pose_start.shape != (2, 3, 4):
         raise ValueError("mpd_tcp_pose_start must have shape [2,3,4]")
-    if (
-        mpd_top_k_tcp_pose_final is not None
-        and mpd_top_k_tcp_pose_final.shape != (top_positions.shape[0], 2, 3, 4)
-    ):
+    if mpd_top_k_tcp_pose_final is not None and mpd_top_k_tcp_pose_final.shape != (top_positions.shape[0], 2, 3, 4):
         raise ValueError("mpd_top_k_tcp_pose_final must have shape [K,2,3,4]")
     optional_arrays = (
         ee_goal_pose,
@@ -417,6 +412,40 @@ def load_inference_artifact(path: Path) -> MarvinInferenceArtifact:
     )
     if any(value is not None and not np.isfinite(value).all() for value in optional_arrays):
         raise ValueError("trajectory pose metadata contains NaN or Inf")
+    cooperative_arrays = (
+        object_path,
+        top_k_object_path,
+        object_path_pose_xyzw,
+        top_k_object_path_pose_xyzw,
+        payload_size_xyz,
+    )
+    if any(value is not None for value in cooperative_arrays):
+        if any(value is None for value in cooperative_arrays):
+            raise ValueError("cooperative replay metadata must be complete")
+        if object_path.shape != (horizon, 4):
+            raise ValueError("object_path must have shape [T,4]")
+        if top_k_object_path.shape != (top_positions.shape[0], horizon, 4):
+            raise ValueError("top_k_object_path must have shape [K,T,4]")
+        if object_path_pose_xyzw.shape != (horizon, 7):
+            raise ValueError("object_path_pose_xyzw must have shape [T,7]")
+        if top_k_object_path_pose_xyzw.shape != (top_positions.shape[0], horizon, 7):
+            raise ValueError("top_k_object_path_pose_xyzw must have shape [K,T,7]")
+        if payload_size_xyz.shape != (3,) or np.any(payload_size_xyz <= 0.0):
+            raise ValueError("payload_size_xyz must be positive [3]")
+        if not all(value is not None and np.isfinite(value).all() for value in cooperative_arrays):
+            raise ValueError("cooperative replay metadata contains NaN or Inf")
+        if not np.allclose(top_k_object_path[0], object_path, atol=1e-8, rtol=0.0):
+            raise ValueError("Top-K object-path slot zero must be the selected path")
+        if not np.allclose(
+            top_k_object_path_pose_xyzw[0],
+            object_path_pose_xyzw,
+            atol=1e-8,
+            rtol=0.0,
+        ):
+            raise ValueError("Top-K object-pose slot zero must be the selected path")
+        quaternion_norm = np.linalg.norm(top_k_object_path_pose_xyzw[..., 3:], axis=-1)
+        if not np.allclose(quaternion_norm, 1.0, atol=1e-5, rtol=0.0):
+            raise ValueError("object path quaternions must be normalized xyzw")
     is_stub = result.get("validation", {}).get("backend") == "contract_stub"
     if not is_stub and (mpd_tcp_pose_start is None or mpd_top_k_tcp_pose_final is None):
         raise ValueError("real MPD artifacts must include MPD start/final TCP FK poses")
@@ -440,6 +469,11 @@ def load_inference_artifact(path: Path) -> MarvinInferenceArtifact:
         active_ee_mask=active_ee_mask,
         mpd_tcp_pose_start=mpd_tcp_pose_start,
         mpd_top_k_tcp_pose_final=mpd_top_k_tcp_pose_final,
+        object_path=object_path,
+        top_k_object_path=top_k_object_path,
+        object_path_pose_xyzw=object_path_pose_xyzw,
+        top_k_object_path_pose_xyzw=top_k_object_path_pose_xyzw,
+        payload_size_xyz=payload_size_xyz,
         hashes={
             "result_sha256": sha256_file(result_path),
             "trajectory_sha256": sha256_file(trajectory_path),
@@ -469,9 +503,7 @@ def convert_marvin_urdf_to_usd(
         make_instanceable=False,
         force_usd_conversion=bool(force),
         joint_drive=UrdfConverterCfg.JointDriveCfg(
-            gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                stiffness=400.0, damping=40.0
-            ),
+            gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=400.0, damping=40.0),
             target_type="position",
         ),
     )
@@ -489,13 +521,8 @@ def convert_marvin_urdf_to_usd(
         "fix_base": True,
         "merge_fixed_joints": False,
     }
-    serializable = {
-        key: value.as_posix() if isinstance(value, Path) else value
-        for key, value in metadata.items()
-    }
-    (output_dir / "marvin_bimanual_asset.json").write_text(
-        json.dumps(serializable, indent=2, sort_keys=True) + "\n"
-    )
+    serializable = {key: value.as_posix() if isinstance(value, Path) else value for key, value in metadata.items()}
+    (output_dir / "marvin_bimanual_asset.json").write_text(json.dumps(serializable, indent=2, sort_keys=True) + "\n")
     return metadata
 
 
@@ -511,9 +538,7 @@ def validate_marvin_usd(path: Path) -> dict:
     )
     metadata_path = next((item for item in metadata_candidates if item.is_file()), None)
     if metadata_path is None:
-        raise FileNotFoundError(
-            "Preconverted Marvin USD needs marvin_bimanual_asset.json beside its bundle"
-        )
+        raise FileNotFoundError("Preconverted Marvin USD needs marvin_bimanual_asset.json beside its bundle")
     metadata = json.loads(metadata_path.read_text())
     if metadata.get("schema") != "marvin_bimanual_isaaclab_asset/v1":
         raise ValueError("Preconverted Marvin USD metadata schema is invalid")
@@ -528,8 +553,7 @@ def validate_marvin_usd(path: Path) -> dict:
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(
-                f"Preconverted Marvin USD {key} mismatch: "
-                f"metadata={metadata.get(key)!r}, actual={value!r}"
+                f"Preconverted Marvin USD {key} mismatch: " f"metadata={metadata.get(key)!r}, actual={value!r}"
             )
     return {
         **asset,
@@ -542,9 +566,7 @@ def validate_marvin_usd(path: Path) -> dict:
     }
 
 
-def build_marvin_articulation_cfg(
-    usd_path: Path, *, enabled_self_collisions: bool = False
-):
+def build_marvin_articulation_cfg(usd_path: Path, *, enabled_self_collisions: bool = False):
     from isaaclab.actuators import ImplicitActuatorCfg
     from isaaclab.assets import ArticulationCfg
     import isaaclab.sim as sim_utils
@@ -572,9 +594,7 @@ def build_marvin_articulation_cfg(
     )
 
 
-def trajectory_physics_step_schedule(
-    time_from_start, physics_dt: float, action_repeat: int = 0
-) -> np.ndarray:
+def trajectory_physics_step_schedule(time_from_start, physics_dt: float, action_repeat: int = 0) -> np.ndarray:
     """Map artifact timestamps to physics steps; a positive repeat is a legacy override."""
     times = np.asarray(time_from_start, dtype=np.float64)
     if times.ndim != 1 or times.size < 2:
@@ -595,8 +615,7 @@ def trajectory_physics_step_schedule(
     schedule[1:] = np.diff(cumulative_steps)
     if np.any(schedule[1:] < 1):
         raise ValueError(
-            "trajectory waypoint spacing is smaller than the physics timestep; "
-            "use a smaller --physics-dt"
+            "trajectory waypoint spacing is smaller than the physics timestep; " "use a smaller --physics-dt"
         )
     return schedule
 
@@ -606,9 +625,7 @@ def resolve_canonical_joint_ids(robot) -> list[int]:
     missing = [name for name in CANONICAL_JOINT_NAMES if name not in names]
     unexpected = [name for name in names if name not in CANONICAL_JOINT_NAMES]
     if missing or unexpected or len(names) != 14:
-        raise ValueError(
-            f"Isaac articulation joint mismatch; missing={missing}, unexpected={unexpected}"
-        )
+        raise ValueError(f"Isaac articulation joint mismatch; missing={missing}, unexpected={unexpected}")
     return [names.index(name) for name in CANONICAL_JOINT_NAMES]
 
 
@@ -630,9 +647,15 @@ def tcp_poses_from_body_state(body_positions, body_quaternions_xyzw):
     x, y, z, w = np.moveaxis(quaternions, -1, 0)
     rotations = np.stack(
         (
-            1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
-            2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
-            2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+            1 - 2 * (y * y + z * z),
+            2 * (x * y - z * w),
+            2 * (x * z + y * w),
+            2 * (x * y + z * w),
+            1 - 2 * (x * x + z * z),
+            2 * (y * z - x * w),
+            2 * (x * z - y * w),
+            2 * (y * z + x * w),
+            1 - 2 * (x * x + y * y),
         ),
         axis=-1,
     ).reshape(*quaternions.shape[:-1], 3, 3)
@@ -641,9 +664,7 @@ def tcp_poses_from_body_state(body_positions, body_quaternions_xyzw):
     return tcp_positions, rotations
 
 
-def classify_contact_forces(
-    body_names, net_forces, threshold: float, *, infer_interarm: bool = True
-) -> dict:
+def classify_contact_forces(body_names, net_forces, threshold: float, *, infer_interarm: bool = True) -> dict:
     """Classify contacts, optionally inferring inter-arm contact from balanced forces."""
     forces = np.asarray(net_forces, dtype=np.float64)
     if forces.ndim != 3 or forces.shape[1] != len(body_names) or forces.shape[2] != 3:
@@ -669,9 +690,7 @@ def classify_contact_forces(
         1e-12,
     )
     interarm = (
-        active["left"] & active["right"] & (balance < 0.25)
-        if infer_interarm
-        else np.zeros(forces.shape[0], dtype=bool)
+        active["left"] & active["right"] & (balance < 0.25) if infer_interarm else np.zeros(forces.shape[0], dtype=bool)
     )
     return {
         "left_contact": active["left"],
@@ -693,20 +712,14 @@ def spawn_scene_obstacles(sim_utils, scene_payload: dict) -> dict:
     obstacles = scene_payload.get("obstacles") or []
     for index, obstacle in enumerate(obstacles):
         common = {
-            "rigid_props": sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=True, disable_gravity=True
-            ),
+            "rigid_props": sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
             "collision_props": sim_utils.CollisionPropertiesCfg(),
-            "visual_material": sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.45, 0.47, 0.50)
-            ),
+            "visual_material": sim_utils.PreviewSurfaceCfg(diffuse_color=(0.45, 0.47, 0.50)),
         }
         if obstacle["type"] == "sphere":
             config = sim_utils.SphereCfg(radius=float(obstacle["radius"]), **common)
         elif obstacle["type"] == "box":
-            config = sim_utils.CuboidCfg(
-                size=tuple(float(value) for value in obstacle["size"]), **common
-            )
+            config = sim_utils.CuboidCfg(size=tuple(float(value) for value in obstacle["size"]), **common)
         else:
             raise ValueError(f"Unsupported Warehouse primitive {obstacle['type']!r}")
         config.func(

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ from mpd.bimanual.cooperative_sources import request_from_config_source
 from mpd.bimanual.runtime_contract import BimanualRequest
 from mpd.models.diffusion_models.diffusion_model_base import GaussianDiffusionModel
 from scripts.inference import inference_marvin_bimanual, inference_marvin_cooperative
+from scripts.inference import replay_marvin_cooperative_isaaclab
+from scripts.isaaclab.marvin_bimanual_asset import load_inference_artifact
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,9 +71,7 @@ def test_cooperative_runtime_config_keeps_independent_checkpoint_contract():
         "direct_project",
         "reference_residual",
     }
-    assert isinstance(
-        config["cooperative_inference"]["closed_chain_projection"], bool
-    )
+    assert isinstance(config["cooperative_inference"]["closed_chain_projection"], bool)
     assert "CostTaskSpacePayloadCollision" in config["costs"]
     assert "CostTaskSpaceCooperativeClosure" in config["costs"]
     assert "CostTaskSpaceObjectGoalPosition" in config["costs"]
@@ -114,9 +115,7 @@ def test_cooperative_costs_return_path_wide_14d_gradients():
     assert torch.allclose(closure_cost, torch.zeros_like(closure_cost), atol=1e-5)
 
     object_goal = CostTaskSpaceObjectGoalPose(task)
-    goal_cost, goal_grad = object_goal.compute_cost_grad_wrt_q(
-        None, zeros, zeros, zeros, None, None, poses, jacobians
-    )
+    goal_cost, goal_grad = object_goal.compute_cost_grad_wrt_q(None, zeros, zeros, zeros, None, None, poses, jacobians)
     assert goal_cost.shape == (2, 5)
     assert goal_grad["pos"].shape == (2, 5, 14)
     assert torch.allclose(goal_cost, torch.zeros_like(goal_cost), atol=1e-5)
@@ -146,9 +145,7 @@ def test_fixed_seed_source_builds_a_strict_cooperative_request():
     assert request["scene"]["start_goal_source"]["index"] == 1
 
 
-def test_cooperative_entrypoint_dry_run_exposes_prior_and_projection_switches(
-    tmp_path, capsys
-):
+def test_cooperative_entrypoint_dry_run_exposes_prior_and_projection_switches(tmp_path, capsys):
     output = tmp_path / "artifact"
     result = inference_marvin_cooperative.main(
         [
@@ -182,6 +179,102 @@ def test_independent_runtime_config_and_entrypoint_remain_unchanged():
     )
     inference_marvin_bimanual._validate_runtime_config(independent)
     assert independent["task_mode"] == "dual_independent"
-    assert inference_marvin_bimanual.DEFAULT_CONFIG.name.endswith(
-        "independent-runtime.yaml"
+    assert inference_marvin_bimanual.DEFAULT_CONFIG.name.endswith("independent-runtime.yaml")
+
+
+def test_cooperative_entrypoint_forwards_isaaclab_backend(tmp_path, monkeypatch):
+    delegated = []
+
+    def fake_main(arguments):
+        delegated.extend(arguments)
+        return 0
+
+    monkeypatch.setattr(inference_marvin_bimanual, "main", fake_main)
+    output = tmp_path / "artifact"
+    assert (
+        inference_marvin_cooperative.main(
+            [
+                "--config",
+                str(CONFIG),
+                "--start-goal-source",
+                "seed_file",
+                "--sample-index",
+                "0",
+                "--output-dir",
+                str(output),
+                "--backend",
+                "contract_stub",
+                "--sim-backend",
+                "isaaclab",
+                "--isaaclab-conda-env",
+                "env_isaaclab",
+                "--isaaclab-video",
+                str(output / "cooperative.mp4"),
+                "--no-isaaclab-headless",
+            ]
+        )
+        == 0
     )
+    assert delegated[delegated.index("--sim-backend") + 1] == "isaaclab"
+    assert delegated[delegated.index("--isaaclab-conda-env") + 1] == "env_isaaclab"
+    assert delegated[delegated.index("--isaaclab-video") + 1].endswith("cooperative.mp4")
+    assert "--no-isaaclab-headless" in delegated
+
+
+def _cooperative_stub_artifact(tmp_path):
+    request = request_from_config_source(
+        CONFIG,
+        source="seed_file",
+        source_path=None,
+        sample_index=0,
+        seed=19,
+        request_id="cooperative-replay",
+    )
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    artifact = tmp_path / "artifact"
+    assert (
+        inference_marvin_bimanual.main(
+            [
+                "--request",
+                str(request_path),
+                "--output-dir",
+                str(artifact),
+                "--backend",
+                "contract_stub",
+                "--stub-points",
+                "6",
+            ]
+        )
+        == 0
+    )
+    return artifact
+
+
+def test_cooperative_artifact_carries_payload_replay_metadata(tmp_path):
+    artifact_path = _cooperative_stub_artifact(tmp_path)
+    artifact = load_inference_artifact(artifact_path / "result.json")
+    assert artifact.object_path.shape == (6, 4)
+    assert artifact.top_k_object_path_pose_xyzw.shape == (1, 6, 7)
+    np.testing.assert_allclose(artifact.payload_size_xyz, [0.30, 0.24, 0.20])
+
+
+def test_none_backend_artifact_can_be_rendered_later(tmp_path, monkeypatch):
+    artifact_path = _cooperative_stub_artifact(tmp_path)
+    calls = []
+
+    def fake_backend(args, output_dir):
+        calls.append((args, output_dir))
+        return {
+            "schema": "marvin_bimanual_isaaclab_run/v1",
+            "status": "completed",
+            "artifact": str(output_dir),
+        }
+
+    monkeypatch.setattr(inference_marvin_bimanual, "_run_isaaclab_backend", fake_backend)
+    assert replay_marvin_cooperative_isaaclab.main(["--result", str(artifact_path / "result.json")]) == 0
+    assert calls[0][1] == artifact_path.resolve()
+    assert calls[0][0].isaaclab_conda_env == "env_isaaclab"
+    assert calls[0][0].isaaclab_video == artifact_path / "isaaclab-replay.mp4"
+    summary = json.loads((artifact_path / "isaaclab-run.json").read_text())
+    assert summary["status"] == "completed"
