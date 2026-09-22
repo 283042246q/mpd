@@ -80,9 +80,7 @@ class TimingSpline:
         self.basis_derivative = basis.dN.squeeze(0)
         self.phase = torch.linspace(0.0, 1.0, self.num_phase_points, **self.tensor_args)
         self.quadrature = self._cumulative_trapezoid_matrix()
-        self.optimizable_mask = torch.ones(
-            self.num_control_points, dtype=torch.bool, device=self.phase.device
-        )
+        self.optimizable_mask = torch.ones(self.num_control_points, dtype=torch.bool, device=self.phase.device)
         self.optimizable_mask[:2] = False
         self.optimizable_mask[-2:] = False
 
@@ -129,8 +127,7 @@ class TimingSpline:
     def _validate_control_points(self, control_points: torch.Tensor) -> None:
         if control_points.shape[-1:] != (self.num_control_points,):
             raise ValueError(
-                f"timing control points must end in [{self.num_control_points}], "
-                f"got {tuple(control_points.shape)}"
+                f"timing control points must end in [{self.num_control_points}], " f"got {tuple(control_points.shape)}"
             )
         if control_points.device != self.phase.device:
             raise ValueError("timing control points use a different device than the fixed basis")
@@ -163,21 +160,20 @@ class TimingSpline:
             self.assert_endpoint_derivatives_fixed(control_points)
 
         log_density = torch.einsum("hk,...k->...h", self.basis, control_points)
-        log_density_s = torch.einsum(
-            "hk,...k->...h", self.basis_derivative, control_points
-        )
+        log_density_s = torch.einsum("hk,...k->...h", self.basis_derivative, control_points)
         u = self.u_min + F.softplus(log_density)
         u_s = torch.sigmoid(log_density) * log_density_s
         time_from_start = torch.einsum("jh,...h->...j", self.quadrature, u)
+        # The first cumulative trapezoid row is mathematically zero, but a
+        # CUDA float32 contraction may leave a small residue.  Schema v3 and
+        # the dynamic-world query both require an exact relative-time origin.
+        time_from_start = time_from_start - time_from_start[..., :1]
         duration = time_from_start[..., -1]
 
         if require_duration_bounds and (
-            (duration < self.duration_min).any().item()
-            or (duration > self.duration_max).any().item()
+            (duration < self.duration_min).any().item() or (duration > self.duration_max).any().item()
         ):
-            raise ValueError(
-                f"timing duration must remain in [{self.duration_min}, {self.duration_max}] seconds"
-            )
+            raise ValueError(f"timing duration must remain in [{self.duration_min}, {self.duration_max}] seconds")
         if not (torch.diff(time_from_start, dim=-1) > 0.0).all().item():
             raise ValueError("timing spline did not produce strictly increasing time")
 
@@ -214,18 +210,13 @@ class TimingSpline:
         expected = evaluation.u.shape
         for name, value in (("q", q), ("q_s", q_s), ("q_ss", q_ss)):
             if value.shape[:-1] != expected:
-                raise ValueError(
-                    f"{name} must have leading shape {expected}, got {tuple(value.shape)}"
-                )
+                raise ValueError(f"{name} must have leading shape {expected}, got {tuple(value.shape)}")
             if value.device != self.phase.device or value.dtype != self.phase.dtype:
                 raise ValueError(f"{name} must match the timing basis dtype and device")
             if not torch.isfinite(value).all().item():
                 raise ValueError(f"{name} contains NaN or Inf")
         dq = q_s / evaluation.u[..., None]
-        ddq = (
-            q_ss / evaluation.u[..., None].square()
-            - q_s * evaluation.u_s[..., None] / evaluation.u[..., None].pow(3)
-        )
+        ddq = q_ss / evaluation.u[..., None].square() - q_s * evaluation.u_s[..., None] / evaluation.u[..., None].pow(3)
         return replace(evaluation, q=q, dq=dq, ddq=ddq)
 
     def evaluate_spatial_control_points(

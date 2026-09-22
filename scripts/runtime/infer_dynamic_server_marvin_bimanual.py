@@ -47,6 +47,18 @@ class MarvinDynamicPlannerService(ResidentPlannerService):
                 "world_version": version,
                 "loaded_world_version": loaded,
             }
+        trajectory_start = message.get("trajectory_start_unix_ns")
+        if trajectory_start is not None:
+            if isinstance(trajectory_start, bool) or not isinstance(trajectory_start, int) or trajectory_start < 0:
+                raise ProtocolError("trajectory_start_unix_ns must be a non-negative integer")
+            request = message.get("request")
+            if not isinstance(request, dict):
+                raise ProtocolError("request must be a JSON object")
+            message = dict(message)
+            message["request"] = {
+                **request,
+                "_trajectory_start_unix_ns": trajectory_start,
+            }
         return super()._plan(message)
 
     def dispatch(self, message):
@@ -65,6 +77,12 @@ def _parser():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-dynamic-objects", type=int, default=16)
     parser.add_argument("--covariance-sigma", type=float, default=3.0)
+    parser.add_argument("--process-acceleration-std", type=float, default=0.01)
+    parser.add_argument(
+        "--runtime-mode",
+        choices=("snapshot_no_time", "fixed_time_dynamic"),
+        default="snapshot_no_time",
+    )
     return parser
 
 
@@ -79,6 +97,8 @@ def main(argv=None):
             state_callback=callback,
             max_dynamic_objects=args.max_dynamic_objects,
             covariance_sigma=args.covariance_sigma,
+            process_acceleration_std_m_s2=args.process_acceleration_std,
+            runtime_mode=args.runtime_mode,
         )
 
     MarvinDynamicPlannerService(args.socket, args.output_root, factory).serve_forever()
