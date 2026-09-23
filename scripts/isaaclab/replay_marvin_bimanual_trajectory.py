@@ -460,7 +460,7 @@ def run_replay():
         else 0
     )
     if dynamic_record is not None:
-        replay_start_ns = world_start_unix_ns(dynamic_record)
+        scenario_start_ns = world_start_unix_ns(dynamic_record)
         selected_ns = int(dynamic_plan["selected_unix_ns"])
         generation = dynamic_plan.get("generation")
         plan_starts = [
@@ -469,7 +469,12 @@ def run_replay():
             if event.get("type") == "plan_start"
             and (generation is None or event["payload"].get("generation") == generation)
         ]
-        planning_start_ns = min(plan_starts) if plan_starts else replay_start_ns
+        planning_start_ns = min(plan_starts) if plan_starts else scenario_start_ns
+        # The operational recording starts with the first MPD plan.  The world
+        # has already published a valid moving-object snapshot at this point,
+        # so this retains the complete initial planning interval without the
+        # fake-hardware/world-discovery pre-roll.
+        replay_start_ns = planning_start_ns
         planning_time_s = max(0.0, (selected_ns - planning_start_ns) * 1e-9)
         replay_end_ns = trajectory_start_ns + int(
             float(artifact.time_from_start[-1]) * 1e9
@@ -478,10 +483,16 @@ def run_replay():
             2,
             int(np.ceil((replay_end_ns - replay_start_ns) * 1e-9 * args_cli.video_fps)) + 1,
         )
-        frame_unix_ns = np.linspace(
-            replay_start_ns, replay_end_ns, frame_count, dtype=np.int64
-        )
+        # Build relative offsets first; direct linspace on ~1e18 Unix ns loses
+        # low bits and can put the first frame a few nanoseconds before t=0.
+        frame_offsets_ns = np.rint(
+            np.linspace(0, replay_end_ns - replay_start_ns, frame_count)
+        ).astype(np.int64)
+        frame_unix_ns = np.asarray(replay_start_ns + frame_offsets_ns, dtype=np.int64)
+        frame_unix_ns[0] = replay_start_ns
+        frame_unix_ns[-1] = replay_end_ns
     else:
+        scenario_start_ns = 0
         replay_start_ns = 0
         selected_ns = 0
         planning_start_ns = 0
@@ -565,9 +576,7 @@ def run_replay():
         if camera is not None:
             frame = _capture(camera, sim_dt)
             if dynamic_record is not None:
-                if int(unix_ns) < planning_start_ns:
-                    phase = "WORLD WARMUP"
-                elif int(unix_ns) < selected_ns:
+                if int(unix_ns) < selected_ns:
                     phase = "PLANNING"
                 elif int(unix_ns) < trajectory_start_ns:
                     phase = "LATEST / WAITING"
@@ -632,6 +641,7 @@ def run_replay():
         ),
         "dynamic_object_count": initial_dynamic_count,
         "replay_start_unix_ns": int(replay_start_ns),
+        "scenario_start_unix_ns": int(scenario_start_ns),
         "trajectory_start_unix_ns": int(trajectory_start_ns),
         "initial_planning_time_s": float(planning_time_s),
         "video_duration_s": float(

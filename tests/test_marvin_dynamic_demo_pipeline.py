@@ -105,3 +105,5 @@ def test_pipeline_script_exposes_safe_modes():
     assert "replay_marvin_bimanual_trajectory.py" in source
     assert 'WORLD_SCENARIO="warehouse_core_crossing"' in source
     assert "crossing_three|warehouse_core_crossing" in source
+    assert "PLANNING_BUDGET_S=15" in source
+    assert "PLANNING_BUDGET_S=35" in source

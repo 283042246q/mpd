@@ -640,8 +640,12 @@ Franka Phase 5 相同的组合排序：前 `2 s` kinematic/smoothness 权重 `1.
 mean/CVaR 权重为 `0.25/0.75`；位置、速度、加速度 handoff 跳变仍是硬门限。
 每个候选的原始分项、贡献值、总分和拒绝原因都会进入 replay/diagnostics。
 
-Isaac Lab MP4 的时间轴从 `/marvin/dynamic_world_start_unix_ns` 开始，因此包含
-world warmup、第一次 plan 的实际耗时、候选选中后等待统一执行时刻以及完整轨迹。
+Isaac Lab MP4 保留 `/marvin/dynamic_world_start_unix_ns` 供时间对齐，但录像第
+0 帧从第一次 `plan_start` 开始；此时首个动态 world 已发布、物体已经按恒速模型
+运动。这样会完整包含第一次 plan 的实际耗时、候选选中后等待统一执行时刻以及
+完整轨迹，但不录 fake-hardware/ROS discovery 的空白 pre-roll。一体化入口默认
+planning budget 按实测推理耗时设置为 independent `15 s`、cooperative `35 s`，
+仍可用 `--planning-budget` 显式覆盖。
 轨迹颜色沿用 Franka：灰色为 obsolete，蓝色为 active，绿色为 latest/pending，
 红色为 rejected/collision；动态障碍和 planning/active 状态同时显示在 HUD。
 录像逐帧流式写盘，不把完整长视频帧缓存在内存中。

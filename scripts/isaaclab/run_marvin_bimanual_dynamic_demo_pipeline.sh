@@ -16,7 +16,7 @@ RUNTIME_MODE="space-time"
 EXECUTE=false
 DEVICE="cuda:0"
 WORLD_SCENARIO="warehouse_core_crossing"
-PLANNING_BUDGET_S=60
+PLANNING_BUDGET_S=""
 MAX_REPLANS=5
 MAX_HANDOFFS=5
 RUN_TIMEOUT_S=420
@@ -36,7 +36,7 @@ usage() {
     "  --execute              Execute atomically through combined 14-DoF JTC" \
     "  --device DEVICE        MPD device (default: cuda:0)" \
     "  --world-scenario NAME  warehouse_core_crossing (default), crossing_three alias, or safe_three" \
-    "  --planning-budget S    Planning deadline budget (default: 60)" \
+    "  --planning-budget S    Planning deadline budget (default: independent 15, cooperative 35)" \
     "  --max-replans N        Maximum latest-only planning attempts (default: 5)" \
     "  --max-handoffs N       Maximum atomic execution commits (default: 5)" \
     "  --timeout-sec S        Whole ROS action timeout (default: 420)" \
@@ -76,10 +76,12 @@ done
 case "$TASK_MODE" in
   independent|dual_independent)
     TASK_MODE="independent"
+    if [[ -z "$PLANNING_BUDGET_S" ]]; then PLANNING_BUDGET_S=15; fi
     MPD_CONFIG="${MPD_ROOT}/scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-independent-runtime.yaml"
     ;;
   cooperative|cooperative_rigid)
     TASK_MODE="cooperative"
+    if [[ -z "$PLANNING_BUDGET_S" ]]; then PLANNING_BUDGET_S=35; fi
     MPD_CONFIG="${MPD_ROOT}/scripts/inference/cfgs/config_EnvWarehouse-RobotMarvinBimanual-cooperative-independent-prior.yaml"
     ;;
   *) printf 'Unsupported task mode: %s\n' "$TASK_MODE" >&2; exit 2 ;;
