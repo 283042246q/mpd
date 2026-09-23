@@ -72,7 +72,7 @@ cooperative_generator_overrides:
 
 collision_optimization:
   pair_streaming: {enabled: true, pair_chunk_size: 1024}
-  reduced_guide_geometry: {enabled: true, profile: foam_pika_100}
+  reduced_guide_geometry: {enabled: true, profile: foam_marvin_200_pika_60}
 
 gradient_pruning:
   enabled: true

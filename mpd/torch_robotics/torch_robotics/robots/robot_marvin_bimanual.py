@@ -41,13 +41,25 @@ class RobotMarvinBimanual(RobotBase):
             production_config_dir = os.path.join(config_root, "pika")
             if collision_geometry_profile == "production":
                 config_dir = production_config_dir
-            elif collision_geometry_profile == "foam_pika_100":
-                config_dir = os.path.join(config_root, "pika_foam_guide")
             else:
-                raise ValueError(
-                    "collision_geometry_profile must be 'production' or "
-                    "'foam_pika_100'"
-                )
+                guide_profile_dirs = {
+                    "foam_pika_100": "pika_foam_guide",
+                    "foam_marvin_200_pika_60": (
+                        "pika_foam_marvin_200_pika_60_guide"
+                    ),
+                }
+                try:
+                    config_dir = os.path.join(
+                        config_root, guide_profile_dirs[collision_geometry_profile]
+                    )
+                except KeyError as error:
+                    choices = ", ".join(
+                        repr(value)
+                        for value in ("production", *guide_profile_dirs)
+                    )
+                    raise ValueError(
+                        f"collision_geometry_profile must be one of {choices}"
+                    ) from error
         elif collision_geometry_profile != "production":
             raise ValueError("reduced guide geometry requires with_pika=True")
         else:

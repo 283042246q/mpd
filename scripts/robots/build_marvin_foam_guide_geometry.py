@@ -23,7 +23,8 @@ DATA = ROOT / "mpd/torch_robotics/torch_robotics/data"
 URDF = DATA / "urdf/robots/marvin/marvin_pika_bimanual_mpd.urdf"
 PRODUCTION = DATA / "configs/marvin/pika"
 DEFAULT_OUTPUT = DATA / "configs/marvin/pika_foam_guide"
-TOOL_LINK_SPECS = {
+NEW_OUTPUT = DATA / "configs/marvin/pika_foam_marvin_200_pika_60_guide"
+PIKA_LINK_SPECS_100 = {
     "left_pika_adaptor_link": {"target": 4, "branch": 4, "depth": 1},
     "left_gripper_base_link": {"target": 38, "branch": 7, "depth": 2},
     "left_gripper_left_link": {"target": 3, "branch": 10, "depth": 1},
@@ -33,6 +34,74 @@ TOOL_LINK_SPECS = {
     "right_gripper_left_link": {"target": 3, "branch": 10, "depth": 1},
     "right_gripper_right_link": {"target": 3, "branch": 10, "depth": 1},
 }
+
+# Foam grid trees expose discrete levels rather than arbitrary sphere counts.
+# These per-link settings were selected from the generated levels so the two
+# moving Marvin arms contain 199 spheres and both Pika tools contain 62.  The
+# fixed base_link/column_link geometry is intentionally kept at its production
+# 40 spheres and is reported separately in the manifest.
+MARVIN_ARM_LINK_SPECS_200 = {
+    "Base_L": {"target": 1, "branch": 4, "depth": 1},
+    "Link1_L": {"target": 8, "branch": 8, "depth": 2},
+    "Link2_L": {"target": 10, "branch": 8, "depth": 2},
+    "Link3_L": {"target": 2, "branch": 10, "depth": 2},
+    "Link4_L": {"target": 35, "branch": 8, "depth": 2},
+    "Link5_L": {"target": 23, "branch": 6, "depth": 2},
+    "Link6_L": {"target": 1, "branch": 4, "depth": 1},
+    "Link7_L": {"target": 27, "branch": 8, "depth": 2},
+    "Base_R": {"target": 1, "branch": 4, "depth": 1},
+    "Link1_R": {"target": 8, "branch": 8, "depth": 2},
+    "Link2_R": {"target": 10, "branch": 8, "depth": 2},
+    "Link3_R": {"target": 2, "branch": 10, "depth": 2},
+    "Link4_R": {"target": 35, "branch": 8, "depth": 2},
+    "Link5_R": {"target": 14, "branch": 5, "depth": 2},
+    "Link6_R": {"target": 1, "branch": 4, "depth": 1},
+    "Link7_R": {"target": 21, "branch": 8, "depth": 2},
+}
+
+PIKA_LINK_SPECS_60 = {
+    f"{side}_pika_adaptor_link": {"target": 8, "branch": 6, "depth": 2}
+    for side in ("left", "right")
+}
+PIKA_LINK_SPECS_60.update(
+    {
+        f"{side}_gripper_base_link": {"target": 17, "branch": 6, "depth": 2}
+        for side in ("left", "right")
+    }
+)
+PIKA_LINK_SPECS_60.update(
+    {
+        f"{side}_gripper_{finger}_link": {
+            "target": 3,
+            "branch": 6,
+            "depth": 1,
+        }
+        for side in ("left", "right")
+        for finger in ("left", "right")
+    }
+)
+
+PROFILE_SPECS = {
+    "foam_pika_100": {
+        "output": DEFAULT_OUTPUT,
+        "schema": "marvin_foam_guide_geometry/v1",
+        "links": PIKA_LINK_SPECS_100,
+        "arm_range": None,
+        "pika_range": (90, 110),
+        "ensure_sampled_coverage": False,
+    },
+    "foam_marvin_200_pika_60": {
+        "output": NEW_OUTPUT,
+        "schema": "marvin_foam_guide_geometry/v2",
+        "links": {**MARVIN_ARM_LINK_SPECS_200, **PIKA_LINK_SPECS_60},
+        "arm_range": (190, 210),
+        "pika_range": (55, 65),
+        "ensure_sampled_coverage": True,
+    },
+}
+
+ARM_LINKS = frozenset(MARVIN_ARM_LINK_SPECS_200)
+PIKA_LINKS = frozenset(PIKA_LINK_SPECS_100)
 
 
 def _sha256(path):
@@ -57,12 +126,12 @@ def _rpy_matrix(value):
     )
 
 
-def _load_link_meshes():
+def _load_link_meshes(link_specs):
     root = ET.parse(URDF).getroot()
     result = {}
     for link in root.findall("link"):
         name = link.get("name")
-        if name not in TOOL_LINK_SPECS:
+        if name not in link_specs:
             continue
         pieces = []
         sources = []
@@ -89,9 +158,9 @@ def _load_link_meshes():
                 {"path": str(mesh_path.relative_to(ROOT)), "sha256": _sha256(mesh_path)}
             )
         result[name] = (trimesh.util.concatenate(pieces), sources)
-    missing = set(TOOL_LINK_SPECS) - set(result)
+    missing = set(link_specs) - set(result)
     if missing:
-        raise ValueError(f"URDF is missing Pika collision links: {sorted(missing)}")
+        raise ValueError(f"URDF is missing requested collision links: {sorted(missing)}")
     return result
 
 
@@ -310,7 +379,7 @@ def _coverage(mesh, spheres, sample_count, seed):
     }
 
 
-def _parent_bounds(sphere_config):
+def _parent_bounds(sphere_config, profile):
     bounds = {}
     for name, entries in sphere_config.items():
         if name == "self_collision":
@@ -331,7 +400,7 @@ def _parent_bounds(sphere_config):
         "metadata": {
             "method": "aabb_center_exact_sphere_cover",
             "safety_padding": 1e-6,
-            "geometry_profile": "foam_pika_100",
+            "geometry_profile": profile,
         },
         "parent_bounds": bounds,
     }
@@ -340,7 +409,17 @@ def _parent_bounds(sphere_config):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--foam-root", type=Path, default=Path("/home/eric/Projects/foam"))
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILE_SPECS),
+        default="foam_marvin_200_pika_60",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Override the selected profile's repository output directory.",
+    )
     parser.add_argument(
         "--method", choices=("medial", "grid", "spawn", "octree"), default="grid"
     )
@@ -365,6 +444,9 @@ def main():
     )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
+    profile_spec = PROFILE_SPECS[args.profile]
+    link_specs = profile_spec["links"]
+    output_dir = args.output_dir or profile_spec["output"]
     if (
         args.inflation < 0
         or args.surface_samples < 100
@@ -389,13 +471,15 @@ def main():
     reduced = {
         key: value
         for key, value in production.items()
-        if key not in TOOL_LINK_SPECS and key != "self_collision"
+        if key not in link_specs and key != "self_collision"
     }
     manifest_links = {}
     command_template = None
     foam_cache = {}
-    for index, (name, (mesh, sources)) in enumerate(_load_link_meshes().items()):
-        spec = TOOL_LINK_SPECS[name]
+    for index, (name, (mesh, sources)) in enumerate(
+        _load_link_meshes(link_specs).items()
+    ):
+        spec = link_specs[name]
         cache_key = (
             tuple(source["sha256"] for source in sources),
             spec["target"],
@@ -434,8 +518,25 @@ def main():
                 merge=args.merge,
             )
         selected, command_template, preprocessing = copy.deepcopy(foam_cache[cache_key])
+        coverage_seed = 47 + index
+        coverage = _coverage(
+            mesh, selected["spheres"], args.surface_samples, coverage_seed
+        )
+        coverage_inflation = 0.0
+        if (
+            profile_spec["ensure_sampled_coverage"]
+            and coverage["maximum_uncovered_m"] > 0
+        ):
+            # Foam fits the preprocessed manifold.  Recheck against the exact
+            # collision mesh and conservatively close any sampled residual.
+            coverage_inflation = coverage["maximum_uncovered_m"] + 1e-4
+            for sphere in selected["spheres"]:
+                sphere[3] += coverage_inflation
+            coverage = _coverage(
+                mesh, selected["spheres"], args.surface_samples, coverage_seed
+            )
         reduced[name] = selected["spheres"]
-        manifest_links[name] = {
+        link_manifest = {
             "target_spheres": spec["target"],
             "foam_branch": spec["branch"],
             "foam_depth": spec["depth"],
@@ -445,19 +546,45 @@ def main():
                 key: selected[key]
                 for key in ("mean_error", "best_error", "worst_error")
             },
-            "coverage": _coverage(
-                mesh, selected["spheres"], args.surface_samples, 47 + index
-            ),
-            "mesh_sources": sources,
-            "preprocessing": preprocessing,
         }
-    reduced["self_collision"] = production["self_collision"]
-    pika_count = sum(len(reduced[name]) for name in TOOL_LINK_SPECS)
-    if not 90 <= pika_count <= 110:
-        raise RuntimeError(
-            f"foam_pika_100 must contain 90--110 Pika spheres, got {pika_count}: "
-            f"{ {name: len(reduced[name]) for name in TOOL_LINK_SPECS} }"
+        if profile_spec["schema"].endswith("/v2"):
+            link_manifest.update(
+                {
+                    "base_inflation_m": args.inflation,
+                    "sampled_coverage_inflation_m": coverage_inflation,
+                    "total_inflation_m": args.inflation + coverage_inflation,
+                }
+            )
+        link_manifest.update(
+            {
+                "coverage": coverage,
+                "mesh_sources": sources,
+                "preprocessing": preprocessing,
+            }
         )
+        manifest_links[name] = link_manifest
+    reduced["self_collision"] = production["self_collision"]
+    arm_count = sum(len(reduced[name]) for name in ARM_LINKS)
+    pika_count = sum(len(reduced[name]) for name in PIKA_LINKS)
+    arm_range = profile_spec["arm_range"]
+    pika_range = profile_spec["pika_range"]
+    if arm_range is not None and not arm_range[0] <= arm_count <= arm_range[1]:
+        raise RuntimeError(
+            f"{args.profile} must contain {arm_range[0]}--{arm_range[1]} Marvin "
+            f"arm spheres, got {arm_count}: "
+            f"{ {name: len(reduced[name]) for name in sorted(ARM_LINKS)} }"
+        )
+    if not pika_range[0] <= pika_count <= pika_range[1]:
+        raise RuntimeError(
+            f"{args.profile} must contain {pika_range[0]}--{pika_range[1]} Pika "
+            f"spheres, got {pika_count}: "
+            f"{ {name: len(reduced[name]) for name in sorted(PIKA_LINKS)} }"
+        )
+    fixed_count = sum(
+        len(value)
+        for name, value in reduced.items()
+        if name not in ARM_LINKS | PIKA_LINKS | {"self_collision"}
+    )
 
     foam_commit = subprocess.check_output(
         ["git", "-C", str(args.foam_root), "rev-parse", "HEAD"], text=True
@@ -465,21 +592,25 @@ def main():
     outputs = {
         "collision_spheres.yaml": yaml.safe_dump(reduced, sort_keys=False, width=110),
         "collision_parent_bounds.yaml": yaml.safe_dump(
-            _parent_bounds(reduced), sort_keys=False, width=110
+            _parent_bounds(reduced, args.profile), sort_keys=False, width=110
         ),
         "self_collision_pairs.yaml": (PRODUCTION / "self_collision_pairs.yaml").read_text(),
     }
     manifest = {
-        "schema": "marvin_foam_guide_geometry/v1",
-        "profile": "foam_pika_100",
+        "schema": profile_spec["schema"],
+        "profile": args.profile,
         "guidance_only": True,
         "production_validator_profile": "pika",
         "foam_root": str(args.foam_root.resolve()),
         "foam_commit": foam_commit,
         "foam_executable_sha256": _sha256(executable),
         "method": args.method,
-        "link_specs": TOOL_LINK_SPECS,
+        "link_specs": link_specs,
         "inflation_m": args.inflation,
+    }
+    if profile_spec["schema"].endswith("/v2"):
+        manifest["sampled_coverage_padding_m"] = 1e-4
+    manifest.update({
         "num_cover": args.num_cover,
         "init_spheres": args.init_spheres,
         "min_spheres": args.min_spheres,
@@ -490,12 +621,22 @@ def main():
         "expand": args.expand,
         "merge": args.merge,
         "command_template": [str(value) for value in command_template],
-        "pika_sphere_count": pika_count,
-        "total_sphere_count": sum(
-            len(value) for key, value in reduced.items() if key != "self_collision"
-        ),
-        "links": manifest_links,
-    }
+    })
+    if profile_spec["schema"].endswith("/v2"):
+        manifest["marvin_arm_sphere_count"] = arm_count
+    manifest["pika_sphere_count"] = pika_count
+    if profile_spec["schema"].endswith("/v2"):
+        manifest["fixed_sphere_count"] = fixed_count
+    manifest.update(
+        {
+            "total_sphere_count": sum(
+                len(value)
+                for key, value in reduced.items()
+                if key != "self_collision"
+            ),
+            "links": manifest_links,
+        }
+    )
     outputs["guide_geometry_manifest.yaml"] = yaml.safe_dump(
         manifest, sort_keys=False, width=110
     )
@@ -503,8 +644,8 @@ def main():
     changed = [
         name
         for name, contents in outputs.items()
-        if not (args.output_dir / name).is_file()
-        or (args.output_dir / name).read_text() != contents
+        if not (output_dir / name).is_file()
+        or (output_dir / name).read_text() != contents
     ]
     if args.check:
         if changed:
@@ -513,6 +654,7 @@ def main():
             json.dumps(
                 {
                     "status": "pass",
+                    "marvin_arm_spheres": arm_count,
                     "pika_spheres": pika_count,
                     "total_spheres": manifest["total_sphere_count"],
                 },
@@ -520,17 +662,18 @@ def main():
             )
         )
         return
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     for name, contents in outputs.items():
-        (args.output_dir / name).write_text(contents)
+        (output_dir / name).write_text(contents)
     print(
         json.dumps(
             {
                 "status": "generated",
                 "changed": changed,
+                "marvin_arm_spheres": arm_count,
                 "pika_spheres": pika_count,
                 "total_spheres": manifest["total_sphere_count"],
-                "output_dir": str(args.output_dir),
+                "output_dir": str(output_dir),
             },
             indent=2,
             sort_keys=True,

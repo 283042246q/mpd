@@ -1,0 +1,712 @@
+schema: marvin_foam_guide_geometry/v2
+profile: foam_marvin_200_pika_60
+guidance_only: true
+production_validator_profile: pika
+foam_root: /home/eric/Projects/foam
+foam_commit: 116928f71aaa7c40356d79c84d3c9ff1f4497d90
+foam_executable_sha256: 932df38ca869a82c5016d85304687e8cc14eeb74ac19f657730a4b5a90168186
+method: grid
+link_specs:
+  Base_L:
+    target: 1
+    branch: 4
+    depth: 1
+  Link1_L:
+    target: 8
+    branch: 8
+    depth: 2
+  Link2_L:
+    target: 10
+    branch: 8
+    depth: 2
+  Link3_L:
+    target: 2
+    branch: 10
+    depth: 2
+  Link4_L:
+    target: 35
+    branch: 8
+    depth: 2
+  Link5_L:
+    target: 23
+    branch: 6
+    depth: 2
+  Link6_L:
+    target: 1
+    branch: 4
+    depth: 1
+  Link7_L:
+    target: 27
+    branch: 8
+    depth: 2
+  Base_R:
+    target: 1
+    branch: 4
+    depth: 1
+  Link1_R:
+    target: 8
+    branch: 8
+    depth: 2
+  Link2_R:
+    target: 10
+    branch: 8
+    depth: 2
+  Link3_R:
+    target: 2
+    branch: 10
+    depth: 2
+  Link4_R:
+    target: 35
+    branch: 8
+    depth: 2
+  Link5_R:
+    target: 14
+    branch: 5
+    depth: 2
+  Link6_R:
+    target: 1
+    branch: 4
+    depth: 1
+  Link7_R:
+    target: 21
+    branch: 8
+    depth: 2
+  left_pika_adaptor_link:
+    target: 8
+    branch: 6
+    depth: 2
+  right_pika_adaptor_link:
+    target: 8
+    branch: 6
+    depth: 2
+  left_gripper_base_link:
+    target: 17
+    branch: 6
+    depth: 2
+  right_gripper_base_link:
+    target: 17
+    branch: 6
+    depth: 2
+  left_gripper_left_link:
+    target: 3
+    branch: 6
+    depth: 1
+  left_gripper_right_link:
+    target: 3
+    branch: 6
+    depth: 1
+  right_gripper_left_link:
+    target: 3
+    branch: 6
+    depth: 1
+  right_gripper_right_link:
+    target: 3
+    branch: 6
+    depth: 1
+inflation_m: 0.006
+sampled_coverage_padding_m: 0.0001
+num_cover: 500
+init_spheres: 200
+min_spheres: 20
+optimise: false
+verify_mesh: false
+manifold_leaves: 1000
+simplify_ratio: 0.2
+expand: false
+merge: false
+command_template:
+- /home/eric/Projects/foam/foam/external/makeTreeGrid
+- -nopause
+- -branch
+- '6'
+- -depth
+- '1'
+- -testerLevels
+- '2'
+- -numCover
+- '500'
+- -minCover
+- '2'
+- -balExcess
+- '0.05'
+marvin_arm_sphere_count: 199
+pika_sphere_count: 62
+fixed_sphere_count: 40
+total_sphere_count: 301
+links:
+  Base_L:
+    target_spheres: 1
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 1
+    selected_level: 0
+    foam_error:
+      mean_error: 463.998
+      best_error: 463.998
+      worst_error: 463.998
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.021302968735984605
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Base_L.STL
+      sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+    preprocessing:
+      input_faces: 4090
+      processed_faces: 862
+  Link1_L:
+    target_spheres: 8
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 8
+    selected_level: 1
+    foam_error:
+      mean_error: 258.004
+      best_error: 173.0
+      worst_error: 307.859
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02664111546378392
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link1_L.STL
+      sha256: d00097eec49600a4111ee5a124d6636f50ea09a7a1dc8486d98f4370dde7a932
+    preprocessing:
+      input_faces: 11270
+      processed_faces: 658
+  Link2_L:
+    target_spheres: 10
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 10
+    selected_level: 2
+    foam_error:
+      mean_error: 140.401
+      best_error: 96.007
+      worst_error: 170.658
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.006228516436622114
+    total_inflation_m: 0.012228516436622115
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.029156260210407986
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link2_L.STL
+      sha256: 4776a6a2086ddc61b1643aff93386e545baccef2751db29d863fe027a76f325e
+    preprocessing:
+      input_faces: 25574
+      processed_faces: 684
+  Link3_L:
+    target_spheres: 2
+    foam_branch: 10
+    foam_depth: 2
+    actual_spheres: 2
+    selected_level: 1
+    foam_error:
+      mean_error: 287.688
+      best_error: 275.938
+      worst_error: 299.438
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.033139080893364856
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link3_L.STL
+      sha256: d58f1039bd3eb2ccc1a1959b89d2de7ae714344ad8cb8b78ef97b92dcd317d26
+    preprocessing:
+      input_faces: 12708
+      processed_faces: 526
+  Link4_L:
+    target_spheres: 35
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 35
+    selected_level: 2
+    foam_error:
+      mean_error: 72.108
+      best_error: 0.0
+      worst_error: 159.343
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.011364245107653926
+    total_inflation_m: 0.017364245107653928
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.029989068019189158
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link4_L.STL
+      sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+    preprocessing:
+      input_faces: 25268
+      processed_faces: 688
+  Link5_L:
+    target_spheres: 23
+    foam_branch: 6
+    foam_depth: 2
+    actual_spheres: 23
+    selected_level: 2
+    foam_error:
+      mean_error: 80.829
+      best_error: 35.056
+      worst_error: 184.058
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0003844980409316203
+    total_inflation_m: 0.006384498040931621
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.016472345148586563
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link5_L.STL
+      sha256: 573f15ee62b0a9b2d62aceeb756800fd86969a685535e91416b73d51f1c57613
+    preprocessing:
+      input_faces: 23520
+      processed_faces: 1686
+  Link6_L:
+    target_spheres: 1
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 1
+    selected_level: 0
+    foam_error:
+      mean_error: 455.881
+      best_error: 455.881
+      worst_error: 455.881
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.017731243264423626
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link6_L.STL
+      sha256: b6b7570d8ebf1d2acb01baf8941b892f5a5f72aaa05503ab8340da8a2a7b2c13
+    preprocessing:
+      input_faces: 6216
+      processed_faces: 782
+  Link7_L:
+    target_spheres: 27
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 27
+    selected_level: 2
+    foam_error:
+      mean_error: 89.555
+      best_error: 3.271
+      worst_error: 287.625
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.01856540343412059
+    total_inflation_m: 0.024565403434120593
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.03113652729351458
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link7_L.STL
+      sha256: 126cc7d41c37049ce34d2636bfe2d460c21e3429ed080877d1c5e983109ef798
+    preprocessing:
+      input_faces: 51142
+      processed_faces: 724
+  Base_R:
+    target_spheres: 1
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 1
+    selected_level: 0
+    foam_error:
+      mean_error: 463.998
+      best_error: 463.998
+      worst_error: 463.998
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02133263958971859
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Base_R.STL
+      sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+    preprocessing:
+      input_faces: 4090
+      processed_faces: 862
+  Link1_R:
+    target_spheres: 8
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 8
+    selected_level: 1
+    foam_error:
+      mean_error: 258.004
+      best_error: 173.0
+      worst_error: 307.859
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.026569473245697854
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link1_R.STL
+      sha256: fdb1075fe0b41e5c2cb7c2fe13c9d2e62ff4dd6eb540ea841b8603db28369dd0
+    preprocessing:
+      input_faces: 11270
+      processed_faces: 658
+  Link2_R:
+    target_spheres: 10
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 10
+    selected_level: 2
+    foam_error:
+      mean_error: 140.401
+      best_error: 96.007
+      worst_error: 170.658
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0060165401787597205
+    total_inflation_m: 0.012016540178759721
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02890481231815856
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link2_R.STL
+      sha256: 53eb9fc69c939d2ebd4f32c1df341c1c42bc3d9d0911db0c9fcee70aa2701b34
+    preprocessing:
+      input_faces: 25574
+      processed_faces: 684
+  Link3_R:
+    target_spheres: 2
+    foam_branch: 10
+    foam_depth: 2
+    actual_spheres: 2
+    selected_level: 1
+    foam_error:
+      mean_error: 287.688
+      best_error: 275.938
+      worst_error: 299.438
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.03320942003505813
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link3_R.STL
+      sha256: 122456d8fc3e81694f352fc1f29d0bc19066f7f3d7572857a1be1e7c030dec9c
+    preprocessing:
+      input_faces: 12708
+      processed_faces: 526
+  Link4_R:
+    target_spheres: 35
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 35
+    selected_level: 2
+    foam_error:
+      mean_error: 72.108
+      best_error: 0.0
+      worst_error: 159.343
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.011678994546940425
+    total_inflation_m: 0.017678994546940427
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.030240892865499427
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link4_R.STL
+      sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+    preprocessing:
+      input_faces: 25268
+      processed_faces: 688
+  Link5_R:
+    target_spheres: 14
+    foam_branch: 5
+    foam_depth: 2
+    actual_spheres: 14
+    selected_level: 2
+    foam_error:
+      mean_error: 116.2
+      best_error: 41.667
+      worst_error: 220.482
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.005255835323025673
+    total_inflation_m: 0.011255835323025674
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.024443553410873432
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link5_R.STL
+      sha256: 2de51a340695c89b2fd58b1171dfacc4d85aa4e6cd50879e021a2d0bde8599a8
+    preprocessing:
+      input_faces: 23932
+      processed_faces: 1686
+  Link6_R:
+    target_spheres: 1
+    foam_branch: 4
+    foam_depth: 1
+    actual_spheres: 1
+    selected_level: 0
+    foam_error:
+      mean_error: 455.881
+      best_error: 455.881
+      worst_error: 455.881
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.017708622641760947
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link6_R.STL
+      sha256: 49722d14b9ac34a84a41c95f49bd0b2a8859d4a05f66b247822bf36b0a703cd5
+    preprocessing:
+      input_faces: 6216
+      processed_faces: 782
+  Link7_R:
+    target_spheres: 21
+    foam_branch: 8
+    foam_depth: 2
+    actual_spheres: 21
+    selected_level: 2
+    foam_error:
+      mean_error: 78.943
+      best_error: 0.0
+      worst_error: 260.687
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.005919756755395311
+    total_inflation_m: 0.011919756755395312
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.024877996150797638
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/marvin_description/m6/Link7_R.STL
+      sha256: 6eb75b059ff383e90a153be840bcce84b23d8f8afd074b1bc9dfec1b18c2351f
+    preprocessing:
+      input_faces: 51546
+      processed_faces: 726
+  left_pika_adaptor_link:
+    target_spheres: 8
+    foam_branch: 6
+    foam_depth: 2
+    actual_spheres: 8
+    selected_level: 2
+    foam_error:
+      mean_error: 186.089
+      best_error: 114.13
+      worst_error: 293.217
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.007578744853159931
+    total_inflation_m: 0.013578744853159932
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.017091428055583554
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL
+      sha256: 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+    preprocessing:
+      input_faces: 12258
+      processed_faces: 680
+  left_gripper_base_link:
+    target_spheres: 17
+    foam_branch: 6
+    foam_depth: 2
+    actual_spheres: 17
+    selected_level: 2
+    foam_error:
+      mean_error: 79.56
+      best_error: 12.399
+      worst_error: 258.183
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.023042688828516414
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/gripper_base_link.STL
+      sha256: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+    preprocessing:
+      input_faces: 118348
+      processed_faces: 1036
+  left_gripper_left_link:
+    target_spheres: 3
+    foam_branch: 6
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 236.021
+      best_error: 221.542
+      worst_error: 256.229
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.022327043514694236
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  left_gripper_right_link:
+    target_spheres: 3
+    foam_branch: 6
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 236.021
+      best_error: 221.542
+      worst_error: 256.229
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02235004795511159
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  right_pika_adaptor_link:
+    target_spheres: 8
+    foam_branch: 6
+    foam_depth: 2
+    actual_spheres: 8
+    selected_level: 2
+    foam_error:
+      mean_error: 186.089
+      best_error: 114.13
+      worst_error: 293.217
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.007548595222271752
+    total_inflation_m: 0.013548595222271753
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.01702396444523455
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_adaptor/pika_marvin_adaptor.STL
+      sha256: 01fa7b376b8a4f994e70ea323052e30e753d9c0cdff75a0d24aab158e4bb642e
+    preprocessing:
+      input_faces: 12258
+      processed_faces: 680
+  right_gripper_base_link:
+    target_spheres: 17
+    foam_branch: 6
+    foam_depth: 2
+    actual_spheres: 17
+    selected_level: 2
+    foam_error:
+      mean_error: 79.56
+      best_error: 12.399
+      worst_error: 258.183
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.023034145553847644
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/gripper_base_link.STL
+      sha256: fcd9ec05a03658bd8f93f7d39f0b81bbda91536e48bccd50fa0223829242c5bf
+    preprocessing:
+      input_faces: 118348
+      processed_faces: 1036
+  right_gripper_left_link:
+    target_spheres: 3
+    foam_branch: 6
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 236.021
+      best_error: 221.542
+      worst_error: 256.229
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.022314628847455043
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942
+  right_gripper_right_link:
+    target_spheres: 3
+    foam_branch: 6
+    foam_depth: 1
+    actual_spheres: 3
+    selected_level: 1
+    foam_error:
+      mean_error: 236.021
+      best_error: 221.542
+      worst_error: 256.229
+    base_inflation_m: 0.006
+    sampled_coverage_inflation_m: 0.0
+    total_inflation_m: 0.006
+    coverage:
+      surface_samples: 20000
+      uncovered_ratio: 0.0
+      maximum_uncovered_m: 0.0
+      mean_signed_excess_m: -0.02234721899909966
+    mesh_sources:
+    - path: mpd/torch_robotics/torch_robotics/data/urdf/robots/marvin/meshes/pika_gripper_description/pika_finray_link.STL
+      sha256: 0bcd3c0935f5f96d70b59fff2e52e96c2294257b6067f4c29ccdde069b20bac9
+    preprocessing:
+      input_faces: 22498
+      processed_faces: 942

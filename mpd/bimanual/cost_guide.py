@@ -503,6 +503,32 @@ class BimanualCostGuideManagerParametricTrajectory(
     ):
         collision_config = resolve_collision_optimization_config(args_inference)
         reduced = collision_config["reduced_guide_geometry"]
+        raw_args = (
+            args_inference.toDict()
+            if hasattr(args_inference, "toDict")
+            else args_inference
+        )
+        raw_collision = (
+            raw_args.get("collision_optimization", {})
+            if isinstance(raw_args, dict)
+            else {}
+        )
+        raw_reduced = (
+            raw_collision.get("reduced_guide_geometry", {})
+            if isinstance(raw_collision, dict)
+            else {}
+        )
+        has_explicit_switch = (
+            isinstance(raw_reduced, dict) and "enabled" in raw_reduced
+        )
+        if (
+            not has_explicit_switch
+            and isinstance(planning_task.robot, RobotMarvinBimanual)
+            and planning_task.robot.with_pika
+        ):
+            # Reduced geometry is the Marvin/Pika collision-guidance default,
+            # not a global default for Panda, mocks, or non-Pika robots.
+            reduced["enabled"] = True
         collision_guide_task = None
         self.guide_collision_robot = None
         if reduced["enabled"]:

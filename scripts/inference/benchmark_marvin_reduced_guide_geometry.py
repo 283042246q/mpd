@@ -151,8 +151,8 @@ def main():
     parser.add_argument(
         "--profiles",
         nargs="+",
-        choices=("production", "foam_pika_100"),
-        default=("production", "foam_pika_100"),
+        choices=("production", "foam_pika_100", "foam_marvin_200_pika_60"),
+        default=("production", "foam_marvin_200_pika_60"),
     )
     parser.add_argument(
         "--modes", nargs="+", choices=("full", "streaming"), default=("full", "streaming")

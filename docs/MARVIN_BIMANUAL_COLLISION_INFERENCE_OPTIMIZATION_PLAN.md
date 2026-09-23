@@ -183,6 +183,28 @@ fine self-pair mask直接由 `active_parent_pair_mask[fine_pair_parent_pair_id]`
 
 Foam spheres 不声明为 production-conservative。允许其作为优化引导近似，但最终结果必须由原始 1035 球 validator 复核；表面抽样门禁也不等价于连续体或 Isaac Lab 的安全证书。
 
+### 6.1.1 默认全运动链 profile（202 + 62）
+
+新增 `foam_marvin_200_pika_60`，使用同一本地 Foam 流程重新拟合两条 Marvin
+运动臂和两个 Pika。Foam 离散层级的实际结果为 Marvin 双臂 199 球、Pika 62
+球；固定 `base_link`/`column_link` 保留 production 的 40 球，因此 guide 总计
+301 球。每个重新拟合 link 仍使用 20,000 个表面样本检查；先统一增加 6 mm，
+再按 link 补足采样表面的最大残差并增加 0.1 mm padding。该补偿及最终总膨胀量
+逐 link 写入 manifest。
+
+该 profile 是 Marvin collision cost guidance 的默认值，并由独立开关控制：
+
+```yaml
+collision_optimization:
+  reduced_guide_geometry:
+    enabled: true                 # false 即恢复 production guidance geometry
+    profile: foam_marvin_200_pika_60
+```
+
+旧 `foam_pika_100` profile 保留用于历史消融。无论开关如何，dense validator
+始终引用 `planning_task.robot` 的 1035 球 production geometry；301 球 profile
+不能作为轨迹安全证书。
+
 ### 6.2 双模型隔离
 
 运行时建立：

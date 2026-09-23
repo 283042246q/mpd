@@ -144,8 +144,11 @@ DEFAULT_COLLISION_OPTIMIZATION_CONFIG = {
         "pair_chunk_size": 4096,
     },
     "reduced_guide_geometry": {
+        # The shared resolver stays robot-neutral.  The real Marvin/Pika
+        # bimanual cost-guide manager enables this profile automatically when
+        # no explicit switch is present.
         "enabled": False,
-        "profile": "foam_pika_100",
+        "profile": "foam_marvin_200_pika_60",
     },
 }
 
