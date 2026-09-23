@@ -38,7 +38,7 @@ def selected_plan(record: dict) -> dict:
     """Return the final selected artifact recorded by the latest-only adapter."""
     timeline = build_timeline(record)
     plans = [
-        event["payload"]
+        {**event["payload"], "selected_unix_ns": int(event["unix_ns"])}
         for event in timeline["events"]
         if event.get("type") == "plan_selected"
     ]
@@ -55,6 +55,56 @@ def selected_plan(record: dict) -> dict:
     if missing:
         raise ValueError(f"plan_selected is missing {missing}")
     return plan
+
+
+def world_start_unix_ns(record: dict) -> int:
+    """Return the explicit scenario start, falling back to the first snapshot."""
+    timeline = build_timeline(record)
+    starts = [
+        int(event["payload"]["scenario_start_unix_ns"])
+        for event in timeline["events"]
+        if event.get("type") == "world_start"
+    ]
+    if starts:
+        return min(starts)
+    snapshots = [
+        int(event["payload"]["stamp_unix_ns"])
+        for event in timeline["events"]
+        if event.get("type") == "world"
+        and int(event["payload"].get("stamp_unix_ns", 0)) > 0
+    ]
+    if not snapshots:
+        raise ValueError("dynamic replay contains no world start or world snapshot")
+    return min(snapshots)
+
+
+def candidate_visual_states(record: dict, unix_ns: int, candidate_count: int) -> list[str]:
+    """Franka-compatible gray/blue/green/red states for the selected generation."""
+    if candidate_count < 1:
+        raise ValueError("candidate_count must be positive")
+    timeline = build_timeline(record)
+    plan = selected_plan(record)
+    generation = plan.get("generation")
+    states = ["hidden"] * candidate_count
+    for event in timeline["events"]:
+        if int(event["unix_ns"]) > int(unix_ns):
+            break
+        if event.get("type") != "candidate_revalidation":
+            continue
+        payload = event["payload"]
+        if generation is not None and payload.get("generation") != generation:
+            continue
+        index = int(payload.get("candidate", -1))
+        if 0 <= index < candidate_count:
+            states[index] = "gray" if payload.get("safe") else "red"
+    selected_index = int(plan["top_k_index"])
+    if int(unix_ns) >= int(plan["selected_unix_ns"]):
+        states[selected_index] = (
+            "blue"
+            if int(unix_ns) >= int(plan["trajectory_start_unix_ns"])
+            else "green"
+        )
+    return states
 
 
 def predicted_world_objects(record: dict, unix_ns: int) -> list[dict]:
@@ -74,7 +124,9 @@ def predicted_world_objects(record: dict, unix_ns: int) -> list[dict]:
     ]
     world = eligible[-1] if eligible else worlds[0]
     stamp_ns = int(world["stamp_unix_ns"])
-    elapsed = max(0.0, (unix_ns - stamp_ns) * 1e-9)
+    # The demo world is constant velocity from an explicit scenario start, so
+    # back-projection before the first published observation is deterministic.
+    elapsed = (unix_ns - stamp_ns) * 1e-9
     predicted = []
     for item in world.get("objects", []):
         pose = item.get("pose") or {}

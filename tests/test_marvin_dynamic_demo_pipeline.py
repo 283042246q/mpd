@@ -3,8 +3,10 @@ import json
 import pytest
 
 from scripts.isaaclab.replay_marvin_bimanual_dynamic_log import (
+    candidate_visual_states,
     predicted_world_objects,
     selected_plan,
+    world_start_unix_ns,
 )
 
 
@@ -53,6 +55,46 @@ def test_dynamic_record_resolves_plan_and_predicts_objects():
     assert selected_plan(record)["top_k_index"] == 0
     objects = predicted_world_objects(record, 3_000_000_000)
     assert objects[0]["pose"]["position"] == pytest.approx([2.0, 2.0, 2.5])
+    assert world_start_unix_ns(record) == 1_000_000_000
+
+
+def test_candidate_colors_follow_franka_state_semantics():
+    record = _record()
+    record["events"][1]["payload"]["generation"] = 3
+    record["events"].insert(
+        1,
+        {
+            "unix_ns": 15,
+            "sequence": 2,
+            "type": "candidate_revalidation",
+            "payload": {"generation": 3, "candidate": 0, "safe": True},
+        },
+    )
+    record["events"].append(
+        {
+            "unix_ns": 16,
+            "sequence": 3,
+            "type": "candidate_revalidation",
+            "payload": {"generation": 3, "candidate": 1, "safe": False},
+        }
+    )
+    assert candidate_visual_states(record, 14, 2) == ["hidden", "hidden"]
+    assert candidate_visual_states(record, 19, 2) == ["gray", "red"]
+    assert candidate_visual_states(record, 21, 2) == ["green", "red"]
+    assert candidate_visual_states(record, 2_000_000_000, 2) == ["blue", "red"]
+
+
+def test_explicit_world_start_precedes_first_snapshot():
+    record = _record()
+    record["events"].append(
+        {
+            "unix_ns": 500_000_000,
+            "sequence": 0,
+            "type": "world_start",
+            "payload": {"scenario_start_unix_ns": 500_000_000},
+        }
+    )
+    assert world_start_unix_ns(record) == 500_000_000
 
 
 def test_pipeline_script_exposes_safe_modes():

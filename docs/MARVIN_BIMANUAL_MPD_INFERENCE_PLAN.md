@@ -625,6 +625,27 @@ scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \
   --runtime-mode fixed-time
 ```
 
+动态 action 的正式默认上限为 `--max-replans 5 --max-handoffs 5`。前者是
+latest-only 规划尝试次数，后者是 combined 14D JTC 的原子提交次数；它们都是
+安全上限而不是要求必须发生五次切换。独立与协同任务都使用同一上限。协同任务
+只有在两臂速度和刚性闭链误差同时通过门限时才能直接 handoff，否则统一执行
+cancel → controlled brake/hold → replan，绝不让单臂单独续跑。
+
+最新世界硬复验通过后，ROS 不再仅按 MPD 原始 score 选 Top-K。候选使用与
+Franka Phase 5 相同的组合排序：前 `2 s` kinematic/smoothness 权重 `1.0`、
+剩余 `12 s` 权重 `3.0`、运动段 clearance 权重 `4.0`、终端保持 clearance
+权重 `0.5`、相对 active plan 的时间对齐偏差权重 `0.15`、归一化 MPD score
+权重 `0.10`、14D handoff 边界代价权重 `0.10`，已有 active plan 时另加
+`0.02` switch penalty。clearance 内部使用最差 `10%` 样本的 CVaR，
+mean/CVaR 权重为 `0.25/0.75`；位置、速度、加速度 handoff 跳变仍是硬门限。
+每个候选的原始分项、贡献值、总分和拒绝原因都会进入 replay/diagnostics。
+
+Isaac Lab MP4 的时间轴从 `/marvin/dynamic_world_start_unix_ns` 开始，因此包含
+world warmup、第一次 plan 的实际耗时、候选选中后等待统一执行时刻以及完整轨迹。
+轨迹颜色沿用 Franka：灰色为 obsolete，蓝色为 active，绿色为 latest/pending，
+红色为 rejected/collision；动态障碍和 planning/active 状态同时显示在 HUD。
+录像逐帧流式写盘，不把完整长视频帧缓存在内存中。
+
 默认输出写入
 `scripts/inference/logs/marvin-dynamic-demo/<timestamp>/`，其中包含 worker/ROS/
 Isaac 日志、action result、原始动态 replay、确定性 timeline、resident

@@ -17,6 +17,8 @@ EXECUTE=false
 DEVICE="cuda:0"
 WORLD_SCENARIO="warehouse_core_crossing"
 PLANNING_BUDGET_S=60
+MAX_REPLANS=5
+MAX_HANDOFFS=5
 RUN_TIMEOUT_S=420
 OUTPUT_DIR=""
 ROS_DOMAIN_ID_DEMO=""
@@ -35,6 +37,8 @@ usage() {
     "  --device DEVICE        MPD device (default: cuda:0)" \
     "  --world-scenario NAME  warehouse_core_crossing (default), crossing_three alias, or safe_three" \
     "  --planning-budget S    Planning deadline budget (default: 60)" \
+    "  --max-replans N        Maximum latest-only planning attempts (default: 5)" \
+    "  --max-handoffs N       Maximum atomic execution commits (default: 5)" \
     "  --timeout-sec S        Whole ROS action timeout (default: 420)" \
     "  --output-dir PATH      Artifact directory (default: timestamped)" \
     "  --ros-domain-id ID     Isolated ROS domain (default: auto)" \
@@ -54,6 +58,8 @@ while (($#)); do
     --device) DEVICE="$2"; shift 2 ;;
     --world-scenario) WORLD_SCENARIO="$2"; shift 2 ;;
     --planning-budget) PLANNING_BUDGET_S="$2"; shift 2 ;;
+    --max-replans) MAX_REPLANS="$2"; shift 2 ;;
+    --max-handoffs) MAX_HANDOFFS="$2"; shift 2 ;;
     --timeout-sec) RUN_TIMEOUT_S="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --ros-domain-id) ROS_DOMAIN_ID_DEMO="$2"; shift 2 ;;
@@ -104,6 +110,10 @@ esac
 
 if [[ ! "$RUN_TIMEOUT_S" =~ ^[0-9]+$ ]] || ((RUN_TIMEOUT_S < 1)); then
   printf 'Invalid --timeout-sec: %s\n' "$RUN_TIMEOUT_S" >&2
+  exit 2
+fi
+if [[ ! "$MAX_REPLANS" =~ ^[1-9][0-9]*$ ]] || [[ ! "$MAX_HANDOFFS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'max-replans and max-handoffs must be positive integers\n' >&2
   exit 2
 fi
 if [[ -z "$ROS_DOMAIN_ID_DEMO" ]]; then
@@ -224,6 +234,8 @@ setsid pixi run env -u CYCLONEDDS_URI \
   "record_root:=${RECORD_ROOT}" \
   "result_path:=${DEMO_RESULT}" \
   "planning_budget_s:=${PLANNING_BUDGET_S}" \
+  "max_replans:=${MAX_REPLANS}" \
+  "max_handoffs:=${MAX_HANDOFFS}" \
   "world_scenario:=${WORLD_SCENARIO}" \
   >"${OUTPUT_DIR}/ros-demo.log" 2>&1 &
 ROS_PID=$!

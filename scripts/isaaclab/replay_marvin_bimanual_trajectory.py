@@ -13,7 +13,12 @@ import traceback
 from isaaclab.app import AppLauncher
 
 from marvin_bimanual_asset import load_inference_artifact, validate_marvin_urdf
-from replay_marvin_bimanual_dynamic_log import predicted_world_objects, selected_plan
+from replay_marvin_bimanual_dynamic_log import (
+    candidate_visual_states,
+    predicted_world_objects,
+    selected_plan,
+    world_start_unix_ns,
+)
 
 
 def parse_args():
@@ -180,6 +185,23 @@ def _draw_path(draw, points, color):
     draw.draw_lines(starts, ends, [color] * len(starts), [4.0] * len(starts))
 
 
+_PLAN_COLORS = {
+    "gray": (0.45, 0.47, 0.50, 1.0),
+    "blue": (0.15, 0.55, 1.0, 1.0),
+    "green": (0.25, 0.85, 0.35, 1.0),
+    "red": (1.0, 0.08, 0.08, 1.0),
+}
+
+
+def _draw_candidate_paths(draw, paths, states):
+    for candidate_paths, state in zip(paths, states):
+        color = _PLAN_COLORS.get(state)
+        if color is None:
+            continue
+        for arm_path in candidate_paths:
+            _draw_path(draw, arm_path, color)
+
+
 def _draw_goal_frames(draw, poses, axis_length=0.10):
     colors = (
         (1.0, 0.1, 0.1, 1.0),
@@ -271,11 +293,31 @@ def _update_dynamic_markers(markers, unix_ns):
     return len(objects)
 
 
-def _dynamic_hud(frame, elapsed_s, object_count):
+def _dynamic_hud(frame, elapsed_s, object_count, phase, planning_time_s):
     output = frame.copy()
-    text = f"Marvin dynamic replay  t={elapsed_s:05.2f}s  moving objects={object_count}"
-    cv2.putText(output, text, (24, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (8, 8, 8), 4, cv2.LINE_AA)
-    cv2.putText(output, text, (24, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (245, 245, 245), 2, cv2.LINE_AA)
+    def draw_label(text, position, scale=0.60):
+        cv2.putText(output, text, position, cv2.FONT_HERSHEY_SIMPLEX, scale, (8, 8, 8), 4, cv2.LINE_AA)
+        cv2.putText(output, text, position, cv2.FONT_HERSHEY_SIMPLEX, scale, (245, 245, 245), 2, cv2.LINE_AA)
+
+    draw_label(
+        f"Marvin dynamic replay  t={elapsed_s:05.2f}s  {phase}  objects={object_count}",
+        (24, 32),
+        0.64,
+    )
+    draw_label(f"initial planning time: {planning_time_s:05.2f} s", (24, 58), 0.56)
+    legend = (
+        ("obsolete", "gray"),
+        ("active", "blue"),
+        ("latest", "green"),
+        ("rejected/collision", "red"),
+    )
+    x, y = 24, output.shape[0] - 24
+    for label, state in legend:
+        rgb = tuple(int(round(255 * value)) for value in _PLAN_COLORS[state][:3])
+        cv2.rectangle(output, (x, y - 13), (x + 16, y + 3), rgb, thickness=-1)
+        cv2.putText(output, label, (x + 22, y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (8, 8, 8), 3, cv2.LINE_AA)
+        cv2.putText(output, label, (x + 22, y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (245, 245, 245), 1, cv2.LINE_AA)
+        x += cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0][0] + 52
     return output
 
 
@@ -393,106 +435,174 @@ def run_replay():
     sim.step(render=args_cli.enable_cameras)
     scene.update(sim_dt)
 
-    tcp_paths = [[], []]
-    for waypoint in trajectory:
-        state = robot.data.default_joint_pos.clone()
-        state[:, joint_ids] = waypoint[None]
-        robot.write_joint_state_to_sim(state, torch.zeros_like(state))
-        sim.forward()
-        scene.update(0.0)
-        positions = _tcp_positions(robot, tcp_ids, scene.env_origins[0])
-        for arm in range(2):
-            tcp_paths[arm].append(positions[arm].copy())
-    tcp_paths = [np.asarray(points) for points in tcp_paths]
+    all_tcp_paths = []
+    for candidate_cpu in artifact.top_k_positions:
+        candidate_paths = [[], []]
+        for waypoint_cpu in candidate_cpu:
+            state = robot.data.default_joint_pos.clone()
+            state[:, joint_ids] = torch.as_tensor(
+                waypoint_cpu, dtype=torch.float32, device=sim.device
+            )[None]
+            robot.write_joint_state_to_sim(state, torch.zeros_like(state))
+            sim.forward()
+            scene.update(0.0)
+            positions = _tcp_positions(robot, tcp_ids, scene.env_origins[0])
+            for arm in range(2):
+                candidate_paths[arm].append(positions[arm].copy())
+        all_tcp_paths.append([np.asarray(points) for points in candidate_paths])
+    tcp_paths = all_tcp_paths[index]
 
     draw = omni_debug_draw.acquire_debug_draw_interface()
-    draw.clear_lines()
-    _draw_path(draw, tcp_paths[0], (0.15, 0.55, 1.0, 1.0))
-    _draw_path(draw, tcp_paths[1], (0.95, 0.35, 0.15, 1.0))
-
-    if payload_poses_cpu is not None:
-        _draw_path(draw, payload_poses_cpu[:, :3], (0.25, 0.85, 0.35, 1.0))
-        _draw_goal_frames(draw, [_pose_xyzw_matrix(payload_poses_cpu[-1])], axis_length=0.08)
-
-    if artifact.ee_goal_pose is not None:
-        _draw_goal_frames(draw, artifact.ee_goal_pose)
-
     dynamic_markers = _create_dynamic_markers() if dynamic_record is not None else None
     trajectory_start_ns = (
         int(dynamic_plan["trajectory_start_unix_ns"])
         if dynamic_plan is not None
         else 0
     )
-
-    initial[:, joint_ids] = trajectory[0]
-    robot.write_joint_state_to_sim(initial, torch.zeros_like(initial))
-    robot.set_joint_position_target(initial)
-    if payload_view is not None:
-        payload_view.set_world_poses(
-            positions=payload_poses[0:1, :3],
-            orientations=payload_orientations_wxyz[0:1],
+    if dynamic_record is not None:
+        replay_start_ns = world_start_unix_ns(dynamic_record)
+        selected_ns = int(dynamic_plan["selected_unix_ns"])
+        generation = dynamic_plan.get("generation")
+        plan_starts = [
+            int(event["unix_ns"])
+            for event in dynamic_record["events"]
+            if event.get("type") == "plan_start"
+            and (generation is None or event["payload"].get("generation") == generation)
+        ]
+        planning_start_ns = min(plan_starts) if plan_starts else replay_start_ns
+        planning_time_s = max(0.0, (selected_ns - planning_start_ns) * 1e-9)
+        replay_end_ns = trajectory_start_ns + int(
+            float(artifact.time_from_start[-1]) * 1e9
         )
-    initial_dynamic_count = (
-        _update_dynamic_markers(dynamic_markers, trajectory_start_ns)
-        if dynamic_markers is not None
-        else 0
-    )
-    frames = [_capture(camera, sim_dt)] if camera is not None else []
-    if frames and dynamic_markers is not None:
-        frames[-1] = _dynamic_hud(frames[-1], 0.0, initial_dynamic_count)
-    for waypoint_index, waypoint in enumerate(trajectory):
-        target = robot.data.joint_pos.clone()
-        target[:, joint_ids] = waypoint[None]
-        robot.set_joint_position_target(target)
+        frame_count = max(
+            2,
+            int(np.ceil((replay_end_ns - replay_start_ns) * 1e-9 * args_cli.video_fps)) + 1,
+        )
+        frame_unix_ns = np.linspace(
+            replay_start_ns, replay_end_ns, frame_count, dtype=np.int64
+        )
+    else:
+        replay_start_ns = 0
+        selected_ns = 0
+        planning_start_ns = 0
+        planning_time_s = 0.0
+        frame_unix_ns = np.asarray(
+            np.round(np.asarray(artifact.time_from_start) * 1e9), dtype=np.int64
+        )
+
+    initial_dynamic_count = 0
+    final_frame = None
+    captured_frame_count = 0
+    video_writer = None
+    if args_cli.output_video is not None:
+        args_cli.output_video.parent.mkdir(parents=True, exist_ok=True)
+        video_writer = cv2.VideoWriter(
+            str(args_cli.output_video),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            args_cli.video_fps,
+            (args_cli.width, args_cli.height),
+        )
+        if not video_writer.isOpened():
+            raise RuntimeError(f"Could not create {args_cli.output_video}")
+    collision_drawn = False
+    source_times = np.asarray(artifact.time_from_start, dtype=np.float64)
+    for frame_index, unix_ns in enumerate(frame_unix_ns):
+        local_time_s = max(0.0, (int(unix_ns) - trajectory_start_ns) * 1e-9)
+        local_time_s = min(local_time_s, float(source_times[-1]))
+        q = np.asarray(
+            [
+                np.interp(local_time_s, source_times, trajectory_cpu[:, joint])
+                for joint in range(trajectory_cpu.shape[1])
+            ],
+            dtype=np.float32,
+        )
+        state = robot.data.default_joint_pos.clone()
+        state[:, joint_ids] = torch.as_tensor(q, device=sim.device)[None]
+        robot.write_joint_state_to_sim(state, torch.zeros_like(state))
+        robot.set_joint_position_target(state)
         if payload_view is not None:
+            payload_index = int(np.searchsorted(source_times, local_time_s, side="right") - 1)
+            payload_index = int(np.clip(payload_index, 0, len(source_times) - 1))
             payload_view.set_world_poses(
-                positions=payload_poses[waypoint_index : waypoint_index + 1, :3],
-                orientations=payload_orientations_wxyz[waypoint_index : waypoint_index + 1],
+                positions=payload_poses[payload_index : payload_index + 1, :3],
+                orientations=payload_orientations_wxyz[payload_index : payload_index + 1],
             )
         scene.write_data_to_sim()
-        for _ in range(int(step_schedule[waypoint_index])):
-            sim.step(render=args_cli.enable_cameras)
-            scene.update(sim_dt)
-        if waypoint_index == collision_waypoint:
+
+        states = (
+            candidate_visual_states(dynamic_record, int(unix_ns), len(all_tcp_paths))
+            if dynamic_record is not None
+            else ["blue" if item == index else "gray" for item in range(len(all_tcp_paths))]
+        )
+        draw.clear_lines()
+        _draw_candidate_paths(draw, all_tcp_paths, states)
+        if payload_poses_cpu is not None:
+            payload_color = _PLAN_COLORS.get(states[index], _PLAN_COLORS["gray"])
+            _draw_path(draw, payload_poses_cpu[:, :3], payload_color)
+            _draw_goal_frames(
+                draw, [_pose_xyzw_matrix(payload_poses_cpu[-1])], axis_length=0.08
+            )
+        if artifact.ee_goal_pose is not None:
+            _draw_goal_frames(draw, artifact.ee_goal_pose)
+        if (
+            collision_waypoint >= 0
+            and local_time_s >= float(source_times[collision_waypoint])
+        ):
+            collision_drawn = True
             _draw_collision_crosses(
                 draw,
-                np.stack((tcp_paths[0][waypoint_index], tcp_paths[1][waypoint_index])),
+                np.stack((tcp_paths[0][collision_waypoint], tcp_paths[1][collision_waypoint])),
             )
+        dynamic_count = (
+            _update_dynamic_markers(dynamic_markers, int(unix_ns))
+            if dynamic_markers is not None
+            else 0
+        )
+        if frame_index == 0:
+            initial_dynamic_count = dynamic_count
+        sim.step(render=args_cli.enable_cameras)
+        scene.update(sim_dt)
         if camera is not None:
-            dynamic_count = (
-                _update_dynamic_markers(
-                    dynamic_markers,
-                    trajectory_start_ns
-                    + int(float(artifact.time_from_start[waypoint_index]) * 1e9),
-                )
-                if dynamic_markers is not None
-                else 0
-            )
             frame = _capture(camera, sim_dt)
-            if dynamic_markers is not None:
+            if dynamic_record is not None:
+                if int(unix_ns) < planning_start_ns:
+                    phase = "WORLD WARMUP"
+                elif int(unix_ns) < selected_ns:
+                    phase = "PLANNING"
+                elif int(unix_ns) < trajectory_start_ns:
+                    phase = "LATEST / WAITING"
+                else:
+                    phase = "ACTIVE REPLAY"
                 frame = _dynamic_hud(
                     frame,
-                    float(artifact.time_from_start[waypoint_index]),
+                    (int(unix_ns) - replay_start_ns) * 1e-9,
                     dynamic_count,
+                    phase,
+                    planning_time_s,
                 )
-            if waypoint_index == collision_waypoint:
+            if collision_drawn:
                 cv2.putText(
                     frame,
-                    f"FIRST COLLISION waypoint {waypoint_index}",
-                    (24, 40),
+                    f"FIRST COLLISION waypoint {collision_waypoint}",
+                    (24, 66),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
                     (255, 30, 30),
                     2,
                     cv2.LINE_AA,
                 )
-            frames.append(frame)
+            final_frame = frame
+            captured_frame_count += 1
+            if video_writer is not None:
+                video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
-    if args_cli.output_video is not None:
-        _write_video(args_cli.output_video, frames)
+    if video_writer is not None:
+        video_writer.release()
     if args_cli.screenshot is not None:
         args_cli.screenshot.parent.mkdir(parents=True, exist_ok=True)
-        if not cv2.imwrite(str(args_cli.screenshot), cv2.cvtColor(frames[-1], cv2.COLOR_RGB2BGR)):
+        if final_frame is None or not cv2.imwrite(
+            str(args_cli.screenshot), cv2.cvtColor(final_frame, cv2.COLOR_RGB2BGR)
+        ):
             raise RuntimeError(f"Could not create {args_cli.screenshot}")
     summary = {
         "schema": "marvin_bimanual_isaaclab_replay/v1",
@@ -521,6 +631,19 @@ def run_replay():
             args_cli.dynamic_record.as_posix() if args_cli.dynamic_record else None
         ),
         "dynamic_object_count": initial_dynamic_count,
+        "replay_start_unix_ns": int(replay_start_ns),
+        "trajectory_start_unix_ns": int(trajectory_start_ns),
+        "initial_planning_time_s": float(planning_time_s),
+        "video_duration_s": float(
+            (int(frame_unix_ns[-1]) - int(frame_unix_ns[0])) * 1e-9
+        ),
+        "video_frame_count": captured_frame_count,
+        "trajectory_state_colors": {
+            "obsolete": _PLAN_COLORS["gray"],
+            "active": _PLAN_COLORS["blue"],
+            "latest": _PLAN_COLORS["green"],
+            "rejected_or_collision": _PLAN_COLORS["red"],
+        },
         "payload_size_xyz": (artifact.payload_size_xyz.tolist() if artifact.payload_size_xyz is not None else None),
         "object_path_points": (int(payload_poses_cpu.shape[0]) if payload_poses_cpu is not None else 0),
         "first_collision_waypoint": collision_waypoint,
