@@ -582,6 +582,27 @@ fake hardware、发布三个恒速动态物体、发送 `/plan_dynamic` action�
 latest-only replay，并用实际被最新世界 Top-K 复验选中的候选生成 Isaac Lab
 MP4。默认是安全的 `plan-only`，不会向 JTC 下发运动。
 
+默认 `warehouse_core_crossing` 不是早期的远场占位物体。它参考 Franka
+ToDrawer 的“路径交点 + 单位方向 + crossing time + 恒速”模型，并针对 Marvin
+Warehouse 重新标定：两个柜体正面位于 `y=+/-0.62 m`，三条物体轨迹保持在
+柜体之间的走廊内，沿 `x` 方向依次穿过左臂、协同搬运中心和右臂的实测工作带，
+crossing anchor 分别为 `(0.68, 0.40, 0.60)`、`(0.55, 0.175, 0.60)`、
+`(0.43, -0.365, 0.575) m`。这些点位于 `z=0.415--0.80 m` 的第二层
+开放工作带，并由已有 independent/cooperative 成功轨迹的 1035 球扫掠体复核；
+计入 `0.045 m` 有效膨胀后，参考轨迹的最小净空仍高于动态 guide 的
+`0.05 m` cutoff；物体从双臂扫掠体上方近距离横穿，不会像直接压住 TCP
+中心那样一次封死全部候选。速度为
+`0.22/0.23/0.20 m/s`，比 Franka
+参考场景的 `0.18 m/s` 略快。中心球从底座投影上方通过，但计入物体半径、
+`0.015 m` 基础 inflation 和 `3 sigma` 位置协方差后，其底部仍高于 Marvin
+底座 `z=0.13 m` 顶面；另外两条轨迹也通过横向间距避开底座。
+这也避免了把恒速物体建模成穿透柜体背板。
+
+crossing time 相对“计划轨迹起点”定义为 `2.25/4.75/6.25 s`。组合 launch
+根据 `planning_budget_s + 3.25 s` 的 client 启动及实测 goal-send 延迟自动换算到 world clock，
+所以修改 `--planning-budget` 时不需要人工重调障碍物时刻。旧名
+`crossing_three` 保留为同一场景的兼容别名；`safe_three` 仅用于远场管线诊断。
+
 ```bash
 cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 
@@ -594,6 +615,10 @@ scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \
 
 # fake hardware 原子执行：启用 combined 14-DoF JTC
 scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh --execute
+
+# 远场障碍物（只诊断闭环，不检验核心工作区动态避障）
+scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \
+  --world-scenario safe_three
 
 # 固定时间动态基线
 scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \

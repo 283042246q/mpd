@@ -61,3 +61,5 @@ def test_pipeline_script_exposes_safe_modes():
     assert "--execute" in source
     assert "env -u CYCLONEDDS_URI" in source
     assert "replay_marvin_bimanual_trajectory.py" in source
+    assert 'WORLD_SCENARIO="warehouse_core_crossing"' in source
+    assert "crossing_three|warehouse_core_crossing" in source

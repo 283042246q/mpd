@@ -15,7 +15,7 @@ TASK_MODE="independent"
 RUNTIME_MODE="space-time"
 EXECUTE=false
 DEVICE="cuda:0"
-WORLD_SCENARIO="safe_three"
+WORLD_SCENARIO="warehouse_core_crossing"
 PLANNING_BUDGET_S=60
 RUN_TIMEOUT_S=420
 OUTPUT_DIR=""
@@ -33,7 +33,7 @@ usage() {
     "  --runtime-mode MODE    space-time or fixed-time (default: space-time)" \
     "  --execute              Execute atomically through combined 14-DoF JTC" \
     "  --device DEVICE        MPD device (default: cuda:0)" \
-    "  --world-scenario NAME  safe_three or crossing_three" \
+    "  --world-scenario NAME  warehouse_core_crossing (default), crossing_three alias, or safe_three" \
     "  --planning-budget S    Planning deadline budget (default: 60)" \
     "  --timeout-sec S        Whole ROS action timeout (default: 420)" \
     "  --output-dir PATH      Artifact directory (default: timestamped)" \
@@ -98,7 +98,7 @@ case "$RUNTIME_MODE" in
 esac
 
 case "$WORLD_SCENARIO" in
-  safe_three|crossing_three) ;;
+  safe_three|crossing_three|warehouse_core_crossing) ;;
   *) printf 'Unsupported world scenario: %s\n' "$WORLD_SCENARIO" >&2; exit 2 ;;
 esac
 
