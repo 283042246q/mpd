@@ -573,6 +573,41 @@ C(P,c) = C_static(P)
 - 每个 Top-K candidate 都保存自己的 timestamps、duration 和 timing control points。
 - 执行前使用最新 world 和候选自己的时间表再次复验。
 
+### 本地 fake-hardware 动态演示正式入口（2026-09）
+
+`scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh` 是与 Franka
+动态演示对齐的一体化入口。它负责启动 resident CUDA worker、隔离本地
+ROS domain、临时移除可能绑定旧网卡的 `CYCLONEDDS_URI`、启动 Marvin
+fake hardware、发布三个恒速动态物体、发送 `/plan_dynamic` action、保存
+latest-only replay，并用实际被最新世界 Top-K 复验选中的候选生成 Isaac Lab
+MP4。默认是安全的 `plan-only`，不会向 JTC 下发运动。
+
+```bash
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+
+# 正式默认入口：dual-independent + space-time + plan-only + 自动录屏
+scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh
+
+# cooperative-rigid（使用 cooperative 配置和已验证的 cooperative 初/终态）
+scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \
+  --task-mode cooperative
+
+# fake hardware 原子执行：启用 combined 14-DoF JTC
+scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh --execute
+
+# 固定时间动态基线
+scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh \
+  --runtime-mode fixed-time
+```
+
+默认输出写入
+`scripts/inference/logs/marvin-dynamic-demo/<timestamp>/`，其中包含 worker/ROS/
+Isaac 日志、action result、原始动态 replay、确定性 timeline、resident
+`result.json + trajectory.npz + scene.json`、最终截图和 MP4。开发时可用
+`--skip-build` 复用已安装 ROS overlay，或用 `--skip-render` 只检查
+fake-hardware 到 replay artifact 的闭环。演示物体采用精确恒速模型，因此该
+入口显式把 unknown-acceleration process noise 设为零；这不是生产传感器配置。
+
 ## 8. 文件级实施清单
 
 ### MPD 仓库

@@ -13,6 +13,7 @@ import traceback
 from isaaclab.app import AppLauncher
 
 from marvin_bimanual_asset import load_inference_artifact, validate_marvin_urdf
+from replay_marvin_bimanual_dynamic_log import predicted_world_objects, selected_plan
 
 
 def parse_args():
@@ -20,6 +21,12 @@ def parse_args():
     parser.add_argument("--artifact", required=True, type=Path)
     parser.add_argument("--trajectory-index", type=int, default=0)
     parser.add_argument("--evaluation", type=Path, default=None)
+    parser.add_argument(
+        "--dynamic-record",
+        type=Path,
+        default=None,
+        help="Marvin dynamic replay JSON; renders its moving objects over the selected trajectory.",
+    )
     parser.add_argument("--output-video", type=Path, default=None)
     parser.add_argument("--screenshot", type=Path, default=None)
     parser.add_argument("--output-json", type=Path, default=None)
@@ -64,6 +71,12 @@ def parse_args():
 
 args_cli = parse_args()
 artifact = load_inference_artifact(args_cli.artifact)
+dynamic_record = (
+    json.loads(args_cli.dynamic_record.read_text(encoding="utf-8"))
+    if args_cli.dynamic_record is not None
+    else None
+)
+dynamic_plan = selected_plan(dynamic_record) if dynamic_record is not None else None
 urdf_gate = validate_marvin_urdf()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -75,6 +88,7 @@ import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
+from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg
 from isaaclab.sensors.camera import Camera
@@ -196,6 +210,73 @@ def _draw_collision_crosses(draw, points, radius=0.045):
         [(1.0, 0.0, 0.0, 1.0)] * len(starts),
         [8.0] * len(starts),
     )
+
+
+_DYNAMIC_MARKER_INDEX = {"sphere": 0, "box": 1, "capsule": 2}
+
+
+def _create_dynamic_markers():
+    material = sim_utils.PreviewSurfaceCfg(
+        diffuse_color=(0.95, 0.28, 0.04),
+        emissive_color=(0.12, 0.02, 0.0),
+        roughness=0.35,
+        opacity=0.92,
+    )
+    return VisualizationMarkers(
+        VisualizationMarkersCfg(
+            prim_path="/World/Visuals/MarvinDynamicReplay",
+            markers={
+                "sphere": sim_utils.SphereCfg(radius=0.5, visual_material=material),
+                "box": sim_utils.CuboidCfg(size=(1.0, 1.0, 1.0), visual_material=material),
+                "capsule": sim_utils.CapsuleCfg(
+                    radius=0.5, height=1.0, axis="Z", visual_material=material
+                ),
+            },
+        )
+    )
+
+
+def _marker_scale(local_sdf):
+    shape = local_sdf["type"]
+    if shape == "sphere":
+        diameter = 2.0 * float(local_sdf["radius"])
+        return [diameter, diameter, diameter]
+    if shape == "box":
+        return [float(value) for value in local_sdf["size_xyz"]]
+    diameter = 2.0 * float(local_sdf["radius"])
+    return [diameter, diameter, float(local_sdf["length"])]
+
+
+def _update_dynamic_markers(markers, unix_ns):
+    objects = predicted_world_objects(dynamic_record, int(unix_ns))
+    if not objects:
+        markers.set_visibility(False)
+        return 0
+    markers.set_visibility(True)
+    markers.visualize(
+        translations=np.asarray(
+            [item["pose"]["position"] for item in objects], dtype=np.float32
+        ),
+        orientations=np.asarray(
+            [item["pose"]["orientation_xyzw"] for item in objects], dtype=np.float32
+        ),
+        scales=np.asarray(
+            [_marker_scale(item["local_sdf"]) for item in objects], dtype=np.float32
+        ),
+        marker_indices=np.asarray(
+            [_DYNAMIC_MARKER_INDEX[item["local_sdf"]["type"]] for item in objects],
+            dtype=np.int32,
+        ),
+    )
+    return len(objects)
+
+
+def _dynamic_hud(frame, elapsed_s, object_count):
+    output = frame.copy()
+    text = f"Marvin dynamic replay  t={elapsed_s:05.2f}s  moving objects={object_count}"
+    cv2.putText(output, text, (24, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (8, 8, 8), 4, cv2.LINE_AA)
+    cv2.putText(output, text, (24, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.66, (245, 245, 245), 2, cv2.LINE_AA)
+    return output
 
 
 def _pose_xyzw_matrix(pose):
@@ -336,6 +417,13 @@ def run_replay():
     if artifact.ee_goal_pose is not None:
         _draw_goal_frames(draw, artifact.ee_goal_pose)
 
+    dynamic_markers = _create_dynamic_markers() if dynamic_record is not None else None
+    trajectory_start_ns = (
+        int(dynamic_plan["trajectory_start_unix_ns"])
+        if dynamic_plan is not None
+        else 0
+    )
+
     initial[:, joint_ids] = trajectory[0]
     robot.write_joint_state_to_sim(initial, torch.zeros_like(initial))
     robot.set_joint_position_target(initial)
@@ -344,7 +432,14 @@ def run_replay():
             positions=payload_poses[0:1, :3],
             orientations=payload_orientations_wxyz[0:1],
         )
+    initial_dynamic_count = (
+        _update_dynamic_markers(dynamic_markers, trajectory_start_ns)
+        if dynamic_markers is not None
+        else 0
+    )
     frames = [_capture(camera, sim_dt)] if camera is not None else []
+    if frames and dynamic_markers is not None:
+        frames[-1] = _dynamic_hud(frames[-1], 0.0, initial_dynamic_count)
     for waypoint_index, waypoint in enumerate(trajectory):
         target = robot.data.joint_pos.clone()
         target[:, joint_ids] = waypoint[None]
@@ -364,7 +459,22 @@ def run_replay():
                 np.stack((tcp_paths[0][waypoint_index], tcp_paths[1][waypoint_index])),
             )
         if camera is not None:
+            dynamic_count = (
+                _update_dynamic_markers(
+                    dynamic_markers,
+                    trajectory_start_ns
+                    + int(float(artifact.time_from_start[waypoint_index]) * 1e9),
+                )
+                if dynamic_markers is not None
+                else 0
+            )
             frame = _capture(camera, sim_dt)
+            if dynamic_markers is not None:
+                frame = _dynamic_hud(
+                    frame,
+                    float(artifact.time_from_start[waypoint_index]),
+                    dynamic_count,
+                )
             if waypoint_index == collision_waypoint:
                 cv2.putText(
                     frame,
@@ -407,6 +517,10 @@ def run_replay():
         "left_tcp_path_points": int(tcp_paths[0].shape[0]),
         "right_tcp_path_points": int(tcp_paths[1].shape[0]),
         "cooperative_payload_rendered": payload_view is not None,
+        "dynamic_record": (
+            args_cli.dynamic_record.as_posix() if args_cli.dynamic_record else None
+        ),
+        "dynamic_object_count": initial_dynamic_count,
         "payload_size_xyz": (artifact.payload_size_xyz.tolist() if artifact.payload_size_xyz is not None else None),
         "object_path_points": (int(payload_poses_cpu.shape[0]) if payload_poses_cpu is not None else 0),
         "first_collision_waypoint": collision_waypoint,

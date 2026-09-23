@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -31,6 +32,71 @@ def build_timeline(record: dict) -> dict:
         "world_versions": versions,
         "deterministic_order": "unix_ns_then_sequence",
     }
+
+
+def selected_plan(record: dict) -> dict:
+    """Return the final selected artifact recorded by the latest-only adapter."""
+    timeline = build_timeline(record)
+    plans = [
+        event["payload"]
+        for event in timeline["events"]
+        if event.get("type") == "plan_selected"
+    ]
+    if not plans:
+        raise ValueError("dynamic replay contains no plan_selected event")
+    plan = dict(plans[-1])
+    required = {
+        "result_path",
+        "trajectory_path",
+        "top_k_index",
+        "trajectory_start_unix_ns",
+    }
+    missing = sorted(required - plan.keys())
+    if missing:
+        raise ValueError(f"plan_selected is missing {missing}")
+    return plan
+
+
+def predicted_world_objects(record: dict, unix_ns: int) -> list[dict]:
+    """Predict the latest recorded constant-velocity world at ``unix_ns``."""
+    if isinstance(unix_ns, bool) or not isinstance(unix_ns, int) or unix_ns < 0:
+        raise ValueError("unix_ns must be a non-negative integer")
+    timeline = build_timeline(record)
+    worlds = [
+        event["payload"]
+        for event in timeline["events"]
+        if event.get("type") == "world"
+    ]
+    if not worlds:
+        return []
+    eligible = [
+        world for world in worlds if int(world.get("stamp_unix_ns", 0)) <= unix_ns
+    ]
+    world = eligible[-1] if eligible else worlds[0]
+    stamp_ns = int(world["stamp_unix_ns"])
+    elapsed = max(0.0, (unix_ns - stamp_ns) * 1e-9)
+    predicted = []
+    for item in world.get("objects", []):
+        pose = item.get("pose") or {}
+        position = [float(value) for value in pose.get("position", ())]
+        velocity = [float(value) for value in item.get("linear_velocity", ())]
+        if len(position) != 3 or len(velocity) != 3 or not all(
+            math.isfinite(value) for value in position + velocity
+        ):
+            raise ValueError("dynamic world object has invalid position or velocity")
+        predicted.append(
+            {
+                **item,
+                "pose": {
+                    **pose,
+                    "position": [
+                        value + elapsed * speed
+                        for value, speed in zip(position, velocity)
+                    ],
+                },
+            }
+        )
+    return predicted
 
 
 def main(argv=None):

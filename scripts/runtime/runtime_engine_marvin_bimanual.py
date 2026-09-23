@@ -132,6 +132,48 @@ class MarvinBimanualPlanningSession:
         if not isinstance(self.planning_task.robot, RobotMarvinBimanual):
             raise InferenceConfigurationError("Loader did not construct RobotMarvinBimanual")
         self.robot = self.planning_task.robot
+        if raw_config.get("task_mode") == "cooperative_rigid":
+            # The resident planner builds its cost objects before the first
+            # request. Cooperative closure/payload costs therefore need the
+            # fixed grasp transforms during session construction, unlike the
+            # one-shot path which can install them from its request generator.
+            import yaml
+
+            from scripts.generate_data.generate_marvin_warehouse_cooperative import (
+                MarvinWarehouseCooperativeGenerator,
+                validate_config as validate_cooperative_config,
+            )
+
+            generation_path = Path(raw_config["cooperative_generation_config"])
+            if not generation_path.is_absolute():
+                generation_path = (self.config_path.parent / generation_path).resolve()
+            cooperative_config = validate_cooperative_config(
+                yaml.safe_load(generation_path.read_text(encoding="utf-8"))
+            )
+            for section, values in raw_config.get(
+                "cooperative_generator_overrides", {}
+            ).items():
+                if not isinstance(values, dict) or section not in cooperative_config:
+                    raise InferenceConfigurationError(
+                        f"invalid cooperative_generator_overrides section {section!r}"
+                    )
+                cooperative_config[section].update(values)
+            validate_cooperative_config(cooperative_config)
+            bootstrap_generator = MarvinWarehouseCooperativeGenerator(
+                cooperative_config,
+                0,
+                progress_label="cooperative-resident-bootstrap",
+            )
+            self.planning_task.object_to_left_grasp = torch.as_tensor(
+                bootstrap_generator.object_to_left, **self.tensor_args
+            )
+            self.planning_task.object_to_right_grasp = torch.as_tensor(
+                bootstrap_generator.object_to_right, **self.tensor_args
+            )
+            self.planning_task.set_object_goal(
+                torch.eye(4, **self.tensor_args)[:3, :]
+            )
+            bootstrap_generator.close()
         scene = export_isaaclab_scene_payload(self.planning_task.env, include_boxes=True)
         scene["frame_id"] = "world"
         self.scene = scene
@@ -231,6 +273,7 @@ class MarvinBimanualPlanningSession:
             from mpd.bimanual.cooperative_prior import CooperativePriorAdapter
             from scripts.generate_data.generate_marvin_warehouse_cooperative import (
                 MarvinWarehouseCooperativeGenerator,
+                object_transform,
                 validate_config as validate_cooperative_config,
             )
 
@@ -260,6 +303,16 @@ class MarvinBimanualPlanningSession:
                 self.planning_task.set_object_goal(
                     torch.as_tensor(
                         _pose_xyzw_to_matrix(request.object_goal_pose),
+                        **self.tensor_args,
+                    )
+                )
+            else:
+                self.planning_task.set_object_goal(
+                    torch.as_tensor(
+                        object_transform(
+                            np.asarray(request.q_goal, dtype=np.float64),
+                            cooperative_generator.base_rotation,
+                        )[:3, :],
                         **self.tensor_args,
                     )
                 )
@@ -465,6 +518,23 @@ class MarvinBimanualPlanningSession:
             "joint_names": np.asarray(JOINT_NAMES, dtype=np.str_),
             "ee_goal_pose": ee_goal.detach().cpu().numpy().astype(np.float64),
             "active_ee_mask": active_mask.detach().cpu().numpy().astype(np.float64),
+            "mpd_tcp_pose_start": np.stack(
+                (
+                    self.robot.fk_left(q_start).detach().cpu().numpy(),
+                    self.robot.fk_right(q_start).detach().cpu().numpy(),
+                )
+            ).astype(np.float64),
+            "mpd_top_k_tcp_pose_final": torch.stack(
+                (
+                    self.robot.fk_left(top_positions[:, -1]),
+                    self.robot.fk_right(top_positions[:, -1]),
+                ),
+                dim=1,
+            )
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64),
         }
         if cooperative_adapter is not None:
             from scripts.generate_data.generate_marvin_warehouse_cooperative import (

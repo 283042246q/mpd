@@ -153,6 +153,9 @@ class ResidentPlannerService:
         started = time.perf_counter()
         try:
             artifacts = self._engine.plan(raw_request)
+            scene_payload = getattr(self._engine, "scene_payload", None)
+            if isinstance(scene_payload, dict):
+                _atomic_write_json(output_dir / "scene.json", scene_payload)
             _atomic_write_npz(
                 trajectory_path,
                 compressed=self.trajectory_compression,

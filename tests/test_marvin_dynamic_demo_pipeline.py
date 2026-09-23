@@ -1,0 +1,63 @@
+import json
+
+import pytest
+
+from scripts.isaaclab.replay_marvin_bimanual_dynamic_log import (
+    predicted_world_objects,
+    selected_plan,
+)
+
+
+def _record():
+    return {
+        "schema": "marvin_bimanual_dynamic_replay/v1",
+        "request_id": "demo",
+        "events": [
+            {
+                "unix_ns": 10,
+                "sequence": 1,
+                "type": "world",
+                "payload": {
+                    "world_version": 1,
+                    "stamp_unix_ns": 1_000_000_000,
+                    "objects": [
+                        {
+                            "id": "box",
+                            "local_sdf": {"type": "box", "size_xyz": [1, 2, 3]},
+                            "pose": {
+                                "position": [1.0, 2.0, 3.0],
+                                "orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+                            },
+                            "linear_velocity": [0.5, 0.0, -0.25],
+                        }
+                    ],
+                },
+            },
+            {
+                "unix_ns": 20,
+                "sequence": 2,
+                "type": "plan_selected",
+                "payload": {
+                    "result_path": "/tmp/request/result.json",
+                    "trajectory_path": "/tmp/request/trajectory.npz",
+                    "top_k_index": 0,
+                    "trajectory_start_unix_ns": 2_000_000_000,
+                },
+            },
+        ],
+    }
+
+
+def test_dynamic_record_resolves_plan_and_predicts_objects():
+    record = _record()
+    assert selected_plan(record)["top_k_index"] == 0
+    objects = predicted_world_objects(record, 3_000_000_000)
+    assert objects[0]["pose"]["position"] == pytest.approx([2.0, 2.0, 2.5])
+
+
+def test_pipeline_script_exposes_safe_modes():
+    source = open("scripts/isaaclab/run_marvin_bimanual_dynamic_demo_pipeline.sh").read()
+    assert "--task-mode" in source
+    assert "--execute" in source
+    assert "env -u CYCLONEDDS_URI" in source
+    assert "replay_marvin_bimanual_trajectory.py" in source
