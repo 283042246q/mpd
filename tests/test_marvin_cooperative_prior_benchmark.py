@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+import math
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,35 @@ def test_scenario_catalog_covers_production_matrix_and_three_difficulties():
         difficulty: sum(spec["difficulty"] == difficulty for spec in scenarios.values())
         for difficulty in benchmark.DIFFICULTIES
     } == {"easy": 2, "medium": 4, "hard": 2}
+
+
+def test_cooperative_regions_expand_original_cells_within_object_bounds():
+    regions = yaml.safe_load(REGIONS.read_text(encoding="utf-8"))["object_regions"]
+    generation = yaml.safe_load(
+        (ROOT / "data_generation_cfgs/EnvWarehouse-RobotMarvinBimanual-cooperative.yaml").read_text(encoding="utf-8")
+    )
+    bounds = generation["object_planning"]["bounds"]
+    original = {
+        "shared_near": {"x": [0.42, 0.50], "y": [-0.08, 0.08], "z": [0.23, 0.29], "yaw_deg": [-12, 12]},
+        "shared_middle": {"x": [0.51, 0.59], "y": [-0.10, 0.10], "z": [0.23, 0.30], "yaw_deg": [-15, 15]},
+        "shared_far": {"x": [0.60, 0.68], "y": [-0.08, 0.08], "z": [0.23, 0.29], "yaw_deg": [-12, 12]},
+        "shared_left_offset": {"x": [0.48, 0.60], "y": [0.06, 0.13], "z": [0.24, 0.30], "yaw_deg": [-10, 10]},
+        "shared_right_offset": {"x": [0.48, 0.60], "y": [-0.13, -0.06], "z": [0.24, 0.30], "yaw_deg": [-10, 10]},
+    }
+    for name, previous in original.items():
+        region = regions[name]
+        for axis, (old_low, old_high) in previous.items():
+            low, high = region[axis]
+            assert low <= old_low < old_high <= high
+            assert low < old_low or old_high < high
+        for axis, (global_low, global_high) in zip("xyz", bounds[:3]):
+            assert global_low <= region[axis][0] < region[axis][1] <= global_high
+        assert bounds[3][0] <= math.radians(min(region["yaw_deg"]))
+        assert math.radians(max(region["yaw_deg"])) <= bounds[3][1]
+    assert regions["shared_left_offset"]["y"] == [
+        -regions["shared_right_offset"]["y"][1],
+        -regions["shared_right_offset"]["y"][0],
+    ]
 
 
 def test_four_cases_are_exact_prior_projection_cartesian_product():

@@ -2,21 +2,22 @@ schema: marvin_bimanual_cooperative_regions/v1
 planning_frame: world
 grasp_profile: default_box
 
-# The 30 x 24 x 20 cm box is side-grasped at y=+/-0.12 m, so cooperative
-# placements stay in the shared central table workspace.  These cells follow
-# the v3 warehouse matrix style (atomic cells plus an explicit directed pair
-# matrix) but deliberately exclude the one-arm cabinet/cross-over cells.
+# The 30 x 24 x 20 cm box is side-grasped at y=+/-0.12 m. Compared with the
+# original narrow central cells, these endpoints extend toward the independent
+# table x/y support, with a modestly wider z/yaw range inside the cooperative
+# xyz_yaw bounds. They are object-center regions, not one-arm TCP/cabinet regions;
+# paired IK and payload collision checks still reject invalid samples.
 object_regions:
   shared_near:
-    {x: [0.42, 0.50], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+    {x: [0.40, 0.52], y: [-0.10, 0.10], z: [0.22, 0.30], yaw_deg: [-15.0, 15.0]}
   shared_middle:
-    {x: [0.51, 0.59], y: [-0.10, 0.10], z: [0.23, 0.30], yaw_deg: [-15.0, 15.0]}
+    {x: [0.49, 0.61], y: [-0.13, 0.13], z: [0.22, 0.31], yaw_deg: [-18.0, 18.0]}
   shared_far:
-    {x: [0.60, 0.68], y: [-0.08, 0.08], z: [0.23, 0.29], yaw_deg: [-12.0, 12.0]}
+    {x: [0.58, 0.70], y: [-0.10, 0.10], z: [0.22, 0.30], yaw_deg: [-15.0, 15.0]}
   shared_left_offset:
-    {x: [0.48, 0.60], y: [0.06, 0.13], z: [0.24, 0.30], yaw_deg: [-10.0, 10.0]}
+    {x: [0.46, 0.64], y: [0.05, 0.17], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
   shared_right_offset:
-    {x: [0.48, 0.60], y: [-0.13, -0.06], z: [0.24, 0.30], yaw_deg: [-10.0, 10.0]}
+    {x: [0.46, 0.64], y: [-0.17, -0.05], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
 
 # Longitudinal transfers dominate because they retain the largest paired-IK
 # basin. Lateral rows intentionally cover coordinated y motion without asking
