@@ -254,9 +254,11 @@ class MarvinBimanualSpaceTimeRuntimeEngine(MarvinBimanualDynamicRuntimeEngine):
     def plan(self, raw_request: dict[str, Any]):
         import numpy as np
         import torch
+        import time
 
         self.space_time_guide.reset(int(self._session.config.n_trajectory_samples))
         artifacts = super().plan(raw_request)
+        timing_export_started = time.perf_counter()
         results = self._session.last_plan_results
         source_indices = torch.as_tensor(
             artifacts.trajectory_arrays["top_k_candidate_indices"],
@@ -313,4 +315,7 @@ class MarvinBimanualSpaceTimeRuntimeEngine(MarvinBimanualDynamicRuntimeEngine):
             candidate_specific_time=True,
             timing_schema_version=TIMING_SCHEMA_VERSION,
         )
+        artifacts.result_payload.setdefault("resident_runtime", {}).setdefault("timing_s", {})[
+            "space_time_artifact"
+        ] = (time.perf_counter() - timing_export_started)
         return artifacts

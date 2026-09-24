@@ -136,6 +136,7 @@ TIMELINE="${OUTPUT_DIR}/dynamic-timeline.json"
 VIDEO_PATH="${OUTPUT_DIR}/marvin-${TASK_MODE}-${RUNTIME_MODE}.mp4"
 SCREENSHOT_PATH="${OUTPUT_DIR}/marvin-${TASK_MODE}-${RUNTIME_MODE}.png"
 SUMMARY_PATH="${OUTPUT_DIR}/isaac-replay-summary.json"
+TIMING_REPORT="${OUTPUT_DIR}/timing-report.json"
 
 for required in "$MPD_PYTHON" "$CONDA_EXECUTABLE" "$MPD_CONFIG" "$WORKER_SCRIPT"; do
   if [[ ! -e "$required" ]]; then
@@ -149,6 +150,7 @@ if [[ "$SKIP_RENDER" != true && ! -e "${ISAACLAB_ROOT}/isaaclab.sh" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR" "$PLANNER_RESULTS" "$RECORD_ROOT" "${OUTPUT_DIR}/ros-home"
+PIPELINE_START_NS="$(date +%s%N)"
 SOCKET_DIR="$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/marvin-dynamic.XXXXXX")"
 SOCKET_PATH="${SOCKET_DIR}/${SOCKET_NAME}"
 SERVER_PID=""
@@ -214,16 +216,20 @@ if [[ "$READY" != true ]]; then
   printf 'MPD worker did not become ready; see %s\n' "${OUTPUT_DIR}/mpd-worker.log" >&2
   exit 1
 fi
+WORKER_READY_NS="$(date +%s%N)"
 
 printf '[2/6] Building and launching fake hardware, three moving objects, and action client\n'
 cd "$AIRUNTIME_ROOT"
+ROS_BUILD_START_NS="$(date +%s%N)"
 if [[ "$SKIP_BUILD" != true ]]; then
   pixi run build --packages-up-to \
     mpd_bimanual_planner_adapter marvin_mpd_bimanual_bringup \
     >"${OUTPUT_DIR}/ros-build.log" 2>&1
 fi
+ROS_BUILD_DONE_NS="$(date +%s%N)"
 EXECUTE_TEXT=false
 if [[ "$EXECUTE" == true ]]; then EXECUTE_TEXT=true; fi
+ROS_LAUNCH_NS="$(date +%s%N)"
 setsid pixi run env -u CYCLONEDDS_URI \
   ROS_DOMAIN_ID="$ROS_DOMAIN_ID_DEMO" \
   ROS_HOME="${OUTPUT_DIR}/ros-home" \
@@ -254,9 +260,10 @@ if [[ ! -f "$DEMO_RESULT" ]]; then
   printf 'Demo timed out after %ss; see %s\n' "$RUN_TIMEOUT_S" "${OUTPUT_DIR}/ros-demo.log" >&2
   exit 1
 fi
-env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
-  'import json,sys; d=json.load(open(sys.argv[1])); assert d.get("success"), d' \
-  "$DEMO_RESULT"
+DEMO_SUCCESS="$(env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
+  'import json,sys; print("true" if json.load(open(sys.argv[1])).get("success") else "false")' \
+  "$DEMO_RESULT")"
+ROS_RESULT_NS="$(date +%s%N)"
 
 REQUEST_ID="$(env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["request_id"])' "$DEMO_RESULT")"
@@ -271,9 +278,31 @@ cleanup
 ROS_PID=""
 SERVER_PID=""
 cd "$MPD_ROOT"
+RENDER_STAMPS=()
+emit_timing_report() {
+  local pipeline_end_ns
+  pipeline_end_ns="$(date +%s%N)"
+  env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
+    scripts/isaaclab/replay_marvin_bimanual_dynamic_log.py \
+    --record "$REPLAY_RECORD" --timing-output "$TIMING_REPORT" \
+    --task-mode "$TASK_MODE" --runtime-mode "$RUNTIME_MODE" \
+    --pipeline-stamp "pipeline_start=${PIPELINE_START_NS}" \
+    --pipeline-stamp "worker_ready=${WORKER_READY_NS}" \
+    --pipeline-stamp "ros_build_start=${ROS_BUILD_START_NS}" \
+    --pipeline-stamp "ros_build_done=${ROS_BUILD_DONE_NS}" \
+    --pipeline-stamp "ros_launch=${ROS_LAUNCH_NS}" \
+    --pipeline-stamp "ros_result=${ROS_RESULT_NS}" \
+    --pipeline-stamp "pipeline_end=${pipeline_end_ns}" \
+    "${RENDER_STAMPS[@]}"
+}
 env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" \
   scripts/isaaclab/replay_marvin_bimanual_dynamic_log.py \
   --record "$REPLAY_RECORD" --output "$TIMELINE"
+if [[ "$DEMO_SUCCESS" != true ]]; then
+  emit_timing_report
+  printf 'Demo action failed; timing: %s; result: %s\n' "$TIMING_REPORT" "$DEMO_RESULT" >&2
+  exit 1
+fi
 
 readarray -t PLAN_FIELDS < <(env -u PYTHONPATH -u LD_LIBRARY_PATH "$MPD_PYTHON" -c \
   'import json,sys; from scripts.isaaclab.replay_marvin_bimanual_dynamic_log import selected_plan; p=selected_plan(json.load(open(sys.argv[1]))); print(p["result_path"]); print(p["top_k_index"])' \
@@ -302,7 +331,8 @@ printf '[6/6] Rendering Isaac Lab video\n'
 if [[ "$SKIP_RENDER" == true ]]; then
   printf '  skipped by --skip-render\n'
 else
-  env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
+  RENDER_START_NS="$(date +%s%N)"
+  if env -u PYTHONPATH -u LD_LIBRARY_PATH CONDA_PREFIX="$ISAAC_PYTHON_PREFIX" \
     "${ISAACLAB_ROOT}/isaaclab.sh" -p \
     scripts/isaaclab/replay_marvin_bimanual_trajectory.py \
     --artifact "$ARTIFACT_PATH" \
@@ -314,15 +344,30 @@ else
     --video-fps "$VIDEO_FPS" \
     --width "$WIDTH" \
     --height "$HEIGHT" \
-    --headless >"${OUTPUT_DIR}/isaac-replay.log" 2>&1
+    --headless >"${OUTPUT_DIR}/isaac-replay.log" 2>&1; then
+    RENDER_STATUS=0
+  else
+    RENDER_STATUS=$?
+  fi
+  RENDER_END_NS="$(date +%s%N)"
+  RENDER_STAMPS=(--pipeline-stamp "render_start=${RENDER_START_NS}" --pipeline-stamp "render_end=${RENDER_END_NS}")
+  if ((RENDER_STATUS != 0)); then
+    emit_timing_report
+    printf 'Isaac replay failed (%s); timing: %s; log: %s\n' \
+      "$RENDER_STATUS" "$TIMING_REPORT" "${OUTPUT_DIR}/isaac-replay.log" >&2
+    exit "$RENDER_STATUS"
+  fi
 fi
+
+emit_timing_report
 
 trap - EXIT INT TERM
 printf '%s\n' \
   "Done." \
   "  mode:     $TASK_MODE / $RUNTIME_MODE / execute=$EXECUTE_TEXT" \
   "  output:   $OUTPUT_DIR" \
-  "  record:   $REPLAY_RECORD"
+  "  record:   $REPLAY_RECORD" \
+  "  timing:   $TIMING_REPORT"
 if [[ "$SKIP_RENDER" != true ]]; then
   printf '%s\n' \
     "  video:    $VIDEO_PATH" \

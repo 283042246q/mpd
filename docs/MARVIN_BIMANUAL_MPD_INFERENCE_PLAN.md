@@ -658,6 +658,19 @@ Isaac 日志、action result、原始动态 replay、确定性 timeline、reside
 fake-hardware 到 replay artifact 的闭环。演示物体采用精确恒速模型，因此该
 入口显式把 unknown-acceleration process noise 设为零；这不是生产传感器配置。
 
+每次运行还写入 `timing-report.json`，independent 和 cooperative 使用同一
+格式。报告按每个 plan attempt 记录 `plan_start` 到 selected/discarded/rejected
+的墙钟耗时、MPD setup/规划/候选后处理、worker artifact 写盘、IPC、ROS Top-K
+读盘/最新世界硬复验/组合排序/轨迹转换、预定轨迹起点等待及 replay 写盘耗时；
+执行模式另记 JTC goal send、execution monitoring、prefix guard 和 controlled brake。
+顶层记录 resident warmup、world upload、action 总时长、worker 启动、ROS
+构建/运行、Isaac 渲染和整条 pipeline 耗时。worker/ROS 子计时相互包含，不能
+直接相加；`--skip-render` 时渲染耗时为 `null`。旧 replay 可用
+`replay_marvin_bimanual_dynamic_log.py --record <file> --timing-output <file>`
+补出可用的墙钟区间，但旧版未采集的细分耗时不会被猜测。action 失败而已
+留下 replay 时，也会写出已完成阶段和失败 attempt 的耗时；不会伪造未发生的
+Top-K 或 Isaac 渲染阶段。
+
 ## 8. 文件级实施清单
 
 ### MPD 仓库

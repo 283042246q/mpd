@@ -153,15 +153,19 @@ class ResidentPlannerService:
         started = time.perf_counter()
         try:
             artifacts = self._engine.plan(raw_request)
+            engine_done = time.perf_counter()
             scene_payload = getattr(self._engine, "scene_payload", None)
             if isinstance(scene_payload, dict):
                 _atomic_write_json(output_dir / "scene.json", scene_payload)
+            scene_done = time.perf_counter()
             _atomic_write_npz(
                 trajectory_path,
                 compressed=self.trajectory_compression,
                 **artifacts.trajectory_arrays,
             )
+            trajectory_done = time.perf_counter()
             _atomic_write_json(result_path, artifacts.result_payload)
+            result_done = time.perf_counter()
             finished_unix_ns = time.time_ns()
             if deadline_unix_ns is not None and finished_unix_ns >= deadline_unix_ns:
                 return {
@@ -180,6 +184,13 @@ class ResidentPlannerService:
                 "result_path": result_path.as_posix(),
                 "trajectory_path": trajectory_path.as_posix(),
                 "elapsed_sec": time.perf_counter() - started,
+                "timing_s": {
+                    "engine_plan": engine_done - started,
+                    "scene_write": scene_done - engine_done,
+                    "trajectory_write": trajectory_done - scene_done,
+                    "result_write": result_done - trajectory_done,
+                    "total": result_done - started,
+                },
                 "engine_instance_id": self._engine.instance_id,
                 "trajectory_artifact": artifacts.result_payload.get(
                     "trajectory_artifact",

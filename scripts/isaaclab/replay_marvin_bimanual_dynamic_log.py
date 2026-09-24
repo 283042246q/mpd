@@ -151,16 +151,174 @@ def predicted_world_objects(record: dict, unix_ns: int) -> list[dict]:
     return predicted
 
 
+def build_timing_report(
+    record: dict,
+    *,
+    task_mode: str | None = None,
+    runtime_mode: str | None = None,
+    pipeline_stamps_ns: dict[str, int] | None = None,
+) -> dict:
+    """Summarize every attempt, including discarded and rejected plans.
+
+    Nested worker/backend durations overlap with their parents and must not be
+    added to the end-to-end wall-clock durations.
+    """
+    events = build_timeline(record)["events"]
+    stamps = pipeline_stamps_ns or {}
+
+    def seconds_between(first: int | None, last: int | None) -> float | None:
+        if first is None or last is None:
+            return None
+        return max(0.0, (last - first) * 1e-9)
+
+    def event_of_type(items: list[dict], event_type: str) -> dict | None:
+        return next((item for item in items if item.get("type") == event_type), None)
+
+    starts = [index for index, event in enumerate(events) if event.get("type") == "plan_start"]
+    attempts = []
+    for position, start_index in enumerate(starts):
+        end_index = starts[position + 1] if position + 1 < len(starts) else len(events)
+        group = events[start_index:end_index]
+        start = group[0]
+        selected = event_of_type(group, "plan_selected")
+        discarded = event_of_type(group, "plan_discard")
+        worker = event_of_type(group, "worker_return_timing")
+        worker_failure = event_of_type(group, "worker_failure_timing")
+        selection = event_of_type(group, "candidate_selection_timing")
+        recorder = event_of_type(group, "replay_recorder_timing")
+        terminal = selected or discarded or selection or worker_failure or worker
+        selected_payload = selected["payload"] if selected else {}
+        if selected:
+            outcome = "selected"
+        elif discarded:
+            outcome = "discarded"
+        elif selection:
+            outcome = "rejected"
+        elif worker_failure:
+            outcome = "worker_failed"
+        elif worker:
+            outcome = "worker_returned"
+        else:
+            outcome = "incomplete"
+        attempts.append(
+            {
+                "attempt": start["payload"].get("attempt", position + 1),
+                "generation": start["payload"].get("generation"),
+                "outcome": outcome,
+                "plan_start_unix_ns": int(start["unix_ns"]),
+                "plan_end_unix_ns": int(terminal["unix_ns"]) if terminal else None,
+                "plan_wall_elapsed_s": seconds_between(
+                    int(start["unix_ns"]),
+                    int(terminal["unix_ns"]) if terminal else None,
+                ),
+                "worker_return_timing": worker["payload"] if worker else None,
+                "worker_failure_timing": worker_failure["payload"] if worker_failure else None,
+                "candidate_selection_timing_s": (selection["payload"].get("timing_s") if selection else None),
+                "selected_plan_timing_s": selected_payload.get("timing_s"),
+                "scheduled_wait_s": seconds_between(
+                    int(selected["unix_ns"]) if selected else None,
+                    (
+                        int(selected_payload["trajectory_start_unix_ns"])
+                        if selected and "trajectory_start_unix_ns" in selected_payload
+                        else None
+                    ),
+                ),
+                "trajectory_duration_s": selected_payload.get("trajectory_duration_s"),
+                "recorder_timing": recorder["payload"] if recorder else None,
+                "execution_timings": [
+                    event["payload"] for event in group
+                    if event.get("type") == "execution_timing"
+                ],
+                "controlled_brake_timings": [
+                    event["payload"] for event in group
+                    if event.get("type") == "controlled_brake"
+                ],
+            }
+        )
+
+    world_starts = [
+        int(event["payload"]["scenario_start_unix_ns"]) for event in events if event.get("type") == "world_start"
+    ]
+    first_plan = events[starts[0]] if starts else None
+    terminal_action = next(
+        (event for event in reversed(events) if event.get("type") == "action_terminal_timing"),
+        None,
+    )
+    warmup = event_of_type(events, "resident_warmup_timing")
+    uploads = [event["payload"] for event in events if event.get("type") == "world_upload_timing"]
+    stage_pairs = {
+        "worker_startup": ("pipeline_start", "worker_ready"),
+        "ros_build": ("ros_build_start", "ros_build_done"),
+        "ros_launch_to_result": ("ros_launch", "ros_result"),
+        "isaac_render": ("render_start", "render_end"),
+        "pipeline_to_result": ("pipeline_start", "ros_result"),
+        "pipeline_total": ("pipeline_start", "pipeline_end"),
+    }
+    return {
+        "schema": "marvin_bimanual_dynamic_timing/v1",
+        "request_id": record.get("request_id"),
+        "task_mode": task_mode,
+        "runtime_mode": runtime_mode,
+        "clock_note": (
+            "Per-component durations use monotonic clocks; replay and pipeline intervals "
+            "use Unix timestamps. Nested durations overlap and must not be summed."
+        ),
+        "world_start_to_first_plan_s": seconds_between(
+            min(world_starts) if world_starts else None,
+            int(first_plan["unix_ns"]) if first_plan else None,
+        ),
+        "world_start_to_action_terminal_s": seconds_between(
+            min(world_starts) if world_starts else None,
+            int(terminal_action["unix_ns"]) if terminal_action else None,
+        ),
+        "resident_warmup_timing": warmup["payload"] if warmup else None,
+        "world_upload_timings": uploads,
+        "action_terminal_timing": terminal_action["payload"] if terminal_action else None,
+        "pipeline_stamps_unix_ns": stamps,
+        "pipeline_timing_s": {
+            name: seconds_between(stamps.get(first), stamps.get(last)) for name, (first, last) in stage_pairs.items()
+        },
+        "attempts": attempts,
+    }
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--timing-output", type=Path)
+    parser.add_argument("--task-mode")
+    parser.add_argument("--runtime-mode")
+    parser.add_argument("--pipeline-stamp", action="append", default=[], metavar="NAME=UNIX_NS")
     args = parser.parse_args(argv)
-    timeline = build_timeline(json.loads(args.record.read_text(encoding="utf-8")))
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-    temporary.write_text(json.dumps(timeline, indent=2, sort_keys=True) + "\n")
-    temporary.replace(args.output)
+    if args.output is None and args.timing_output is None:
+        parser.error("at least one of --output or --timing-output is required")
+    record = json.loads(args.record.read_text(encoding="utf-8"))
+    if args.output is not None:
+        _write_json(args.output, build_timeline(record))
+    if args.timing_output is not None:
+        stamps = {}
+        for item in args.pipeline_stamp:
+            name, separator, value = item.partition("=")
+            if not separator or not name or not value.isdecimal():
+                parser.error(f"invalid --pipeline-stamp: {item}")
+            stamps[name] = int(value)
+        _write_json(
+            args.timing_output,
+            build_timing_report(
+                record,
+                task_mode=args.task_mode,
+                runtime_mode=args.runtime_mode,
+                pipeline_stamps_ns=stamps,
+            ),
+        )
     return 0
 
 

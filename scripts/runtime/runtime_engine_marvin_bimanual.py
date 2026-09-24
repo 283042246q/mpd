@@ -229,6 +229,7 @@ class MarvinBimanualPlanningSession:
         from dotmap import DotMap
         from torch_robotics.torch_utils.seed import fix_random_seed
 
+        request_started = time.perf_counter()
         _deadline_guard(request)
         if request.runtime_mode not in self.accepted_runtime_modes:
             expected = ", ".join(sorted(self.accepted_runtime_modes))
@@ -366,6 +367,7 @@ class MarvinBimanualPlanningSession:
         else:
             self.planning_task.object_goal_pose = None
         started = time.perf_counter()
+        setup_elapsed = started - request_started
         results = self.planner.plan_trajectory(
             q_start,
             q_goal,
@@ -383,6 +385,7 @@ class MarvinBimanualPlanningSession:
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         elapsed = time.perf_counter() - started
+        selection_started = time.perf_counter()
         _deadline_guard(request)
         generic_valid_indices = torch.nonzero(results.valid_trajectory_mask).flatten()
         cooperative_audits = {}
@@ -567,6 +570,11 @@ class MarvinBimanualPlanningSession:
                 payload_size_xyz=np.asarray(cooperative_generator.payload_size, dtype=np.float64),
             )
             cooperative_generator.close()
+        result["resident_runtime"]["timing_s"] = {
+            "request_setup": setup_elapsed,
+            "mpd_plan_and_dense": elapsed,
+            "candidate_selection_and_artifact": time.perf_counter() - selection_started,
+        }
         return PlanArtifacts(result_payload=result, trajectory_arrays=arrays)
 
 

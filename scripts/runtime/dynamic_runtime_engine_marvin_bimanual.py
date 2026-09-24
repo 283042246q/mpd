@@ -152,6 +152,7 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
     def plan(self, raw_request: dict[str, Any]) -> PlanArtifacts:
         import numpy as np
         import torch
+        import time
 
         from torch_robotics.torch_kinematics_tree.geometrics.utils import (
             link_pos_from_link_tensor,
@@ -184,6 +185,7 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
                 world_version=request.world_version,
             )
             artifacts = super().plan(raw_request)
+            dynamic_export_started = time.perf_counter()
             if time.time_ns() >= self.external_valid_until_unix_ns:
                 raise DynamicWorldError("dynamic snapshot expired after planning")
             artifacts.result_payload["dynamic_world"] = {
@@ -250,6 +252,9 @@ class MarvinBimanualDynamicRuntimeEngine(MarvinBimanualRuntimeEngine):
                 "best_trajectory_top_k_index": 0,
                 "trajectory_start_unix_ns": trajectory_start_unix_ns,
             }
+            artifacts.result_payload.setdefault("resident_runtime", {}).setdefault("timing_s", {})[
+                "dynamic_collision_export"
+            ] = (time.perf_counter() - dynamic_export_started)
             return artifacts
         except DynamicWorldError as error:
             raise MarvinDynamicContractError(str(error)) from error
