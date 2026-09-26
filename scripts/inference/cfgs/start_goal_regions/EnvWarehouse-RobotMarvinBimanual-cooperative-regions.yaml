@@ -15,9 +15,9 @@ object_regions:
   shared_far:
     {x: [0.58, 0.70], y: [-0.10, 0.10], z: [0.22, 0.30], yaw_deg: [-15.0, 15.0]}
   shared_left_offset:
-    {x: [0.46, 0.64], y: [0.05, 0.17], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
+    {x: [0.46, 0.64], y: [0.10, 0.29], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
   shared_right_offset:
-    {x: [0.46, 0.64], y: [-0.17, -0.05], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
+    {x: [0.46, 0.64], y: [-0.29, -0.10], z: [0.23, 0.31], yaw_deg: [-15.0, 15.0]}
 
 # Longitudinal transfers dominate because they retain the largest paired-IK
 # basin. Lateral rows intentionally cover coordinated y motion without asking
