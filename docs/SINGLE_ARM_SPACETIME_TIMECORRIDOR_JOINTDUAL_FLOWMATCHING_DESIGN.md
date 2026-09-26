@@ -2,8 +2,9 @@
 
 - 核对日期：2026-09-26。
 - 代码基线：MPD 仓库提交 `b0f86da`；运行环境 `mpd-splines-public`。
+- Context 专项复核：2026-09-26，核对 Warehouse 默认空间 checkpoint 的 `args.yaml`、dataset/context encoder、timing trainer 与 factorized sampler；补充环境条件化的泛化分析及两种架构的设计。
 - 范围：Panda/Franka 单臂的静态单次推理、动态世界多次 replan。本文的 JointDual 指空间/时间双分支，不指双臂。
-- 本文是研究与实施方案。本次仅新增文档，未训练新模型、未实现新 cost、未重新运行 benchmark。建议超参数和预期收益均不是已测结果。
+- 本文是研究与实施方案。相关提交仅新增/更新文档，未训练新模型、未实现新 cost、未重新运行 benchmark。建议超参数和预期收益均不是已测结果。
 - 与既有《Space-Time MPD Timing 训练与数据工程实施方案》衔接；对现有功能以实际代码为准。论文依据见第 12 节；本文的组合设计、公式推导与实施判断会与论文原有结论区分。
 
 ## 1. 建议实施顺序与主要判断
@@ -35,6 +36,7 @@ Timing Flow Matching 可以在第二阶段数据稳定后独立做小规模试�
 | 项目 | 核对结果 | 本地依据 |
 |---|---|---|
 | `phase5_joint` | 空间 diffusion + 推理时优化时间变量；并非 JointDual 联合训练 checkpoint | `mpd/inference/space_time_guidance.py` |
+| 默认 Warehouse 空间 context | `q_start` + 末端目标位姿，不是固定的 `q_start,q_goal` 两个关节构型；未输入场景几何 | 默认 checkpoint 的 `args.yaml`、`ContextModelCombined` |
 | F1/F2/F3 | 独立空间与时间模型，区别主要是完整分离/部分重采样/低噪声交替的 sampler | `mpd/inference/factorized_sampler.py` |
 | Timing 网络 | 路径特征编码 + 六维 noisy timing + diffusion step；没有当前动态场景编码 | `mpd/timing_training/model.py` |
 | 路径条件 | 64 个 phase 点上的 `q,q_s,q_ss,s`，保序 CNN 编码后进入 FiLM MLP | `scripts/train/TIMING_DIFFUSION.md` |
@@ -47,6 +49,29 @@ Timing Flow Matching 可以在第二阶段数据稳定后独立做小规模试�
 | ROS2 时间输出 | 每候选独立 `time_from_start`、起点为 0、严格递增、显式 duration 检查 | `scripts/runtime/timing_contract.py` |
 
 因此，“已有 SpaceTimeCostEvaluator”与“已有 time-corridor cost”是两件事；后者需新增。
+
+#### 2.1.1 当前 context 的准确结论与调用链
+
+“空间看起终点，时间看起终点与路径”在任务层面可以这样概括，**但不能作为网络接口的精确描述**：
+
+| 网络/配置 | 显式任务 context | 其他输入或隐含信息 | 不包含什么 |
+|---|---|---|---|
+| 当前 Warehouse 默认空间模型 | `q_start∈R^7` 与目标 EE 位姿：位置 3 维、旋转矩阵展开 9 维 | noisy 空间控制点与 diffusion step；两路 context 编码后融合为 128 维 | 当前静态几何、动态障碍预测、corridor、timing latent |
+| 关节起终点模式的空间模型 | 当 `context_qs=True, context_ee_goal_pose=False` 时，为 `[q_start,q_goal]∈R^14` | noisy 空间控制点、diffusion step、相应边界处理 | 同上；这是可用配置，不是当前默认 Warehouse checkpoint 的配置 |
+| 当前 timing 模型，c/tau_r 共用结构 | 完整空间控制点 `P` 经 `SpatialPathEncoder` 编码 | noisy 六维 timing、diffusion step；从 P 计算 `q,q_s,q_ss,s`，路径端点隐含实际起终点 | **没有单独的 q_start/q_goal 或目标 EE pose 参数**，也没有世界/corridor 输入 |
+
+确认依据：
+
+1. `scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-factorized.yaml` 与 `config_EnvWarehouse-RobotPanda-runtime.yaml` 默认指向的空间模型，其保存的 `args.yaml` 为 `context_qs: true`、`context_ee_goal_pose: true`、`conditioning_type: default`、`context_combined_out_dim: 128`。这比 `scripts/train/train.py` 的通用默认参数更能说明当前 checkpoint。
+2. `trajectories_dataset_bspline.py` 的 context 字段构造与 `build_context()`：EE 模式下 `qs=q_start`；关节模式下才拼接 `q_start,q_goal`。`ContextModelCombined.forward()` 实际使用归一化关节 context、目标 EE 位置和姿态；数据字典里存在 q_goal，并不代表 encoder 消费了它。
+3. `GaussianDiffusionModel.predict_x_recon()` 先调用 `context_model(**context_d)`，再调用 `TemporalUnet(x_t,t,context_emb)`。这里的 t 是生成噪声级，不是障碍物时间。
+4. `TimingDenoiser.forward(noisy_timing,timesteps,path)` 只拼接 path embedding 与 noise-step embedding；trainer 调用 `training_loss(path,timing)`，factorized 的时间分支调用 `denoiser(z,t,guide.condition(P))`。`guide.condition()` 对补全后的路径归一化，没有附加起终点/world 特征。
+
+默认空间模型原始任务信息为 7+12 维，而不是“128 维物理状态”；128 是融合后的 embedding。对一个中间空间候选，timing 看到的是该候选路径及其实际端点，不是额外输入的原始目标 EE pose；候选尚未准确到达目标时，这个区别尤其重要。
+
+还应区分 `context` 与 `hard_conds`：B-spline dataset 在 `context_qs=True` 时返回的 `hard_conds` 可以为空，边界还涉及样条构造与推理处理，不能把所有起终点信息都解释成 sampler 中的硬覆盖。本文中的任务条件 x 因配置而异，可表示 `(q_start,EE_goal)` 或 `(q_start,q_goal)`，不是新增第三份输入。
+
+以上结论针对核对的单臂默认配置与代码接口；若命令行覆盖 checkpoint，应再核对那个模型的保存配置。动态/静态世界已经可以参与 cost 与最终检查，但这与“进入 learned denoiser 的 context”不同。
 
 ### 2.2 不输入动态世界，无法学习本次应该先过还是后过
 
@@ -83,6 +108,34 @@ $$
 | 先验原始输出、guided 输出、最终执行分别统计 | 同一采样 batch 和同一 snapshot | 增益到底来自先验、cost，还是延迟/执行策略？ |
 
 只比较 epsilon-MSE、只看最终成功视频，都不足以回答这些问题。不同表示/normalizer 的 loss 不能直接比较大小并据此排序模型。
+
+### 2.6 加入环境 context 会不会破坏泛化？
+
+**不必然破坏，也不自动提高；需要区分信息收益、有限数据学习和分布外测试。** 当前没有显式环境输入，并不等于学到了与环境无关的通用运动先验：训练路径已经包含 Warehouse 的结构偏好，环境信息可以隐含在权重与路径分布中。
+
+将环境拆为静态几何 `W_s`、动态预测 `W_d`，令 Y 为离散的空间通道/通行顺序标签。对同一个数据生成分布，在相关熵存在时：
+
+$$
+H(Y\mid x)-H(Y\mid x,W_s,W_d)=I(Y;W_s,W_d\mid x)\ge0.
+$$
+
+这说明额外环境信息可以降低最优决策的不确定性，**不是有限样本神经网络在新世界上一定更准的定理**。如果训练环境永远固定，环境 context 近似常量，几乎没有可学的条件差异；同一路径在不同 crossing time 下需要相反决策，才为 timing 提供有价值的条件监督。
+
+至少区分四种泛化：同布局的新起终点、新障碍运动参数/组合、新静态布局，以及新 cost/任务偏好。加世界 context 主要面向前三者中的已覆盖变化；第四类仍适合保留显式 cost，不必把每一种新约束都编码进网络并重新训练。
+
+| 风险 | 原因 | 设计原则 |
+|---|---|---|
+| 记住场景而不是学关系 | scene_id、绝对位置或固定 crossing 与标签形成捷径 | 使用几何/相对时间与有效 mask；按布局、运动族拆分测试 |
+| 数据分散、条件过拟合 | 更多世界变化，但每类有效任务/模式太少 | 先增加有效条件覆盖，而不是只复制 timing variants；画学习曲线 |
+| 条件误差引发退化 | 感知、预测、offset、corridor 分辨率或版本改变 | 对真实误差做训练/测试；显式标记不确定、缺失与过期 |
+| 遗忘旧空间能力 | 小规模动态数据上全量微调 backbone | 冻结基础先验、残差 adapter、旧任务回放和独立 fallback |
+| 只会沿已给走廊行动 | corridor 是某条 P 的局部可行信息，不包含所有替代路径 | 保留原始世界或重采样路径的入口；P 改变后重新生成走廊 |
+
+条件化使某个世界里明显不合理的模式减少，是预期收益，不应一概称为多样性丢失。需要防止的是：该世界里仍可行的不同模式也被抹去，或环境稍变就无法切换模式。评估应统计**条件内可行多样性**与跨世界的模式切换，而非只看所有输出的方差。
+
+Corridor 可视为 `C=Ψ(P,W_s,W_d,Δ)` 的任务相关压缩。它把部分几何推理交给显式 FK/碰撞查询，有机会减少 timing 网络学习原始几何关系的负担；代价是额外计算、离散化与信息丢失。只有在固定 P、机器人模型、margin、时间语义及完整预测域都一致时，理想安全集合才描述该路径的动态可行域；稀疏区间列表不是自动充分统计量，更不描述其他空间路径。间隙、预测置信度、动力学限制和偏好需要保留在其他特征/验证器中。
+
+因此本项目不建议第一步把大点云、整个动态世界和最终 teacher corridor 一起塞进所有网络。优先使用**可选的轻量任务相关条件，保留基础先验与外部 cost**；具体分层见第 6.6–6.8 节，数据与评估见第 7.7、11.7 节。
 
 ## 3. 统一数学表示、物理时钟与可行性
 
@@ -297,6 +350,8 @@ $$
 
 其中 `b` 包括计划执行相对 snapshot 的 offset、有效预测 horizon、初始/终端边界；`m` 是通行模式；`w` 是速度/时长/风险偏好。
 
+这里不是要求所有条件从第一版同时启用。默认从固定 P 的 corridor/event 条件开始，并保留无环境条件的旧 timing 候选；是否增加原始世界 encoder、是否让空间网络也看世界，按第 6.6–6.8 节分别消融。条件化收益必须与额外编码/走廊计算成本一同计入。
+
 三种可选训练方案：
 
 | 方案 | 做法 | 价值与限制 |
@@ -448,8 +503,8 @@ z_k [B,6]        → Timing residual MLP / timing tokens → ε_z
 
 | 路线 | 定义 | 推荐用途 |
 |---|---|---|
-| J0 运动学联合先验 | `p(P,z|start,goal,boundary)`；当前世界只进入 guidance | 首先验证双向耦合是否有效，与原有设计文档一致 |
-| J1 动态条件联合先验 | `p(P,z|start,goal,boundary,Enc(W),m)` | 学习绕行与让行的联合选择，作为下一步主模型 |
+| J0 运动学联合先验 | `p(P,z ∣ start,goal,boundary)`；当前世界只进入 guidance | 首先验证双向耦合是否有效，与原有设计文档一致 |
+| J1 动态条件联合先验 | `p(P,z ∣ start,goal,boundary,Enc(W),m)` | 学习绕行与让行的联合选择，作为下一步主模型 |
 
 JointDual 不能预先把“最终真实路径对应的走廊”作为可用输入，因为最终路径尚未生成。J1 优先使用不依赖目标轨迹的 obstacle/event tokens；低噪声阶段再从预测的 clean `P` 在线构建走廊。
 
@@ -525,6 +580,89 @@ $$
 空间端点控制点与 timing 边界因此耦合。扩展时需要 boundary-conditioned decoder 或联合投影，不能仅加一项 endpoint penalty。
 
 建议 J0/J1 初版继续保持现有 rest-to-rest 语义及 bridge；再单独加入 motion-to-motion 数据、边界解码器、接续验证与 timing-dependent endpoint Jacobian。新功能用独立配置开启。
+
+### 6.6 Factorized 的环境/corridor context：推荐逐层增加
+
+本节的 F-C0…F-C3 是**条件配置层级**，不是现有 F1/F2/F3 采样算法的新名称。条件设计与采样策略应分开配置。
+
+| 层级 | 空间分支 | 时间分支 | 优势与边界 |
+|---|---|---|---|
+| F-C0：当前基线 | `p(P ∣ x)` | `p(z ∣ P)`；世界仅进 cost | 不新增网络/条件数据；动态选时依赖搜索与优化 |
+| F-C1：首选 | 旧空间 checkpoint 原样保留 | `p(z ∣ P,C(P,W,Δ),b,m)`，可附事件/风险特征 | 最小范围改善早过/晚过决策；不解决所有路径都走错通道的问题 |
+| F-C2：静态场景可变 | `p(P ∣ x,Enc(W_s))`，建议残差 adapter | 同 F-C1 | 当货架/物体布局变化时减少几何无效候选；需要多布局训练 |
+| F-C3：动态也影响绕行 | `p(P ∣ x,Enc(W_s),Enc(W_d),b)` | `p(z ∣ P,C,Enc(W_d),b,m)` | 空间能预先避开不利通道；数据/条件复杂度上升，须证明比 F-C1 的 guidance 更划算 |
+
+F-C1 可复用现有 path encoder，把区间/事件 encoder 的输出通过小 FiLM 或 residual adapter 加到 timing MLP；并非因为 context 增多就必须把六维输出网络换成大型 Transformer。区间 token 必须保留 phase 顺序、多个窗口及 validity mask，不能先平均所有安全窗口。
+
+推荐 F-C1 推理链：
+
+~~~text
+旧 spatial prior(x) 生成多个 P
+    → 每个有效 P 对应的全身 corridor/event 特征 C(P,W,Δ)
+    → timing prior(z_k,k,P,C,b,m)，同时保留旧 timing/无学习初始化配额
+    → 统一物理 refinement 与真实世界验证
+    → 若某 P 的所有时间分支不可行，换空间路径而不是无限 retime
+~~~
+
+世界可以先按 snapshot 编码并在同一次请求中缓存，但 C 必须和每个候选 P 对应；不能让整批不同路径共享第一条路径的 corridor。F2/F3 修改 clean P 后也必须重算或按可信缓存规则更新条件，训练时覆盖这种迭代中的路径/走廊，而非只使用最终 expert 路径。
+
+固定 P 已静态碰撞时，timing 没有修复能力。若任务经常要求另一条空间通道，先评估 F-C2/F-C3 或更多空间多模式候选，再决定是否需要 JointDual。
+
+**Factorized 并不在数学上排斥联合条件能力。** 完整条件下可写
+
+$$
+p(P,z\mid x,W,b)=p(P\mid x,W,b)\,p(z\mid P,x,W,b).
+$$
+
+当前的限制在于具体网络缺少 W、单向条件和采样近似，不在概率分解本身。新增 JointDual 应与条件/数据匹配的 factorized 比较，不能把 world context 的收益都归给联合架构。
+
+### 6.7 JointDual 的条件设计：共享世界，分开任务与路径相关信息
+
+J0 先学习配对的运动学联合先验；J1 再加入世界。两者都继续保留原任务 x，空间/时间两路噪声级、边界以及完整物理验证。
+
+~~~text
+x、boundary、noise levels ───────────────────→ 两分支原有条件
+W_static → 几何 encoder → static tokens ─────→ 空间优先，必要时提供给时间
+W_dynamic、Δ、horizon → prediction encoder ─→ 两分支共享 token，分别注入
+P̂_clean、W、Δ → corridor/event encoder ─────→ 低噪声时间分支；可选空间 residual
+P_k ↔ z_k ─────────────────────────────────→ 双向 cross adapters
+~~~
+
+相同 encoder 可避免重复编码并控制对照成本，但不是要求两分支接受相同强度的所有特征。空间需要通道/全身几何与粗略时间交互信息；时间更需要该候选路径上的风险时间窗口。世界 token 显式带预测相对时间，不能把所有未来占用并成静态障碍后声称已建模时空关系。
+
+生成初期尚无可信路径，优先使用不依赖最终 P 的世界条件；可信 clean estimate 出现后，才附加由该候选生成的 corridor。训练时若加入这条在线条件通道，应以同样的 noise/self-conditioning/rollout 流程构造输入；用最终 P* 的精细走廊作为训练条件、推理却无法提供，是条件泄漏/分布偏移风险，而不是免费提高先验。
+
+相对于 F-C1，J1 希望学到的收益是：一条路径的时间窗口很差时，空间分支也能更早转向另一通道；时间分支同时调整通过顺序。在强耦合、多次 crossing 或绕行与等待代价接近的任务上值得验证。对固定通道里的简单 crossing，F-C1 可能已经足够，JointDual 不保证更好。
+
+增加条件通常提高数据覆盖和训练稳定性要求，但 **JointDual 不必然需要比任何 factorized 都更大的网络或固定倍数的数据**：共享 encoder 可减少重复参数，互相提供信息也可能提高样本利用效率；反面是两分支与条件错误可能相互放大。实际差异应由同数据学习曲线与失败分类判断。
+
+### 6.8 保留原先验泛化能力的具体措施
+
+**首选保留旧权重，加可关闭的环境 residual，而不是直接全量覆盖旧模型。** 对空间分支，一个工程构造为
+
+$$
+\hat\epsilon_{\theta,\phi}(P_k,k,x,E)
+=\epsilon_{\theta}^{\rm base}(P_k,k,x)
++g\,R_\phi(P_k,k,x,E),\qquad g\in[0,1].
+$$
+
+base 冻结、输出 residual 零初始化；g=0 且输入、normalizer、边界与 base 计算路径均不变时，神经网络输出才可回到原基线。这里是在指定 epsilon 参数化上的残差模型，不是自动保证可行的后验或多个先验的精确混合。Timing 可在 `(z_k,k,P)` 基础上用同样办法增加 C/world residual。
+
+JointDual 的“关闭环境 adapter”应回到**已经训练好的 J0 联合模型**；不能声称零初始化几层就让新的 joint sampler 完全等于旧 F3，尤其旧 timing 的条件是 clean P 而非任意 noisy P。原 factorized checkpoint 与入口继续单独保留。
+
+训练时对环境/走廊条件做独立或分组 dropout、空环境与旧任务回放，始终保留任务/边界条件。初始 dropout 概率可按 `0.1/0.2/0.3` 做小规模 sweep；这是实验建议，不是泛化保证。`missing`、`stale` 与 `known_empty` 必须有不同状态，不能把“没有传来障碍信息”当作已知自由空间。
+
+条件 dropout 只提供 null-context 分支的训练机会；若 base 全量更新，它本身并不保证不遗忘。高 CFG 强度也不等于更安全，可能压缩可行模式或扩大条件误差；必须在模式覆盖、违例率和计算预算上消融。
+
+部署时可显式给旧先验与新条件先验分配候选配额。例如先测试 20%–30% 的 base/fallback 配额，其余来自条件模型，保持总候选预算不变：
+
+$$
+p_{\rm proposal}=(1-\alpha)p_{\rm base}+\alpha p_{\rm conditional}.
+$$
+
+这是按来源采样的 mixture，不是把两条轨迹或互斥时间分支做坐标平均。理论支持集包含有正权重的 base，但有限 batch 不保证找到它的每种模式，更不保证安全；所有来源使用相同真实世界检查。旧先验也可能不适合新布局，fallback 的意义是增加选择，不能替代停止/重规划与 guard。
+
+最后保留外部 cost 处理精确几何、未见障碍、任务新增限制与预测更新。条件网络的角色是减少无效 proposal 和修正工作量，而不是取代解析 FK、机器人限制和最终验收。
 
 ## 7. 轨迹数据：从静态 retiming 到动态决策配对数据
 
@@ -693,6 +831,32 @@ Pilot 可先用约 1,000 个基础任务，每任务 2–4 个世界、每世界
 4. Rollout：采集当前模型输出的空间候选，重新生成 corridor 与 retiming 标签，修正 clean-teacher 条件到实际候选条件的偏移。
 
 以“raw world + 当前预测路径生成的 corridor”作为训练条件时，保存其生成版本。仅对路径加随机扰动但继续沿用旧 timing/corridor 标签，可能直接制造错误监督。
+
+### 7.7 环境 context 对数据和网络的新增要求
+
+重点通常是**有信息量的世界覆盖与反事实配对**，而不是把现有轨迹数量机械乘一个倍数。输出仍是六维 timing，也不能由此断言 world-conditioned 学习任务很简单。
+
+| 条件方案 | 必须新增/核对的数据 | 网络与计算要求 |
+|---|---|---|
+| 静态几何 context | 同类任务在不同布局/物体位置下的有效路径；静态资产版本与 frame | 几何 encoder；固定场景可缓存，场景更新时失效 |
+| 动态 world context | 相同 P/任务在不同运动预测、offset、horizon 下的不同有效决策 | 保留预测时间与对象 mask 的 encoder；无需一开始就使用高密度点云 |
+| corridor/event context | P 对应的全身窗口、模式、margin、构建版本与生成误差 | 小型区间/事件 encoder 有机会足够；成本可能转移到 FK/SDF 与 corridor 构建 |
+| JointDual + world | 同任务/世界下有配对的多条 P,z，尤其必须换空间模式的样本 | 两分支噪声条件、跨分支耦合和在线条件分布；不是只给 D0 加 world 字段 |
+
+最有价值的新增采样包括：
+
+1. 固定 P、边界与静态世界，仅改变 crossing time/速度，使最优或唯一可行顺序由 before 变成 after；验证模型确实响应条件。
+2. 固定任务与动态世界，保留多条不同 P 的有效 timing，避免把某世界唯一绑定某路径。
+3. 固定任务，移动静态物体或改变通道，使原路径不可行但另一条路径可行；每次重新规划与验收。
+4. 对预测、offset 和几何感知施加合理误差，区分观测条件、预测与真实未来；相同不确定观测下可能需要风险约束，而不是要求网络猜中无法观测的未来。
+
+这些都不能通过“换一下 context 标签、原轨迹保持不变”完成，除非重新验证后它确实仍是相应世界的合法标签。训练世界永远固定时附加一个常量地图，也不能证明网络学会了跨布局泛化。
+
+编码上优先机器人基坐标系、相对位姿/距离、物体集合 mask、相对秒数和预测置信度；避免 scene_id、物体数组固定顺序成为捷径。对象集合应对排列鲁棒，同时保留每个对象内部的时间序列与关联身份。全局刚体变换可作为一致的坐标变换测试，但不能只旋转障碍而不更新机器人、目标和其余物理语义；缩放几何或时间更需要重新检查真实限制。
+
+原始点云/体素适合确有复杂感知输入的阶段，不是加入环境 context 的必选项。先比较简单障碍参数 token、路径局部风险/安全区间与原始几何 encoder；低维抽象可能降低数据需求，但也可能丢掉关键信息，必须做表示误差和闭环失败分析。世界编码可在 snapshot 内缓存；路径相关查询随候选更新，不可错误复用。
+
+数据量用 `N、2N、4N` 个独立任务/世界组的学习曲线判断，分别统计新场景数、模式数和每组 variants；同一世界重复 1,000 次不是 1,000 个新世界。比较 factorized 与 JointDual 时使用相同训练世界/标签、encoder 和计算预算，并分别报告 parameter count、显存与编码时间；不预设“需要 10 倍数据”或“必须换更大 U-Net”。
 
 ## 8. Diffusion 换成 Flow Matching：可行，但要按层替换
 
@@ -985,6 +1149,27 @@ ROS2 侧首版无需重写执行链：让新 backend 输出已有逐候选时间
 
 门槛应在测试前预注册，例如“无新增时间契约违例、成功率置信区间不劣、p95 延迟不超过控制预算”；具体毫秒、clearance 与成功率目标由当前控制周期和风险要求确定，而不是本文虚构一个通用安全阈值。
 
+### 11.7 补充验收：条件化是否真的提高泛化与效率
+
+评估至少分为：同布局新起终点、已见运动模型的新参数、未见对象/运动组合、新静态布局、预测/offset 误差、context 缺失/过期。未知机器人与任意新动力学不属于仅加环境 context 就自动获得的能力。
+
+| 对照 | 要排除的误判 |
+|---|---|
+| 旧 prior + 统一 cost vs F-C1 + 同一 cost | 不是靠增加候选、优化次数或放慢执行获得成功率 |
+| 无/有环境 context × factorized/JointDual，使用相同数据 | 区分条件信息收益与联合结构收益 |
+| 同 context 的几何 token / corridor / 二者组合 | 区分抽象是否足够、额外编码是否值得 |
+| teacher corridor 上界 vs 真实候选 corridor | 避免目标信息泄漏和理想条件掩盖部署差距 |
+| 冻结 base + residual vs 全量微调 | 检查旧任务保持、适应能力和灾难性遗忘 |
+| 条件模型单独采样 vs 固定总预算的 base/conditioned mixture | 检查 OOD 回退价值及其占用条件候选预算的代价 |
+
+离线诊断可以在固定 P 上交换不同世界的条件，观察 before/after 决策是否相应改变；所有输出仍用各自声明的真实世界验收。真实世界与输入故意不一致的 shuffle 测试只能作为离线依赖性分析，不能让机器人实际执行未经正确世界验证的结果。
+
+收益应体现为：更高 unguided 可行率、更少候选/guide steps 达到目标成功率、更短 time-to-first-valid、更低 p95 端到端延迟、可行模式覆盖和更少 replan 抖动。`条件编码 + corridor 构建 + guidance + 验证` 都计入耗时；不能只统计减少的 denoiser 步数。
+
+保留能力的验收包括：g=0 时 base 网络输出回归、旧任务在同预算下不劣、null/stale 条件不被误作空环境、OOD 时仍有合法 fallback 或明确失败。若只在训练布局上提升而在新布局显著退化，应报告为专门化收益，不称为泛化增强。
+
+**针对当前仓库的优先建议：先保留当前空间模型，在 timing 侧试 F-C1；若主要失败是空间通道选错，再增加静态/粗动态空间条件或 JointDual J1。** 条件化与联合建模是两条独立设计轴，逐项证明收益，再决定是否同时启用。
+
 ## 12. 参考文献与代码索引
 
 ### 12.1 原始论文与官方材料
@@ -1013,6 +1198,13 @@ ROS2 侧首版无需重写执行链：让新 backend 输出已有逐候选时间
 以下路径相对 MPD 仓库根目录，名称可直接用于代码检索：
 
 ~~~text
+mpd/models/diffusion_models/context_models.py
+mpd/models/diffusion_models/diffusion_model_base.py
+mpd/models/diffusion_models/models.py
+mpd/datasets/trajectories_dataset_bspline.py
+scripts/train/train.py
+scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-factorized.yaml
+scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml
 mpd/inference/space_time_guidance.py
 mpd/inference/learned_timing.py
 mpd/inference/factorized_sampler.py
