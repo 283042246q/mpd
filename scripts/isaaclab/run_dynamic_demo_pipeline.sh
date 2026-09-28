@@ -19,6 +19,8 @@ FACTORIZED_METHOD="f1"
 FACTORIZED_METHOD_EXPLICIT=false
 FACTORIZED_TIMING_CHECKPOINT=""
 FACTORIZED_ADAPT_SPATIAL_BASIS=false
+CORRIDOR_A=false
+CORRIDOR_A_WEIGHT="0.1"
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=1.0
@@ -59,6 +61,8 @@ usage() {
     "  --factorized-method M   Factorized method: f1, f2, or f3 (default: f1)" \
     "  --factorized-timing-checkpoint P  Learned c or tau_r checkpoint" \
     "  --factorized-adapt-spatial-basis  Explicitly adapt 29-point timing conditioning to the runtime basis" \
+    "  --corridor-a            Enable time corridor cost (phase5_joint or factorized f1 only)" \
+    "  --corridor-a-weight W   Corridor interval cost weight (default: 0.1)" \
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
@@ -98,6 +102,8 @@ while (($#)); do
     --factorized-method) FACTORIZED_METHOD="$2"; FACTORIZED_METHOD_EXPLICIT=true; shift 2 ;;
     --factorized-timing-checkpoint) FACTORIZED_TIMING_CHECKPOINT="$2"; shift 2 ;;
     --factorized-adapt-spatial-basis) FACTORIZED_ADAPT_SPATIAL_BASIS=true; shift ;;
+    --corridor-a) CORRIDOR_A=true; shift ;;
+    --corridor-a-weight) CORRIDOR_A_WEIGHT="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
@@ -186,6 +192,10 @@ if [[ "$PHASE" != "phase5" && "$TIMING_MODE_EXPLICIT" == true ]]; then
 fi
 if [[ "$PHASE" != "factorized" && "$FACTORIZED_METHOD_EXPLICIT" == true ]]; then
   printf '%s\n' '--factorized-method is only valid with --phase factorized' >&2
+  exit 2
+fi
+if [[ "$CORRIDOR_A" == true && ! ( "$PHASE" == "phase5" && "$TIMING_MODE" == "phase5_joint" ) && ! ( "$PHASE" == "factorized" && "$FACTORIZED_METHOD" == "f1" ) ]]; then
+  printf '%s\n' '--corridor-a requires phase5_joint or factorized f1' >&2
   exit 2
 fi
 if [[ "$PHASE" == "factorized" ]]; then
@@ -296,6 +306,9 @@ case "$PHASE" in
     TIMING_LABEL="$TIMING_MODE"
     HEALTH_TIMEOUT_S=10
     SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")
+    if [[ "$CORRIDOR_A" == true ]]; then
+      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT")
+    fi
     SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")
     if [[ "$PHASE5_MPD_GUIDANCE" == "off" ]]; then
       SERVER_EXTRA_ARGS+=(--no-dynamic-guidance)
@@ -312,6 +325,9 @@ case "$PHASE" in
     TIMING_LABEL="$FACTORIZED_METHOD"
     HEALTH_TIMEOUT_S=10
     SERVER_EXTRA_ARGS+=(--method "$FACTORIZED_METHOD")
+    if [[ "$CORRIDOR_A" == true ]]; then
+      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT")
+    fi
     SERVER_EXTRA_ARGS+=(--timing-checkpoint "$FACTORIZED_TIMING_CHECKPOINT")
     SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")
     if [[ "$FACTORIZED_ADAPT_SPATIAL_BASIS" == true ]]; then

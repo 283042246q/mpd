@@ -48,6 +48,12 @@ def test_pipeline_rejects_phase5_timing_mode_for_phase4():
     assert "--timing-mode is only valid with --phase phase5" in result.stderr
 
 
+def test_corridor_a_rejects_unsupported_phase_before_startup():
+    result = _run("--phase", "phase4", "--corridor-a")
+    assert result.returncode == 2
+    assert "--corridor-a requires phase5_joint or factorized f1" in result.stderr
+
+
 def test_pipeline_exposes_factorized_phase_and_requires_a_checkpoint():
     help_result = _run("--help")
     assert "--factorized-method M" in help_result.stdout
@@ -185,8 +191,9 @@ def test_pipeline_isolates_fake_hardware_in_a_ros_domain():
     assert 'PIPELINE_ROS_DOMAIN_ID=""' in source
     assert 'PIPELINE_ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-}"' not in source
     assert 'PIPELINE_ROS_DOMAIN_ID=$((100 + ($$ % 100)))' in source
-    assert 'pixi run env ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID"' in source
+    assert "pixi run env -u CYCLONEDDS_URI" in source
+    assert 'ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID"' in source
     assert (
         'timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \\\n'
-        '  pixi run env ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID"' in source
+        '  pixi run env -u CYCLONEDDS_URI' in source
     )

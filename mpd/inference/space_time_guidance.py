@@ -9,6 +9,7 @@ both variables from the same autograd graph.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import math
 from typing import Any
 
 import torch
@@ -62,6 +63,14 @@ class SpaceTimeGuidanceSettings:
     duration_weight: float = 0.2
     timing_smoothness_weight: float = 0.02
     collision_power: float = 2.0
+    corridor_a_enabled: bool = False
+    corridor_a_weight: float = 0.1
+    corridor_a_phase_points: int = 32
+    corridor_a_time_step_s: float = 0.2
+    corridor_a_time_margin_s: float = 0.05
+    corridor_a_clearance_m: float = 0.0
+    corridor_a_steps: int = 20
+    corridor_a_learning_rate: float = 0.04
 
     @classmethod
     def from_mapping(cls, values: Any, *, mode: str | None = None):
@@ -85,6 +94,23 @@ class SpaceTimeGuidanceSettings:
             raise ValueError("dynamic collision alpha must lie in [0, 1]")
         if not 0.0 < settings.dynamic_collision_cvar_fraction <= 1.0:
             raise ValueError("dynamic collision CVaR fraction must lie in (0, 1]")
+        if settings.corridor_a_enabled and settings.mode != "phase5_joint":
+            raise ValueError("Corridor A is supported only by phase5_joint and F1")
+        corridor_numbers = (
+            settings.corridor_a_weight, settings.corridor_a_time_step_s,
+            settings.corridor_a_time_margin_s, settings.corridor_a_clearance_m,
+            settings.corridor_a_learning_rate,
+        )
+        if not all(math.isfinite(value) for value in corridor_numbers):
+            raise ValueError("Corridor A settings must be finite")
+        if settings.corridor_a_weight < 0.0 or settings.corridor_a_phase_points < 3:
+            raise ValueError("Corridor A weight/phase points are invalid")
+        if settings.corridor_a_time_step_s <= 0.0 or settings.corridor_a_time_margin_s < 0.0:
+            raise ValueError("Corridor A time grid/margin is invalid")
+        if settings.corridor_a_clearance_m < 0.0 or settings.corridor_a_steps < 1:
+            raise ValueError("Corridor A clearance/steps are invalid")
+        if settings.corridor_a_learning_rate <= 0.0:
+            raise ValueError("Corridor A learning rate must be positive")
         return settings
 
 

@@ -21,6 +21,8 @@ class FactorizedMpdRuntimeEngine(SpaceTimeMpdRuntimeEngine):
         timing_model, payload = load_timing_checkpoint(self.timing_checkpoint)
         kwargs["timing_mode"] = "phase5_joint"  # internal validator compatibility
         settings = dict(kwargs.pop("space_time_settings", {}) or {})
+        if settings.get("corridor_a_enabled") and self.factorized_settings.method != "f1":
+            raise ValueError("Corridor A is supported only by F1 factorized timing")
         settings.setdefault("duration_min", 2.)
         settings.setdefault("duration_max", 14.)
         kwargs["space_time_settings"] = settings

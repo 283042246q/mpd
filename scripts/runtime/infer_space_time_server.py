@@ -36,6 +36,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-max", type=float, default=14.0)
     parser.add_argument("--nominal-duration", type=float, default=10.0)
     parser.add_argument("--timing-learning-rate", type=float, default=0.08)
+    parser.add_argument("--corridor-a", action="store_true", help="Enable fixed-path time corridor refinement (phase5_joint only).")
+    parser.add_argument("--corridor-a-weight", type=float, default=0.1)
+    parser.add_argument("--corridor-a-phase-points", type=int, default=32)
+    parser.add_argument("--corridor-a-time-step-s", type=float, default=0.2)
+    parser.add_argument("--corridor-a-time-margin-s", type=float, default=0.05)
+    parser.add_argument("--corridor-a-clearance-m", type=float, default=0.0)
+    parser.add_argument("--corridor-a-steps", type=int, default=20)
+    parser.add_argument("--corridor-a-learning-rate", type=float, default=0.04)
     parser.add_argument("--spatial-dynamic-max-grad-norm", type=float, default=2.0)
     parser.add_argument(
         "--dynamic-guidance",
@@ -89,6 +97,14 @@ def main(argv=None) -> int:
         "duration_max": args.duration_max,
         "nominal_duration": args.nominal_duration,
         "timing_learning_rate": args.timing_learning_rate,
+        "corridor_a_enabled": args.corridor_a,
+        "corridor_a_weight": args.corridor_a_weight,
+        "corridor_a_phase_points": args.corridor_a_phase_points,
+        "corridor_a_time_step_s": args.corridor_a_time_step_s,
+        "corridor_a_time_margin_s": args.corridor_a_time_margin_s,
+        "corridor_a_clearance_m": args.corridor_a_clearance_m,
+        "corridor_a_steps": args.corridor_a_steps,
+        "corridor_a_learning_rate": args.corridor_a_learning_rate,
         "spatial_dynamic_max_grad_norm": args.spatial_dynamic_max_grad_norm,
         "dynamic_guidance_enabled": args.dynamic_guidance,
     }
