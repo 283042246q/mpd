@@ -701,8 +701,6 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
 
 
 def _timing_profile_mode(mode: str) -> str:
-    if mode.endswith("_corridor_a"):
-        mode = mode[: -len("_corridor_a")]
     if mode in {"scalar_duration", "timing_only"}:
         return "joint"
     if mode in {"f1", "f2", "f3"}:

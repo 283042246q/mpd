@@ -23,13 +23,36 @@ DEFAULT_MODES = (
     "phase4",
     "phase4_aligned",
     "joint",
+    "joint_corridor_a",
     "f1_c",
+    "f1_c_corridor_a",
     "f2_c",
     "f3_c",
     "f1_tau_r",
+    "f1_tau_r_corridor_a",
     "f2_tau_r",
     "f3_tau_r",
 )
+
+
+def measure_first_plan_completion(manifest_path: Path) -> float | None:
+    """World start to the first successful MPD result created by the worker."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    world_start_ns = manifest.get("world_start_unix_ns")
+    if world_start_ns is None:
+        return None
+    completed = []
+    for result_path in (manifest_path.parent.parent / "planner-results").glob("*/result.json"):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if result.get("status") != "success":
+            continue
+        created = result.get("created_unix_time")
+        if isinstance(created, (int, float)) and math.isfinite(float(created)):
+            completed.append(float(created))
+    return min(completed) - int(world_start_ns) * 1e-9 if completed else None
 
 
 def _trajectory_times(archive: Any) -> np.ndarray:
@@ -132,10 +155,17 @@ def analyze_logs(
         for mode in modes
     }
     skipped = defaultdict(int)
+    first_plan_times: dict[str, list[float]] = {mode: [] for mode in modes}
     for manifest_path in logs_root.rglob("replay-manifest.json"):
         mode = next((part for part in manifest_path.parts if part in mode_set), None)
         if mode is None:
             continue
+        try:
+            first_plan = measure_first_plan_completion(manifest_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            first_plan = None
+        if first_plan is not None and math.isfinite(first_plan):
+            first_plan_times[mode].append(first_plan)
         for threshold in thresholds_rad:
             key = f"{threshold:.6g}"
             try:
@@ -157,6 +187,7 @@ def analyze_logs(
             for key, entries in measurements[mode].items()
         }
         summaries[mode]["skipped_measurements"] = skipped[mode]
+        summaries[mode]["first_plan_completed_from_world_s"] = _describe(first_plan_times[mode])
     return {
         "schema": "mpd_todrawer_mode_motion_start_audit",
         "schema_version": 1,

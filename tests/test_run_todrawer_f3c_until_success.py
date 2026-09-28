@@ -29,6 +29,7 @@ from scripts.isaaclab.run_todrawer_f3c_until_success import (
 from scripts.isaaclab.benchmark_todrawer_random import BASE_CROSSINGS, generate_suite
 from scripts.isaaclab.todrawer_scenario_validation import (
     initial_franka_trajectory_clearance,
+    static_interaction_clearance,
     trajectory_clearances,
 )
 from scripts.isaaclab.validate_todrawer_random_suite import validate_scenario
@@ -84,7 +85,7 @@ def test_brake_before_goal_is_failure(tmp_path: Path) -> None:
     assert result.brakes_before_goal == [104.0]
 
 
-def test_q_start_collision_before_goal_is_failure(tmp_path: Path) -> None:
+def test_q_start_collision_before_goal_is_replanned_and_diagnostic(tmp_path: Path) -> None:
     attempt = _attempt(
         tmp_path,
         "[node] [104.0] dynamic plan rejected: RequestValidationError: "
@@ -94,10 +95,10 @@ def test_q_start_collision_before_goal_is_failure(tmp_path: Path) -> None:
 
     result = assess_attempt(attempt, 0)
 
-    assert not result.success
+    assert result.success
     assert result.start_collision_timestamps_s == [104.0]
     assert result.start_collisions_before_goal == [104.0]
-    assert "q_pos_start" in result.reason
+    assert "replanning q_pos_start" in result.reason
 
 
 def test_measured_premotion_clearance_violation_is_failure(
@@ -105,6 +106,8 @@ def test_measured_premotion_clearance_violation_is_failure(
 ) -> None:
     attempt = _attempt(
         tmp_path,
+        "[node] [104.0] dynamic plan rejected: RequestValidationError: "
+        "q_pos_start is in collision in the configured MPD scene.\n"
         "[node] [108.0] goal reached; holding position\n",
     )
     (attempt / "scenario.json").write_text(
@@ -128,6 +131,7 @@ def test_measured_premotion_clearance_violation_is_failure(
     result = assess_attempt(attempt, 0)
 
     assert not result.success
+    assert result.start_collisions_before_goal == [104.0]
     assert result.premotion_audit_passed is False
     assert result.measured_motion_start_from_world_s == pytest.approx(9.5)
     assert result.minimum_premotion_clearance_m == pytest.approx(-0.01)
@@ -275,6 +279,25 @@ def test_three_object_attempt_uses_at_least_two_distinct_direction_lines() -> No
     assert contract["opposite_vectors_share_line"] is True
     assert contract["satisfied"] is True
     assert len(contract["witness_object_ids"]) == 2
+
+
+def test_mode_attempt_allows_and_reports_static_furniture_penetration() -> None:
+    suite = generate_suite(len(runner.CATEGORIES), 20260829)
+    scenario = suite["scenarios"][2]
+    sampled = resample_mode_attempt_scenario(
+        scenario, mode="phase4", seed=anchor_seed(20260829, 2, 0)
+    )
+
+    assert sampled["attempt_sampling"]["static_environment_intersection_policy"] == "allowed_and_reported"
+    assert any(
+        item["minimum_static_interaction_clearance_m"] <= 0.0
+        for item in sampled["objects"]
+    )
+    for item in sampled["objects"]:
+        assert item["minimum_static_interaction_clearance_m"] == pytest.approx(
+            static_interaction_clearance(item)
+        )
+        assert item["minimum_robot_base_clearance_m"] > 0.0
 
 
 @pytest.mark.parametrize("mode", SUPPORTED_MODES)

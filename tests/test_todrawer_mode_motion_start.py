@@ -7,6 +7,7 @@ import pytest
 
 from scripts.isaaclab.analyze_todrawer_mode_motion_start import (
     analyze_logs,
+    measure_first_plan_completion,
     measure_manifest_motion_start,
 )
 
@@ -46,6 +47,11 @@ def _write_replay(tmp_path):
     }
     path = episode / "replay-manifest.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
+    result_dir = episode.parent / "planner-results" / "request-1"
+    result_dir.mkdir(parents=True)
+    (result_dir / "result.json").write_text(
+        json.dumps({"status": "success", "created_unix_time": 12.5}), encoding="utf-8"
+    )
     return path
 
 
@@ -59,6 +65,7 @@ def test_measure_manifest_motion_start_uses_joint_displacement_threshold(tmp_pat
     assert low["motion_start_from_world_s"] == pytest.approx(3.4)
     assert high["motion_start_from_world_s"] == pytest.approx(3.5)
     assert low["handoff_from_world_s"] == pytest.approx(3.2)
+    assert measure_first_plan_completion(manifest) == pytest.approx(2.5)
 
 
 def test_analyze_logs_groups_mode_and_threshold(tmp_path):
@@ -71,3 +78,4 @@ def test_analyze_logs_groups_mode_and_threshold(tmp_path):
     assert report["modes"]["f3_c"]["0.01"]["count"] == 1
     assert report["modes"]["f3_c"]["0.01"]["median"] == pytest.approx(3.4)
     assert report["modes"]["f3_c"]["0.02"]["median"] == pytest.approx(3.5)
+    assert report["modes"]["f3_c"]["first_plan_completed_from_world_s"]["median"] == pytest.approx(2.5)

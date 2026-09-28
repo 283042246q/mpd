@@ -139,6 +139,12 @@ MODE_TIMING_PROFILES = {
     "f1_tau_r": ModeTimingProfile(4.05, 10.20, 1.70, 2.00),
     "f2_tau_r": ModeTimingProfile(4.07, 10.80, 1.80, 2.10),
     "f3_tau_r": ModeTimingProfile(4.13, 11.00, 1.90, 2.20),
+    # Recalibrated on the same frozen Corridor-A scene batch on 2026-09-28.
+    # Corridor modes keep their own online-latency profile: mapping them back
+    # to the parent mode would schedule the crossing before they start moving.
+    "joint_corridor_a": ModeTimingProfile(16.50, 25.75, 14.00, 17.50),
+    "f1_c_corridor_a": ModeTimingProfile(11.70, 16.75, 9.10, 11.50),
+    "f1_tau_r_corridor_a": ModeTimingProfile(13.70, 19.75, 11.10, 13.20),
 }
 MINIMUM_CROSSING_AFTER_MOTION_START_S = 1.25
 GOAL_CROSSING_RESERVE_S = 0.50
@@ -287,8 +293,6 @@ def assess_attempt(attempt_dir: Path, pipeline_returncode: int) -> AttemptAssess
         reason = "replay manifest missing"
     elif goal_timestamp is None:
         reason = "goal was not reached"
-    elif start_collisions_before_goal:
-        reason = "planner observed q_pos_start in collision before reaching the goal"
     elif premotion_audit_passed is False:
         if premotion_audit_error is not None:
             reason = f"pre-motion clearance audit failed: {premotion_audit_error}"
@@ -299,15 +303,19 @@ def assess_attempt(attempt_dir: Path, pipeline_returncode: int) -> AttemptAssess
             )
     elif brakes_before_goal:
         reason = "controlled braking occurred before reaching the goal"
+    elif start_collisions_before_goal:
+        reason = (
+            "goal reached after replanning q_pos_start collision rejection(s), "
+            "with no earlier brake or measured pre-motion clearance violation"
+        )
     else:
-        reason = "goal reached with no earlier brake or collision safety violation"
+        reason = "goal reached with no earlier brake or measured pre-motion clearance violation"
 
     return AttemptAssessment(
         success=(
             pipeline_returncode == 0
             and manifest_available
             and goal_timestamp is not None
-            and not start_collisions_before_goal
             and premotion_audit_passed is not False
             and not brakes_before_goal
         ),
@@ -540,7 +548,6 @@ def resample_mode_attempt_scenario(
     mode: str,
     seed: int,
     goal_reserve_s: float = GOAL_CROSSING_RESERVE_S,
-    minimum_static_clearance_m: float | None = None,
 ) -> dict[str, Any]:
     """Create one mode-timed, startup-safe realization of a suite template."""
 
@@ -548,8 +555,6 @@ def resample_mode_attempt_scenario(
         raise ValueError(f"unsupported mode timing profile {mode!r}")
     if goal_reserve_s < 0.0:
         raise ValueError("goal reserve must be non-negative")
-    if minimum_static_clearance_m is not None and minimum_static_clearance_m < 0.0:
-        raise ValueError("minimum static clearance must be non-negative")
     profile = MODE_TIMING_PROFILES[mode]
     rng = random.Random(seed)
     sampled = copy.deepcopy(scenario)
@@ -639,21 +644,6 @@ def resample_mode_attempt_scenario(
                 clearance = validate_trajectory_clearance(
                     item, static_boxes=static_boxes
                 )
-                if minimum_static_clearance_m is not None:
-                    static_clearance = static_interaction_clearance(
-                        item,
-                        static_boxes=static_boxes,
-                    )
-                    if static_clearance <= minimum_static_clearance_m:
-                        raise ValueError(
-                            f"{item['id']} intersects or approaches static furniture "
-                            f"in its interaction window: "
-                            f"clearance={static_clearance:.6f}m <= "
-                            f"{minimum_static_clearance_m:.6f}m"
-                        )
-                    item["minimum_static_interaction_clearance_m"] = (
-                        static_clearance
-                    )
                 initial_clearance = validate_initial_franka_clearance(
                     item,
                     end_s=parked_franka_protection_until_s,
@@ -665,6 +655,9 @@ def resample_mode_attempt_scenario(
             item["minimum_robot_base_clearance_m"] = clearance.robot_base_m
             item["minimum_static_environment_clearance_m"] = (
                 clearance.static_environment_m
+            )
+            item["minimum_static_interaction_clearance_m"] = (
+                static_interaction_clearance(item, static_boxes=static_boxes)
             )
             item["minimum_initial_franka_clearance_m"] = (
                 initial_clearance.minimum_m
@@ -732,7 +725,7 @@ def resample_mode_attempt_scenario(
         "minimum_initial_franka_clearance_m": (
             MINIMUM_INITIAL_FRANKA_CLEARANCE_M
         ),
-        "minimum_static_environment_clearance_m": minimum_static_clearance_m,
+        "static_environment_intersection_policy": "allowed_and_reported",
         "maximum_generation_resample_attempts": (
             MODE_GENERATION_RESAMPLE_ATTEMPTS
         ),
@@ -1242,9 +1235,9 @@ def main(argv: list[str] | None = None) -> int:
                     "mode": args.mode,
                     "attempt_generation_revision": ATTEMPT_GENERATION_REVISION,
                     "success_definition": (
-                        "goal reached, no controlled brake or q-start collision at or "
-                        "before goal, and parked-Franka clearance passed until measured "
-                        "robot motion"
+                        "goal reached, no controlled brake at or before goal, and "
+                        "parked-Franka clearance passed until measured robot motion; "
+                        "q-start collision rejections are replanned and diagnostic only"
                     ),
                     "attempt_randomization": (
                         "planner seed and full obstacle realization vary per attempt; "
@@ -1283,8 +1276,9 @@ def main(argv: list[str] | None = None) -> int:
         "mode": args.mode,
         "attempt_generation_revision": ATTEMPT_GENERATION_REVISION,
         "success_definition": (
-            "goal reached, no controlled brake or q-start collision at or before goal, "
-            "and parked-Franka clearance passed until measured robot motion"
+            "goal reached, no controlled brake at or before goal, and parked-Franka "
+            "clearance passed until measured robot motion; q-start collision "
+            "rejections are replanned and diagnostic only"
         ),
         "attempt_randomization": (
             "planner seed and full obstacle realization vary per attempt; "

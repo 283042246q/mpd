@@ -345,15 +345,14 @@ def test_ablation_modes_reuse_parent_timing_profiles(mode, profile):
 
 
 @pytest.mark.parametrize(
-    ("enabled", "baseline"),
-    [
-        ("joint_corridor_a", "joint"),
-        ("f1_tau_r_corridor_a", "f1_tau_r"),
-        ("f1_c_corridor_a", "f1_c"),
-    ],
+    "mode",
+    ["joint_corridor_a", "f1_tau_r_corridor_a", "f1_c_corridor_a"],
 )
-def test_corridor_modes_reuse_exact_parent_timing_profile(enabled, baseline):
-    assert _timing_profile_mode(enabled) == baseline
+def test_corridor_modes_use_independent_timing_profiles(mode):
+    from scripts.isaaclab.run_todrawer_f3c_until_success import MODE_TIMING_PROFILES
+
+    assert _timing_profile_mode(mode) == mode
+    assert mode in MODE_TIMING_PROFILES
 
 
 def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
@@ -824,8 +823,19 @@ def test_corridor_comparison_dry_run_pairs_world_seed_and_checkpoints(tmp_path):
         ("f1_tau_r", "f1_tau_r_corridor_a"),
         ("f1_c", "f1_c_corridor_a"),
     ):
-        assert scenarios[baseline]["objects"] == scenarios[enabled]["objects"]
-        assert scenarios[baseline]["anchor_schedule"] == scenarios[enabled]["anchor_schedule"]
+        assert _shared_object_geometry(scenarios[baseline]) == _shared_object_geometry(
+            scenarios[enabled]
+        )
+        assert min(
+            item["crossing_time_s"] for item in scenarios[enabled]["objects"]
+        ) > min(item["crossing_time_s"] for item in scenarios[baseline]["objects"])
+        assert [
+            (item["anchor_id"], item["schedule_role"])
+            for item in scenarios[baseline]["anchor_schedule"]
+        ] == [
+            (item["anchor_id"], item["schedule_role"])
+            for item in scenarios[enabled]["anchor_schedule"]
+        ]
         assert specs[baseline]["phase"] == specs[enabled]["phase"]
         if baseline.startswith("f1"):
             assert specs[baseline]["factorized_timing_checkpoint"] == specs[enabled]["factorized_timing_checkpoint"]
