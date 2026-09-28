@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import re
+import time
 from types import SimpleNamespace
 
 import yaml
@@ -198,10 +199,7 @@ def _materialize(
 
 def _verify_fingerprints(manifest: dict, tasks: dict) -> None:
     generation_config = Path(manifest["generation_config"])
-    if (
-        not generation_config.is_file()
-        or _sha256(generation_config) != manifest["generation_config_sha256"]
-    ):
+    if not generation_config.is_file() or _sha256(generation_config) != manifest["generation_config_sha256"]:
         raise RuntimeError(f"Pinned cooperative generation config changed: {generation_config}")
     for model in manifest["models"]:
         for path_key, hash_key in (
@@ -215,6 +213,37 @@ def _verify_fingerprints(manifest: dict, tasks: dict) -> None:
         path = Path(task["request_path"])
         if not path.is_file() or _sha256(path) != manifest["request_sha256"][str(path.resolve())]:
             raise RuntimeError(f"Frozen request changed: {path}")
+
+
+def _read_trial_report(path: Path):
+    if not path.is_file():
+        return None
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    required = ("status", "model", "scenario", "task_index", "inference_seed", "wall_seconds")
+    return row if isinstance(row, dict) and all(key in row for key in required) else None
+
+
+def _preserve_incomplete(path: Path) -> None:
+    """Keep interrupted artifacts for inspection before replacing them."""
+
+    if path.is_file():
+        path.rename(path.with_name(f"{path.name}.incomplete-{time.time_ns()}"))
+
+
+def _ensure_trial_request(path: Path, request: dict) -> None:
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            _preserve_incomplete(path)
+        else:
+            if existing != request:
+                raise ValueError(f"Existing trial request differs from frozen task: {path}")
+            return
+    _atomic_json(path, request)
 
 
 def _run(output: Path, manifest: dict, tasks: dict) -> None:
@@ -236,10 +265,22 @@ def _run(output: Path, manifest: dict, tasks: dict) -> None:
                     / f"seed-{seed}"
                 )
                 report_path = artifact / "benchmark-result.json"
-                if report_path.is_file():
+                completed = _read_trial_report(report_path)
+                if completed is not None:
+                    if (
+                        completed["model"] != model["id"]
+                        or completed["scenario"] != task["scenario"]
+                        or completed["task_index"] != task["task_index"]
+                        or completed["inference_seed"] != int(seed)
+                    ):
+                        raise ValueError(f"Existing trial result belongs to a different task: {report_path}")
                     continue
+                _preserve_incomplete(report_path)
                 request_path = artifact / "input-request.json"
-                _immutable_json(request_path, request)
+                _ensure_trial_request(request_path, request)
+                # An interrupted attempt may have left a result.json behind.
+                # Keep it, but never let execute_case classify it as this run.
+                _preserve_incomplete(artifact / "result.json")
                 run_args = SimpleNamespace(
                     request=request_path,
                     start_goal_source="regions",
@@ -286,8 +327,9 @@ def _collect_rows(output: Path, manifest: dict, tasks: dict) -> list[dict]:
                     / f"seed-{seed}"
                     / "benchmark-result.json"
                 )
-                if path.is_file():
-                    rows.append(json.loads(path.read_text(encoding="utf-8")))
+                row = _read_trial_report(path)
+                if row is not None:
+                    rows.append(row)
     return rows
 
 

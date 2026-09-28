@@ -105,6 +105,7 @@ def test_frozen_requests_and_seed_are_shared_across_models(tmp_path, monkeypatch
     seen = []
 
     def fake_execute(config_path, artifact, run_args):
+        assert not (artifact / "result.json").exists()
         frozen = json.loads(run_args.request.read_text(encoding="utf-8"))
         seen.append((Path(config_path).stem, frozen, run_args.device))
         return {
@@ -126,6 +127,18 @@ def test_frozen_requests_and_seed_are_shared_across_models(tmp_path, monkeypatch
     summary = benchmark._summarize(output, manifest, tasks)
     assert summary["expected_runs"] == summary["completed_runs"] == 4
     assert all(row["success_rate"] == 1.0 for row in summary["by_model"])
+
+    interrupted = output / "runs/D-600k/easy/easy_near_to_middle/task-000/seed-11"
+    (interrupted / "input-request.json").write_bytes(b"")
+    (interrupted / "benchmark-result.json").write_bytes(b"")
+    (interrupted / "result.json").write_text('{"status":"success"}', encoding="utf-8")
+    assert benchmark._summarize(output, manifest, tasks)["completed_runs"] == 3
+    benchmark._run(output, manifest, tasks)
+    assert len(seen) == 5
+    assert benchmark._summarize(output, manifest, tasks)["completed_runs"] == 4
+    assert list(interrupted.glob("input-request.json.incomplete-*"))
+    assert list(interrupted.glob("benchmark-result.json.incomplete-*"))
+    assert list(interrupted.glob("result.json.incomplete-*"))
 
     checkpoints[0].write_bytes(b"changed")
     import pytest
