@@ -209,7 +209,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                 "guidance_mode": self.space_time_settings.mode,
                 "factorized_method": (self.factorized_settings.method if factorized else None),
                 "factorized_representation": (
-                    self.factorized_settings.representation if factorized else None
+                    self.timing_representation if factorized else None
                 ),
                 "corridor_variant": "corridor_a",
             }
