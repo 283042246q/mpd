@@ -176,8 +176,9 @@ MAX_GENERATION_RESAMPLE_ATTEMPTS = 50
 DEFAULT_ANCHOR_JITTER_M = 0.015
 DENSE_ANCHOR_JITTER_M = 0.020
 GENERATION_REVISION = "world-clock-robot-aware-crossings-v1"
-BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v3"
+BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v4-dual-protocol"
 TIMING_PROTOCOLS = ("absolute_world_time", "motion_aligned")
+TIMING_PROTOCOL_CHOICES = (*TIMING_PROTOCOLS, "both")
 DEFAULT_TIMING_PROTOCOL = "motion_aligned"
 DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY = 5
 DEFAULT_PLANNER_REPEATS = 5
@@ -891,12 +892,28 @@ def _materialize_timing_variant(
     return variant
 
 
-def materialize_scenario_for_mode(environment: dict[str, Any], mode: str) -> dict[str, Any]:
-    variants = environment.get("benchmark_mode_variants", {})
+def materialize_scenario_for_mode(
+    environment: dict[str, Any],
+    mode: str,
+    *,
+    timing_protocol: str | None = None,
+) -> dict[str, Any]:
+    protocol_variants = environment.get("benchmark_protocol_variants")
+    if protocol_variants is not None:
+        if timing_protocol not in protocol_variants:
+            raise ValueError(
+                f"environment {environment.get('id')} has no variants for protocol "
+                f"{timing_protocol!r}"
+            )
+        variants = protocol_variants[timing_protocol]
+    else:
+        variants = environment.get("benchmark_mode_variants", {})
     if mode not in variants:
         raise ValueError(f"environment {environment.get('id')} has no variant for {mode}")
     scenario = copy.deepcopy(environment)
-    stored = scenario.pop("benchmark_mode_variants")[mode]
+    scenario.pop("benchmark_mode_variants", None)
+    scenario.pop("benchmark_protocol_variants", None)
+    stored = variants[mode]
     for key, value in stored.items():
         scenario[key] = copy.deepcopy(value)
     return scenario
@@ -913,8 +930,9 @@ def generate_benchmark_suite(
 
     if environment_count_per_category < 1:
         raise ValueError("environment_count_per_category must be positive")
-    if timing_protocol not in TIMING_PROTOCOLS:
+    if timing_protocol not in TIMING_PROTOCOL_CHOICES:
         raise ValueError(f"unsupported timing protocol {timing_protocol!r}")
+    requested_protocols = TIMING_PROTOCOLS if timing_protocol == "both" else (timing_protocol,)
     selected_modes = tuple(dict.fromkeys(str(mode) for mode in modes))
     unknown_modes = sorted(set(selected_modes) - set(MODE_SPECS))
     if not selected_modes or unknown_modes:
@@ -943,48 +961,61 @@ def generate_benchmark_suite(
                     mode=reference_mode,
                     seed=geometry_seed,
                 )
-                variants = {
-                    mode: _materialize_timing_variant(
-                        geometry,
-                        template,
-                        mode=mode,
-                        protocol=timing_protocol,
-                        timing_fraction=timing_fraction,
-                        static_boxes=static_boxes,
-                    )
-                    for mode in selected_modes
+                variants_by_protocol = {
+                    protocol: {
+                        mode: _materialize_timing_variant(
+                            geometry,
+                            template,
+                            mode=mode,
+                            protocol=protocol,
+                            timing_fraction=timing_fraction,
+                            static_boxes=static_boxes,
+                        )
+                        for mode in selected_modes
+                    }
+                    for protocol in requested_protocols
                 }
             except (RuntimeError, ValueError) as error:
                 last_error = error
                 continue
-            canonical = copy.deepcopy(variants[selected_modes[0]])
+            canonical = copy.deepcopy(
+                variants_by_protocol[requested_protocols[0]][selected_modes[0]]
+            )
             canonical["environment_index"] = environment_index
             canonical["environment_seed"] = geometry_seed
             canonical["environment_generation_attempt"] = generation_attempt
             canonical["benchmark_environment"] = {
                 "timing_protocol": timing_protocol,
+                "timing_protocols": list(requested_protocols),
                 "environment_index_within_category": environment_index,
                 "seed": geometry_seed,
                 "generation_attempt": generation_attempt,
                 "geometry_shared_across_modes": True,
                 "planner_seed_independent": True,
             }
-            canonical["benchmark_mode_variants"] = {
-                mode: {
-                    key: copy.deepcopy(value)
-                    for key, value in variant.items()
-                    if key
-                    in {
-                        "objects",
-                        "anchor_schedule",
-                        "primary_crossing_window_s",
-                        "mode_timing_profile",
-                        "benchmark_timing",
-                        "attempt_sampling",
-                    }
-                }
-                for mode, variant in variants.items()
+            stored_keys = {
+                "objects",
+                "anchor_schedule",
+                "primary_crossing_window_s",
+                "mode_timing_profile",
+                "benchmark_timing",
+                "attempt_sampling",
             }
+            stored_variants = {
+                protocol: {
+                    mode: {
+                        key: copy.deepcopy(value)
+                        for key, value in variant.items()
+                        if key in stored_keys
+                    }
+                    for mode, variant in protocol_modes.items()
+                }
+                for protocol, protocol_modes in variants_by_protocol.items()
+            }
+            if timing_protocol == "both":
+                canonical["benchmark_protocol_variants"] = stored_variants
+            else:
+                canonical["benchmark_mode_variants"] = stored_variants[timing_protocol]
             accepted = canonical
             break
         if accepted is None:
@@ -996,12 +1027,13 @@ def generate_benchmark_suite(
         environments.append(accepted)
     return {
         "schema": "mpd_todrawer_random_suite",
-        "schema_version": 5,
+        "schema_version": 6,
         "suite_seed": seed,
         "scenario_count": len(environments),
         "environment_count_per_category": environment_count_per_category,
         "planner_repeats": None,
         "timing_protocol": timing_protocol,
+        "timing_protocols": list(requested_protocols),
         "modes": list(selected_modes),
         "categories": list(CATEGORIES),
         "category_definitions": templates["category_definitions"],
@@ -1009,6 +1041,7 @@ def generate_benchmark_suite(
             **templates["generation_policy"],
             "revision": BENCHMARK_GENERATION_REVISION,
             "timing_protocol": timing_protocol,
+            "timing_protocols": list(requested_protocols),
             "geometry_shared_across_modes": True,
             "environment_count_per_category": environment_count_per_category,
             "environment_randomized_fields": [
@@ -1054,7 +1087,11 @@ def _scenario_path(
     scenario_id: str,
     mode: str,
     timing_protocol: str,
+    *,
+    paired_protocols: bool = False,
 ) -> Path:
+    if paired_protocols:
+        return output_dir / "scenarios" / timing_protocol / scenario_id / f"{mode}.json"
     if timing_protocol == "absolute_world_time":
         return output_dir / "scenarios" / f"{scenario_id}.json"
     return output_dir / "scenarios" / scenario_id / f"{mode}.json"
@@ -1094,6 +1131,9 @@ def materialize_suite(
         modes=selected_modes,
     )
     suite["planner_repeats"] = planner_repeats
+    requested_protocols = suite.get("timing_protocols") or (
+        list(TIMING_PROTOCOLS) if timing_protocol == "both" else [timing_protocol]
+    )
     for environment in suite["scenarios"]:
         if timing_protocol == "absolute_world_time":
             scenario = materialize_scenario_for_mode(environment, selected_modes[0])
@@ -1106,7 +1146,7 @@ def materialize_suite(
                 ),
                 scenario,
             )
-        else:
+        elif timing_protocol == "motion_aligned":
             for mode in selected_modes:
                 _write_json(
                     _scenario_path(
@@ -1117,6 +1157,21 @@ def materialize_suite(
                     ),
                     materialize_scenario_for_mode(environment, mode),
                 )
+        else:
+            for protocol in requested_protocols:
+                for mode in selected_modes:
+                    _write_json(
+                        _scenario_path(
+                            output_dir,
+                            environment["id"],
+                            mode,
+                            protocol,
+                            paired_protocols=True,
+                        ),
+                        materialize_scenario_for_mode(
+                            environment, mode, timing_protocol=protocol
+                        ),
+                    )
     _write_json(suite_path, suite)
     return suite
 
@@ -1639,9 +1694,13 @@ def _paired_summary(
     rows: list[dict[str, Any]], mode_names: tuple[str, ...] | list[str] | None = None
 ) -> dict[str, Any]:
     modes_to_pair = _report_modes(rows, mode_names)
-    grouped: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, int], dict[str, dict[str, Any]]] = {}
     for row in rows:
-        key = (str(row.get("scenario_id")), int(row.get("repeat", 0)))
+        key = (
+            str(row.get("timing_protocol")),
+            str(row.get("scenario_id")),
+            int(row.get("repeat", 0)),
+        )
         grouped.setdefault(key, {})[str(row.get("mode"))] = row
     complete_cells = [
         modes
@@ -1690,14 +1749,37 @@ def write_reports(
         for difficulty in DIFFICULTIES
     }
     paired = _paired_summary(rows, report_modes)
+    reported_protocols = tuple(
+        dict.fromkeys(
+            suite.get("timing_protocols")
+            or [
+                str(row.get("timing_protocol"))
+                for row in rows
+                if row.get("timing_protocol") is not None
+            ]
+            or [suite.get("timing_protocol", DEFAULT_TIMING_PROTOCOL)]
+        )
+    )
+    by_timing_protocol = {}
+    for protocol in reported_protocols:
+        protocol_rows = [row for row in rows if row.get("timing_protocol") == protocol]
+        by_timing_protocol[protocol] = {
+            "run_count": len(protocol_rows),
+            "by_mode": {
+                mode: _aggregate([row for row in protocol_rows if row.get("mode") == mode])
+                for mode in report_modes
+            },
+            "paired": _paired_summary(protocol_rows, report_modes),
+        }
     summary = {
         "schema": "mpd_todrawer_random_benchmark_report",
-        "schema_version": 5,
+        "schema_version": 6,
         "suite_seed": suite["suite_seed"],
         "scenario_count": suite["scenario_count"],
         "environment_count_per_category": suite.get("environment_count_per_category"),
         "planner_repeats": suite.get("planner_repeats"),
         "timing_protocol": suite.get("timing_protocol"),
+        "timing_protocols": list(reported_protocols),
         "run_count": len(rows),
         "modes": list(report_modes),
         "metric_semantics": {
@@ -1718,7 +1800,12 @@ def write_reports(
                 "includes initial warm-up and any rejected earlier requests"
             ),
             "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
+            "timing_protocol_comparison": (
+                "motion_aligned compares crossing difficulty relative to each mode's measured "
+                "motion start; absolute_world_time preserves the real online penalty of slower modes"
+            ),
         },
+        "by_timing_protocol": by_timing_protocol,
         "by_mode": by_mode,
         "by_category": by_category,
         "by_difficulty": by_difficulty,
@@ -1751,6 +1838,34 @@ def write_reports(
     ]
     for category in CATEGORIES:
         lines.append(f"| {category} | {DIFFICULTY_BY_CATEGORY[category]} | " f"{CATEGORY_DESCRIPTIONS[category]} |")
+    if len(reported_protocols) > 1:
+        lines.extend(
+            [
+                "",
+                "## 时间协议分开汇总",
+                "",
+                "`motion_aligned` 比较机器人真正开始运动后的相对 crossing 难度；"
+                "`absolute_world_time` 保留慢模式在真实在线系统中的启动延迟代价。",
+            ]
+        )
+        for protocol in reported_protocols:
+            lines.extend(
+                [
+                    "",
+                    f"### `{protocol}`",
+                    "",
+                    "| 模式 | 完成/总数 | first plan mean s | goal mean s | inference mean s | Corridor profiled total mean s |",
+                    "|---|---:|---:|---:|---:|---:|",
+                ]
+            )
+            for mode, data in by_timing_protocol[protocol]["by_mode"].items():
+                lines.append(
+                    f"| {mode} | {data['completed']}/{data['runs']} | "
+                    f"{_fmt(data['first_plan_completed_from_world_s']['mean'])} | "
+                    f"{_fmt(data['goal_time_s']['mean'])} | "
+                    f"{_fmt(data['inference_total_s']['mean'])} | "
+                    f"{_fmt(data['corridor_a_profiled_total_s']['mean'])} |"
+                )
     lines.extend(
         [
             "",
@@ -1998,8 +2113,18 @@ def write_reports(
     (reports / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _attempt_dir(output_dir: Path, scenario_id: str, repeat: int, mode: str) -> Path:
-    root = output_dir / "runs" / scenario_id / f"repeat-{repeat:02d}" / mode
+def _attempt_dir(
+    output_dir: Path,
+    scenario_id: str,
+    repeat: int,
+    mode: str,
+    *,
+    timing_protocol: str | None = None,
+) -> Path:
+    root = output_dir / "runs" / scenario_id / f"repeat-{repeat:02d}"
+    if timing_protocol is not None:
+        root /= timing_protocol
+    root /= mode
     root.mkdir(parents=True, exist_ok=True)
     existing = sorted(root.glob("attempt-*"))
     return root / f"attempt-{len(existing) + 1:03d}"
@@ -2027,7 +2152,12 @@ def _existing_rows(output_dir: Path) -> list[dict[str, Any]]:
             continue
     history: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (row.get("scenario_id"), row.get("repeat"), row.get("mode"))
+        key = (
+            row.get("scenario_id"),
+            row.get("repeat"),
+            row.get("timing_protocol"),
+            row.get("mode"),
+        )
         history.setdefault(key, []).append(row)
     latest = {}
     for key, attempts in history.items():
@@ -2042,6 +2172,7 @@ def _existing_rows(output_dir: Path) -> list[dict[str, Any]]:
         key=lambda row: (
             str(row.get("scenario_id")),
             int(row.get("repeat", 0)),
+            str(row.get("timing_protocol")),
             str(row.get("mode")),
         ),
     )
@@ -2103,13 +2234,27 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     existing_rows = _existing_rows(output_dir)
     existing_by_key = {
-        (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode")): row for row in existing_rows
+        (
+            row.get("scenario_id"),
+            int(row.get("repeat", 0)),
+            row.get("timing_protocol"),
+            row.get("mode"),
+        ): row
+        for row in existing_rows
     }
     completed_keys = {
-        (row.get("scenario_id"), int(row.get("repeat", 0)), row.get("mode"))
+        (
+            row.get("scenario_id"),
+            int(row.get("repeat", 0)),
+            row.get("timing_protocol"),
+            row.get("mode"),
+        )
         for row in existing_rows
         if row.get("pipeline_completed")
     }
+    requested_protocols = (
+        TIMING_PROTOCOLS if args.timing_protocol == "both" else (args.timing_protocol,)
+    )
     failures = 0
     for repeat in range(args.planner_repeats):
         for scenario_index, scenario in enumerate(suite["scenarios"]):
@@ -2119,113 +2264,124 @@ def run_benchmark(args: argparse.Namespace) -> int:
             shift = (scenario_index + repeat) % len(modes)
             modes = modes[shift:] + modes[:shift]
             planner_seed = (args.suite_seed + 1009 * scenario_index + 9176 * repeat) % 2147483647
-            for mode in modes:
-                scenario_path = _scenario_path(
-                    output_dir,
-                    scenario["id"],
-                    mode,
-                    args.timing_protocol,
-                )
-                key = (scenario["id"], repeat, mode)
-                if key in completed_keys:
-                    print(f"[skip] completed {scenario['id']} repeat={repeat} mode={mode}")
-                    continue
-                prior = existing_by_key.get(key)
-                if args.retry_failure_class != "all" and (
-                    prior is None or prior.get("failure_class") != args.retry_failure_class
-                ):
-                    print(
-                        f"[skip] failure_class={None if prior is None else prior.get('failure_class')} "
-                        f"{scenario['id']} repeat={repeat} mode={mode}"
+            for timing_protocol in requested_protocols:
+                for mode in modes:
+                    scenario_path = _scenario_path(
+                        output_dir,
+                        scenario["id"],
+                        mode,
+                        timing_protocol,
+                        paired_protocols=args.timing_protocol == "both",
                     )
-                    continue
-                attempt_dir = _attempt_dir(output_dir, scenario["id"], repeat, mode)
-                phase, timing_mode = MODE_SPECS[mode]
-                run_spec = {
-                    "scenario_id": scenario["id"],
-                    "category": scenario["category"],
-                    "difficulty": scenario.get(
-                        "difficulty",
-                        DIFFICULTY_BY_CATEGORY.get(scenario["category"]),
-                    ),
-                    "repeat": repeat,
-                    "planner_repeat": repeat,
-                    "mode": mode,
-                    "corridor_a_enabled": mode in CORRIDOR_A_MODES,
-                    "phase": phase,
-                    "timing_mode": timing_mode,
-                    "planner_seed": planner_seed,
-                    "environment_seed": scenario.get("environment_seed"),
-                    "environment_index": scenario.get("environment_index"),
-                    "timing_protocol": args.timing_protocol,
-                    "scenario_file": scenario_path.as_posix(),
-                }
-                if phase == "factorized":
-                    factorized_method, factorized_representation, factorized_checkpoint = _factorized_mode_contract(
-                        args, mode
-                    )
-                    run_spec.update(
-                        factorized_method=factorized_method,
-                        factorized_representation=factorized_representation,
-                        factorized_timing_checkpoint=factorized_checkpoint.as_posix(),
-                        factorized_spatial_basis_adapted=(args.factorized_adapt_spatial_basis),
-                    )
-                command = [
-                    PIPELINE.as_posix(),
-                    "--profile",
-                    "to_drawer",
-                    "--phase",
-                    phase,
-                    "--world-scenario-file",
-                    scenario_path.as_posix(),
-                    "--planner-seed",
-                    str(planner_seed),
-                    "--duration-sec",
-                    str(args.duration_sec),
-                    "--plan-rate-hz",
-                    str(args.plan_rate_hz),
-                    "--output-dir",
-                    attempt_dir.as_posix(),
-                    "--allow-brake",
-                    "--skip-build",
-                ]
-                if args.ros_domain_id is not None:
-                    command.extend(("--ros-domain-id", str(args.ros_domain_id)))
-                if timing_mode is not None:
-                    command.extend(("--timing-mode", timing_mode))
-                if phase == "factorized":
-                    command.extend(
-                        (
-                            "--factorized-timing-checkpoint",
-                            factorized_checkpoint.as_posix(),
+                    key = (scenario["id"], repeat, timing_protocol, mode)
+                    if key in completed_keys:
+                        print(f"[skip] completed {scenario['id']} repeat={repeat} mode={mode}")
+                        continue
+                    prior = existing_by_key.get(key)
+                    if args.retry_failure_class != "all" and (
+                        prior is None or prior.get("failure_class") != args.retry_failure_class
+                    ):
+                        print(
+                            f"[skip] failure_class={None if prior is None else prior.get('failure_class')} "
+                            f"{scenario['id']} repeat={repeat} mode={mode}"
                         )
+                        continue
+                    attempt_dir = _attempt_dir(
+                        output_dir,
+                        scenario["id"],
+                        repeat,
+                        mode,
+                        timing_protocol=(
+                            timing_protocol if args.timing_protocol == "both" else None
+                        ),
                     )
-                    if args.factorized_adapt_spatial_basis:
-                        command.append("--factorized-adapt-spatial-basis")
-                command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
-                if mode in CORRIDOR_A_MODES:
-                    command.append("--corridor-a")
-                if not args.render:
-                    command.append("--skip-render")
-                _write_json(attempt_dir / "run-spec.json", {**run_spec, "command": command})
-                print(
-                    f"[run] {scenario['id']} category={scenario['category']} "
-                    f"repeat={repeat} mode={mode} seed={planner_seed}",
-                    flush=True,
-                )
-                if args.dry_run:
-                    continue
-                started = time.time()
-                returncode = _run_command(command, REPO_ROOT, attempt_dir / "pipeline.log")
-                metrics = extract_run_metrics(attempt_dir, run_spec, returncode)
-                metrics["wall_time_s"] = time.time() - started
-                _write_json(attempt_dir / "run-metrics.json", metrics)
-                rows = _existing_rows(output_dir)
-                write_reports(output_dir, rows, suite, args.modes)
-                if returncode != 0:
-                    failures += 1
-                    if args.fail_fast:
-                        return returncode
+                    phase, timing_mode = MODE_SPECS[mode]
+                    run_spec = {
+                        "scenario_id": scenario["id"],
+                        "category": scenario["category"],
+                        "difficulty": scenario.get(
+                            "difficulty",
+                            DIFFICULTY_BY_CATEGORY.get(scenario["category"]),
+                        ),
+                        "repeat": repeat,
+                        "planner_repeat": repeat,
+                        "mode": mode,
+                        "corridor_a_enabled": mode in CORRIDOR_A_MODES,
+                        "phase": phase,
+                        "timing_mode": timing_mode,
+                        "planner_seed": planner_seed,
+                        "environment_seed": scenario.get("environment_seed"),
+                        "environment_index": scenario.get("environment_index"),
+                        "timing_protocol": timing_protocol,
+                        "scenario_file": scenario_path.as_posix(),
+                    }
+                    if phase == "factorized":
+                        factorized_method, factorized_representation, factorized_checkpoint = _factorized_mode_contract(
+                            args, mode
+                        )
+                        run_spec.update(
+                            factorized_method=factorized_method,
+                            factorized_representation=factorized_representation,
+                            factorized_timing_checkpoint=factorized_checkpoint.as_posix(),
+                            factorized_spatial_basis_adapted=(args.factorized_adapt_spatial_basis),
+                        )
+                    command = [
+                        PIPELINE.as_posix(),
+                        "--profile",
+                        "to_drawer",
+                        "--phase",
+                        phase,
+                        "--world-scenario-file",
+                        scenario_path.as_posix(),
+                        "--planner-seed",
+                        str(planner_seed),
+                        "--duration-sec",
+                        str(args.duration_sec),
+                        "--plan-rate-hz",
+                        str(args.plan_rate_hz),
+                        "--output-dir",
+                        attempt_dir.as_posix(),
+                        "--allow-brake",
+                        "--skip-build",
+                    ]
+                    if args.ros_domain_id is not None:
+                        command.extend(("--ros-domain-id", str(args.ros_domain_id)))
+                    if timing_mode is not None:
+                        command.extend(("--timing-mode", timing_mode))
+                    if phase == "factorized":
+                        command.extend(
+                            (
+                                "--factorized-timing-checkpoint",
+                                factorized_checkpoint.as_posix(),
+                            )
+                        )
+                        if args.factorized_adapt_spatial_basis:
+                            command.append("--factorized-adapt-spatial-basis")
+                    command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
+                    if mode in CORRIDOR_A_MODES:
+                        command.append("--corridor-a")
+                    if not args.render:
+                        command.append("--skip-render")
+                    _write_json(attempt_dir / "run-spec.json", {**run_spec, "command": command})
+                    print(
+                        f"[run] {scenario['id']} category={scenario['category']} "
+                        f"repeat={repeat} protocol={timing_protocol} mode={mode} "
+                        f"seed={planner_seed}",
+                        flush=True,
+                    )
+                    if args.dry_run:
+                        continue
+                    started = time.time()
+                    returncode = _run_command(command, REPO_ROOT, attempt_dir / "pipeline.log")
+                    metrics = extract_run_metrics(attempt_dir, run_spec, returncode)
+                    metrics["wall_time_s"] = time.time() - started
+                    _write_json(attempt_dir / "run-metrics.json", metrics)
+                    rows = _existing_rows(output_dir)
+                    write_reports(output_dir, rows, suite, args.modes)
+                    if returncode != 0:
+                        failures += 1
+                        if args.fail_fast:
+                            return returncode
     print(f"report: {output_dir / 'report' / 'report.md'}")
     return 1 if failures else 0
 
@@ -2252,11 +2408,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timing-protocol",
-        choices=TIMING_PROTOCOLS,
+        choices=TIMING_PROTOCOL_CHOICES,
         default=DEFAULT_TIMING_PROTOCOL,
         help=(
             "absolute_world_time shares crossing times exactly; motion_aligned "
-            "uses per-mode motion-start profiles while retaining shared geometry"
+            "uses per-mode motion-start profiles while retaining shared geometry; "
+            "both materializes and runs both protocols from one frozen geometry batch"
         ),
     )
     parser.add_argument("--suite-seed", type=int, default=20260829)

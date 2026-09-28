@@ -250,7 +250,7 @@ def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry
         modes=modes,
     )
 
-    assert suite["schema_version"] == 5
+    assert suite["schema_version"] == 6
     assert suite["generation_policy"]["revision"] == BENCHMARK_GENERATION_REVISION
     assert suite["generation_policy"]["static_environment_intersection_policy"] == "allowed_and_reported"
     assert suite["scenario_count"] == len(CATEGORIES)
@@ -303,6 +303,78 @@ def test_absolute_world_time_shares_crossing_times_as_well_as_geometry():
         variants = [materialize_scenario_for_mode(environment, mode) for mode in modes]
         expected = [item["crossing_time_s"] for item in variants[0]["objects"]]
         assert all([item["crossing_time_s"] for item in variant["objects"]] == expected for variant in variants[1:])
+
+
+def test_both_protocols_share_geometry_but_keep_separate_timing_variants(tmp_path):
+    modes = ["joint", "joint_corridor_a", "f1_c", "f1_c_corridor_a"]
+    suite = materialize_suite(
+        tmp_path,
+        1,
+        9876,
+        timing_protocol="both",
+        modes=modes,
+        planner_repeats=1,
+    )
+
+    assert suite["timing_protocols"] == ["absolute_world_time", "motion_aligned"]
+    validate_suite(suite)
+    environment = suite["scenarios"][0]
+    variants = {
+        protocol: {
+            mode: materialize_scenario_for_mode(
+                environment, mode, timing_protocol=protocol
+            )
+            for mode in modes
+        }
+        for protocol in suite["timing_protocols"]
+    }
+    reference = _shared_object_geometry(variants["absolute_world_time"][modes[0]])
+    assert all(
+        _shared_object_geometry(variant) == reference
+        for protocol_variants in variants.values()
+        for variant in protocol_variants.values()
+    )
+    absolute_times = {
+        tuple(item["crossing_time_s"] for item in variant["objects"])
+        for variant in variants["absolute_world_time"].values()
+    }
+    assert len(absolute_times) == 1
+    assert variants["motion_aligned"]["joint_corridor_a"]["objects"][0][
+        "crossing_time_s"
+    ] > variants["motion_aligned"]["joint"]["objects"][0]["crossing_time_s"]
+    for protocol in suite["timing_protocols"]:
+        for mode in modes:
+            assert (tmp_path / "scenarios" / protocol / environment["id"] / f"{mode}.json").is_file()
+
+    report_rows = [
+        {
+            "scenario_id": environment["id"],
+            "repeat": 0,
+            "mode": "joint",
+            "timing_protocol": protocol,
+            "pipeline_completed": True,
+            "manifest_available": True,
+            "goal_reached": True,
+            "first_plan_completed_from_world_s": first_plan_s,
+            "goal_time_s": first_plan_s + 5.0,
+            "inference_total_mean_s": 0.4,
+        }
+        for protocol, first_plan_s in (
+            ("absolute_world_time", 2.0),
+            ("motion_aligned", 4.0),
+        )
+    ]
+    write_reports(tmp_path, report_rows, suite, ["joint"])
+    summary = json.loads((tmp_path / "report" / "summary.json").read_text())
+    assert summary["by_timing_protocol"]["absolute_world_time"]["run_count"] == 1
+    assert summary["by_timing_protocol"]["motion_aligned"]["run_count"] == 1
+    assert summary["by_timing_protocol"]["absolute_world_time"]["by_mode"]["joint"][
+        "first_plan_completed_from_world_s"
+    ]["mean"] == pytest.approx(2.0)
+    report = (tmp_path / "report" / "report.md").read_text(encoding="utf-8")
+    assert "时间协议分开汇总" in report
+    assert "`absolute_world_time`" in report
+    assert "`motion_aligned`" in report
 
 
 def test_furniture_rejecting_suite_cannot_be_reused(tmp_path):
@@ -567,7 +639,10 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "Phase 5 / Factorized 梯度裁剪诊断" in report
     assert "Corridor A 诊断" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
-    assert json.loads((tmp_path / "report" / "summary.json").read_text())["schema_version"] == 5
+    summary = json.loads((tmp_path / "report" / "summary.json").read_text())
+    assert summary["schema_version"] == 6
+    assert summary["timing_protocols"] == ["motion_aligned"]
+    assert "motion_aligned" in summary["by_timing_protocol"]
 
 
 def test_missing_manifest_dds_startup_is_infrastructure_failure(tmp_path):

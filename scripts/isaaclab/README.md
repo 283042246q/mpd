@@ -137,12 +137,51 @@ scripts/isaaclab/run_dynamic_demo_pipeline.sh \
   --factorized-adapt-spatial-basis
 ```
 
+Corridor A is an independent, default-off timing refinement for `phase5_joint`
+and factorized `f1` (both `c` and `tau_r` checkpoints). Enable it on either
+pipeline with `--corridor-a`; optionally set `--corridor-a-weight 0.1`.
+For example:
+
+```bash
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer --phase phase5 --timing-mode phase5_joint \
+  --corridor-a --output-dir /tmp/mpd-phase5-corridor-a
+
+scripts/isaaclab/run_dynamic_demo_pipeline.sh \
+  --profile to_drawer --phase factorized --factorized-method f1 \
+  --factorized-timing-checkpoint /absolute/path/to/timing-checkpoint.pt \
+  --factorized-adapt-spatial-basis --corridor-a \
+  --output-dir /tmp/mpd-f1-corridor-a
+```
+
+The worker samples a full-body dynamic clearance grid for each fixed spatial
+candidate, selects reachable early/late safe-interval branches, and adjusts
+only its timing parameters. It keeps the trained F1 six-dimensional latent and
+the original timing control-point count. The complete candidate-specific
+DenseCheck remains authoritative; an originally valid candidate is restored
+if refinement makes it invalid. `result.json` records the switch, branch
+counts, timing, and DenseCheck fallbacks under `space_time_guidance.corridor_a`.
+The grid is sampled, so it does not prove continuous clearance, and opt-in
+latency increases with the number of candidates and branches. The direct
+`infer_space_time.py` and `infer_factorized.py` CLIs expose the same switch
+plus grid, margin, step-count, and learning-rate controls.
+
 ### Paired random ToDrawer benchmark
 
 `benchmark_todrawer_random.py` freezes every random world to an output artifact and
-runs paired planner seeds against Phase 4, Phase 4 aligned, and all three Phase-5 timing
-modes. The default is 5 environments/category x 10 categories x 5 planner repeats x
-5 modes = 1250 sequential GPU/ROS runs. Every environment independently resamples its
+uses paired planner seeds for eight modes: `phase4_aligned`, `joint`,
+`joint_corridor_a`, `f1_tau_r`, `f1_tau_r_corridor_a`, `f1_c`,
+`f1_c_corridor_a`, and `f3_tau_r`. Suffix `_corridor_a` enables the cost;
+the matching mode without the suffix leaves it off. Each on/off pair receives
+the same frozen obstacle geometry, direction, speed, size, motion law, planner
+seed, and timing checkpoint. With `motion_aligned`, every mode—including the
+three Corridor modes—uses its own measured motion-start profile, so slower
+Corridor modes receive later crossing times. With `absolute_world_time`, all
+modes share identical crossing times and the Corridor startup delay remains a
+real online penalty. Use `--timing-protocol both` to materialize both protocols
+from one accepted geometry sample and run/report them separately.
+The default is 5 environments/category x 10 categories x 5 planner repeats x
+8 modes = 2000 sequential GPU/ROS runs. Every environment independently resamples its
 anchors, directions, speeds, sizes, motion laws, and crossing times. Planner repeats
 keep that environment fixed and change only the planner seed; every mode receives the
 same seed sequence. Start a smaller smoke suite before launching the full matrix:
@@ -157,8 +196,7 @@ cd /home/eric/Projects/MotionPlanningDiffusion/mpd
   --planner-repeats 1 \
   --timing-protocol motion_aligned \
   --duration-sec 20 \
-  --categories curved_crossing \
-  --modes phase4 phase4_aligned joint
+  --categories single_crossing
 ```
 
 Full benchmark:
@@ -166,7 +204,7 @@ Full benchmark:
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
+  --output-dir scripts/isaaclab/logs/todrawer-corridor-a-50x5x8 \
   --environment-count-per-category 5 \
   --planner-repeats 5 \
   --timing-protocol motion_aligned \
@@ -174,8 +212,27 @@ Full benchmark:
   --suite-seed 20260829
 ```
 
-The original five modes remain the default. For the direct Phase 4, Phase 4 aligned,
-Phase 5 joint, and F1/F2/F3 comparison under both `c` and `tau_r`
+Run both timing protocols from the same frozen geometry batch:
+
+```bash
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-corridor-a-dual-protocol \
+  --environment-count-per-category 5 \
+  --planner-repeats 5 \
+  --timing-protocol both \
+  --duration-sec 35 \
+  --suite-seed 20260829
+```
+
+This doubles the run count relative to one protocol. `summary.json` stores
+separate `by_timing_protocol` aggregates, and `report.md` prints separate
+`motion_aligned` and `absolute_world_time` tables before the compatibility
+aggregate tables. Runs are stored below a protocol directory so attempts from
+the two clocks cannot overwrite each other.
+
+The earlier Phase 4, Phase 4 aligned, Phase 5 joint, and F1/F2/F3 comparison
+under both `c` and `tau_r`
 (50 x 5 x 9 = 2250 runs), select the nine modes explicitly:
 
 ```bash
@@ -207,11 +264,11 @@ parameters fixed across modes, then shifts crossing times using each mode's meas
 significant-motion profile. `absolute_world_time` also shares crossing times exactly,
 so every mode sees an identical world-clock trajectory. Both protocols perform bounded
 rejection sampling before execution: robot-base clearance over the full design episode,
-continuous static-furniture clearance from spawn through the crossing anchor, initial parked-Franka
-56-sphere clearance, anchor work-volume bounds, valid crossing windows, distinct
-multi-object direction lines, and finite valid motion parameters. Full-episode furniture
-clearance remains diagnostic because objects intentionally continue beyond the robot
-interaction region and may later traverse warehouse furniture.
+initial parked-Franka 56-sphere clearance through the expected-goal safety boundary,
+anchor work-volume bounds, valid crossing windows, distinct multi-object direction
+lines, and finite valid motion parameters. Static-furniture clearance is diagnostic
+only: dynamic objects may pass through furniture at any time. Suites generated under
+the older furniture-rejecting policy need a new output directory.
 
 To run the ten scenario categories sequentially and retry each category until it reaches
 the goal without an earlier controlled brake, use the until-success runner. Select one
@@ -248,8 +305,11 @@ cannot be rendered.
 
 After execution, the runner measures the actual 0.01 rad robot-motion start from the
 recorded trajectory and audits every dynamic object against parked Franka up to that
-measured time. A logged `q_pos_start is in collision`, or a failed measured pre-motion
-clearance audit, makes the attempt fail even if it later reaches the goal without braking.
+measured time. A logged `q_pos_start is in collision` and a failed measured pre-motion
+clearance audit have different outcomes: the former rejects that planning request and
+the ROS node continues replanning, while the latter makes the attempt fail even if it
+later reaches the goal without braking. The start-collision warning remains in the
+attempt diagnostics.
 
 Audit the significant-motion profiles from recorded replays at both 0.01 and 0.02 rad
 joint-displacement thresholds with:
@@ -291,10 +351,11 @@ up to 23 cm prediction-horizon inflation, two near-simultaneous crossings, or a 
 delayed obstacle. They still retain a spatial corridor or later time gap, avoiding an
 obvious permanent wall without making the benchmark artificially easy. This is a
 construction criterion, not a guarantee that every planner run succeeds.
-Use `--categories` and/or `--modes` to run a resumable slice of the frozen large
-suite without changing `suite.json`; omitted filters select all ten categories and the
-original five modes. All factorized modes are opt-in; the representation-specific modes
-use the two defaults above, while generic `f1/f2/f3` require a checkpoint.
+Use `--categories` to run a resumable slice of the frozen suite; the mode list is
+part of `suite.json` and must remain the same when resuming. Omitted filters
+select all ten categories and the eight default comparison modes. The F1/F3
+modes use the two default checkpoint paths above; generic `f1/f2/f3` require
+an explicit checkpoint.
 
 Completed mode/scenario/repeat triples are skipped when the same output directory is
 resumed. Failed attempts are retained as `attempt-NNN`; nothing is deleted. Reports are
@@ -309,7 +370,7 @@ failures:
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \
   scripts/isaaclab/benchmark_todrawer_random.py \
-  --output-dir scripts/isaaclab/logs/todrawer-random-50x5x5 \
+  --output-dir scripts/isaaclab/logs/todrawer-corridor-a-50x5x8 \
   --environment-count-per-category 5 \
   --planner-repeats 5 \
   --timing-protocol motion_aligned \

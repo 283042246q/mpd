@@ -163,14 +163,10 @@ def validate_scenario(
                 <= 1e-9,
                 f"{scenario_id}/{object_id}: stored initial Franka clearance mismatch",
             )
-        if benchmark_environment is not None:
+        if benchmark_environment is not None or "minimum_static_interaction_clearance_m" in item:
             interaction_clearance = static_interaction_clearance(
                 item,
                 static_boxes=boxes,
-            )
-            _require(
-                interaction_clearance > 0.0,
-                f"{scenario_id}/{object_id}: static interaction-window intersection",
             )
             _require(
                 abs(
@@ -275,9 +271,9 @@ def validate_scenario(
 def validate_suite(payload: dict[str, Any], *, static_scene: Path | None = None) -> list[str]:
     _require(payload.get("schema") == "mpd_todrawer_random_suite", "bad suite schema")
     schema_version = payload.get("schema_version")
-    _require(schema_version in {4, 5}, "suite schema_version must be 4 or 5")
+    _require(schema_version in {4, 5, 6}, "suite schema_version must be 4, 5, or 6")
     expected_revision = (
-        BENCHMARK_GENERATION_REVISION if schema_version == 5 else GENERATION_REVISION
+        BENCHMARK_GENERATION_REVISION if schema_version in {5, 6} else GENERATION_REVISION
     )
     _require(
         payload.get("generation_policy", {}).get("revision") == expected_revision,
@@ -289,8 +285,26 @@ def validate_suite(payload: dict[str, Any], *, static_scene: Path | None = None)
     boxes = load_static_environment_boxes(static_scene)
     warnings = []
     for scenario in scenarios:
+        protocol_variants = scenario.get("benchmark_protocol_variants")
         variants = scenario.get("benchmark_mode_variants")
-        if variants:
+        if protocol_variants:
+            protocols = payload.get("timing_protocols", [])
+            _require(protocols, "dual-protocol suite must list timing_protocols")
+            for protocol in protocols:
+                _require(
+                    protocol in protocol_variants,
+                    f"{scenario.get('id')}: missing protocol variants for {protocol}",
+                )
+                for mode in payload.get("modes", []):
+                    warnings.extend(
+                        validate_scenario(
+                            materialize_scenario_for_mode(
+                                scenario, mode, timing_protocol=protocol
+                            ),
+                            static_boxes=boxes,
+                        )
+                    )
+        elif variants:
             for mode in payload.get("modes", []):
                 warnings.extend(
                     validate_scenario(
