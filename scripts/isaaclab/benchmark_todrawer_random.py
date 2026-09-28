@@ -51,9 +51,11 @@ FACTORIZED_MODE_SPECS = {
     "f2": ("f2", None),
     "f3": ("f3", None),
     "f1_c": ("f1", "c"),
+    "f1_c_corridor_a": ("f1", "c"),
     "f2_c": ("f2", "c"),
     "f3_c": ("f3", "c"),
     "f1_tau_r": ("f1", "tau_r"),
+    "f1_tau_r_corridor_a": ("f1", "tau_r"),
     "f2_tau_r": ("f2", "tau_r"),
     "f3_tau_r": ("f3", "tau_r"),
 }
@@ -63,23 +65,30 @@ MODE_SPECS = {
     "scalar_duration": ("phase5", "phase5_scalar_duration"),
     "timing_only": ("phase5", "phase5_timing_only"),
     "joint": ("phase5", "phase5_joint"),
+    "joint_corridor_a": ("phase5", "phase5_joint"),
     "f1": ("factorized", None),
     "f2": ("factorized", None),
     "f3": ("factorized", None),
     "f1_c": ("factorized", None),
+    "f1_c_corridor_a": ("factorized", None),
     "f2_c": ("factorized", None),
     "f3_c": ("factorized", None),
     "f1_tau_r": ("factorized", None),
+    "f1_tau_r_corridor_a": ("factorized", None),
     "f2_tau_r": ("factorized", None),
     "f3_tau_r": ("factorized", None),
 }
 DEFAULT_MODES = (
-    "phase4",
     "phase4_aligned",
-    "scalar_duration",
-    "timing_only",
     "joint",
+    "joint_corridor_a",
+    "f1_tau_r",
+    "f1_tau_r_corridor_a",
+    "f1_c",
+    "f1_c_corridor_a",
+    "f3_tau_r",
 )
+CORRIDOR_A_MODES = frozenset({"joint_corridor_a", "f1_tau_r_corridor_a", "f1_c_corridor_a"})
 MODE_PIPELINE_ARGS: dict[str, tuple[str, ...]] = {
     mode: ("--factorized-method", method) for mode, (method, _representation) in FACTORIZED_MODE_SPECS.items()
 }
@@ -167,12 +176,11 @@ MAX_GENERATION_RESAMPLE_ATTEMPTS = 50
 DEFAULT_ANCHOR_JITTER_M = 0.015
 DENSE_ANCHOR_JITTER_M = 0.020
 GENERATION_REVISION = "world-clock-robot-aware-crossings-v1"
-BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v2"
+BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v3"
 TIMING_PROTOCOLS = ("absolute_world_time", "motion_aligned")
 DEFAULT_TIMING_PROTOCOL = "motion_aligned"
 DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY = 5
 DEFAULT_PLANNER_REPEATS = 5
-MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M = 0.0
 MAXIMUM_ENVIRONMENT_RESAMPLE_ATTEMPTS = 500
 
 
@@ -192,6 +200,7 @@ REPORT_FIELDS = (
     "repeat",
     "planner_repeat",
     "mode",
+    "corridor_a_enabled",
     "timing_protocol",
     "planner_seed",
     "pipeline_returncode",
@@ -205,6 +214,7 @@ REPORT_FIELDS = (
     "goal_time_s",
     "world_start_unix_s",
     "first_planning_submit_from_world_s",
+    "first_plan_completed_from_world_s",
     "first_command_start_from_world_s",
     "first_bridge_start_from_world_s",
     "first_handoff_from_world_s",
@@ -231,6 +241,17 @@ REPORT_FIELDS = (
     "dense_self_clearance_m",
     "inference_total_mean_s",
     "inference_total_p95_s",
+    "corridor_a_refinement_mean_s",
+    "corridor_a_grid_build_mean_s",
+    "corridor_a_branch_selection_mean_s",
+    "corridor_a_refinement_forward_mean_s",
+    "corridor_a_refinement_backward_mean_s",
+    "corridor_a_final_validation_mean_s",
+    "corridor_a_profiled_total_mean_s",
+    "corridor_a_changed_candidates_mean",
+    "corridor_a_dense_fallbacks_mean",
+    "corridor_a_payload_match_count",
+    "corridor_a_payload_mismatch_count",
     "factorized_representation",
     "factorized_timing_checkpoint_step",
     "factorized_timing_checkpoint_sha256",
@@ -680,6 +701,8 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
 
 
 def _timing_profile_mode(mode: str) -> str:
+    if mode.endswith("_corridor_a"):
+        mode = mode[: -len("_corridor_a")]
     if mode in {"scalar_duration", "timing_only"}:
         return "joint"
     if mode in {"f1", "f2", "f3"}:
@@ -823,8 +846,6 @@ def _materialize_timing_variant(
             item,
             static_boxes=static_boxes,
         )
-        if interaction_clearance <= MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M:
-            raise ValueError(f"{item['id']} intersects static furniture")
         initial = initial_franka_trajectory_clearance(
             item,
             end_s=protection_until_s,
@@ -864,7 +885,7 @@ def _materialize_timing_variant(
             "initial_franka_check_interval": ("0..parked_franka_protection_until_s"),
             "parked_franka_protection_until_s": protection_until_s,
             "minimum_initial_franka_clearance_m": (MINIMUM_INITIAL_FRANKA_CLEARANCE_M),
-            "minimum_static_interaction_clearance_m": (MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
+            "static_environment_intersection_policy": "allowed_and_reported",
             "maximum_generation_resample_attempts": (MODE_GENERATION_RESAMPLE_ATTEMPTS),
         }
     )
@@ -923,7 +944,6 @@ def generate_benchmark_suite(
                     template,
                     mode=reference_mode,
                     seed=geometry_seed,
-                    minimum_static_clearance_m=(MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
                 )
                 variants = {
                     mode: _materialize_timing_variant(
@@ -1002,7 +1022,7 @@ def generate_benchmark_suite(
                 "motion_parameters",
                 "crossing_time_s",
             ],
-            "minimum_static_interaction_clearance_m": (MINIMUM_STATIC_ENVIRONMENT_CLEARANCE_M),
+            "static_interaction_clearance_policy": "diagnostic_only",
             "static_clearance_scope": {
                 "spawn_time_s": 0.0,
                 "interval": "spawn_to_crossing_plus_half_window",
@@ -1015,14 +1035,13 @@ def generate_benchmark_suite(
             },
             "rejection_checks": [
                 "robot_base_clearance",
-                "static_environment_clearance",
                 "initial_franka_56_sphere_clearance",
                 "anchor_work_volume",
                 "crossing_time_window",
                 "multi_object_direction_line_separation",
                 "finite_motion_parameters",
             ],
-            "static_environment_intersection_policy": "hard_reject",
+            "static_environment_intersection_policy": "allowed_and_reported",
             "feasibility_scope": (
                 "all frozen mode variants pass geometric/startup checks; planner "
                 "success is not guaranteed"
@@ -1301,7 +1320,46 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         if payload.get("status") == "success":
             result_payloads.append(payload)
     inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
+    plan_created_unix_s = _finite([payload.get("created_unix_time") for payload in result_payloads])
     guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
+    corridor_candidates = [
+        guidance.get("corridor_a", {}) for guidance in guidance_payloads
+        if guidance.get("corridor_a", {}).get("enabled") is True
+    ]
+
+    def corridor_identity_matches(item: dict[str, Any]) -> bool:
+        if run_spec.get("corridor_a_enabled") is not True:
+            return False
+        identity = item.get("runtime_identity")
+        if not isinstance(identity, dict) or identity.get("corridor_variant") != "corridor_a":
+            return False
+        mode = run_spec.get("mode")
+        if mode == "joint_corridor_a":
+            return (
+                identity.get("guidance_mode") == "phase5_joint"
+                and identity.get("factorized_method") is None
+                and identity.get("factorized_representation") is None
+            )
+        expected = FACTORIZED_MODE_SPECS.get(str(mode))
+        if expected is None:
+            return False
+        expected_method, expected_representation = expected
+        return (
+            identity.get("factorized_method") == expected_method
+            and identity.get("factorized_representation") == expected_representation
+        )
+
+    corridor_payloads = [item for item in corridor_candidates if corridor_identity_matches(item)]
+    corridor_mismatch_count = len(corridor_candidates) - len(corridor_payloads)
+    corridor_elapsed = _finite([item.get("elapsed_s") for item in corridor_payloads])
+    corridor_grid_build = _finite([item.get("grid_build_s") for item in corridor_payloads])
+    corridor_branch_selection = _finite([item.get("branch_selection_s") for item in corridor_payloads])
+    corridor_refinement_forward = _finite([item.get("refinement_forward_s") for item in corridor_payloads])
+    corridor_refinement_backward = _finite([item.get("refinement_backward_s") for item in corridor_payloads])
+    corridor_final_validation = _finite([item.get("final_validation_s") for item in corridor_payloads])
+    corridor_profiled_total = _finite([item.get("profiled_total_s") for item in corridor_payloads])
+    corridor_changed = _finite([item.get("changed") for item in corridor_payloads])
+    corridor_fallbacks = _finite([item.get("dense_fallbacks") for item in corridor_payloads])
     guidance_steps = [
         step for guidance in guidance_payloads for step in guidance.get("steps", []) if isinstance(step, dict)
     ]
@@ -1339,16 +1397,22 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         [payload.get("trajectory", {}).get("minimum_environment_clearance_m") for payload in result_payloads]
     )
     dense_self = _finite([payload.get("trajectory", {}).get("minimum_self_clearance_m") for payload in result_payloads])
+    world_start_unix_s = (
+        ros["world_start_unix_s"] if ros["world_start_unix_s"] is not None
+        else timing.get("world_start_unix_s")
+    )
     metrics.update(
         goal_reached=ros["goal_reached"],
         goal_time_s=ros["goal_time_s"],
-        world_start_unix_s=(
-            ros["world_start_unix_s"] if ros["world_start_unix_s"] is not None else timing.get("world_start_unix_s")
-        ),
+        world_start_unix_s=world_start_unix_s,
         first_planning_submit_from_world_s=(
             ros["first_planning_submit_from_world_s"]
             if ros["first_planning_submit_from_world_s"] is not None
             else timing.get("first_planning_submit_from_world_s")
+        ),
+        first_plan_completed_from_world_s=(
+            min(plan_created_unix_s) - float(world_start_unix_s)
+            if plan_created_unix_s and world_start_unix_s is not None else None
         ),
         first_command_start_from_world_s=timing.get("first_command_start_from_world_s"),
         first_bridge_start_from_world_s=timing.get("first_bridge_start_from_world_s"),
@@ -1397,6 +1461,27 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         dense_self_clearance_m=min(dense_self, default=None),
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
         inference_total_p95_s=(float(np.percentile(inference_times, 95)) if inference_times else None),
+        corridor_a_refinement_mean_s=(float(np.mean(corridor_elapsed)) if corridor_elapsed else None),
+        corridor_a_grid_build_mean_s=(float(np.mean(corridor_grid_build)) if corridor_grid_build else None),
+        corridor_a_branch_selection_mean_s=(
+            float(np.mean(corridor_branch_selection)) if corridor_branch_selection else None
+        ),
+        corridor_a_refinement_forward_mean_s=(
+            float(np.mean(corridor_refinement_forward)) if corridor_refinement_forward else None
+        ),
+        corridor_a_refinement_backward_mean_s=(
+            float(np.mean(corridor_refinement_backward)) if corridor_refinement_backward else None
+        ),
+        corridor_a_final_validation_mean_s=(
+            float(np.mean(corridor_final_validation)) if corridor_final_validation else None
+        ),
+        corridor_a_profiled_total_mean_s=(
+            float(np.mean(corridor_profiled_total)) if corridor_profiled_total else None
+        ),
+        corridor_a_changed_candidates_mean=(float(np.mean(corridor_changed)) if corridor_changed else None),
+        corridor_a_dense_fallbacks_mean=(float(np.mean(corridor_fallbacks)) if corridor_fallbacks else None),
+        corridor_a_payload_match_count=len(corridor_payloads),
+        corridor_a_payload_mismatch_count=corridor_mismatch_count,
         factorized_representation=common_factorized_value("representation"),
         factorized_timing_checkpoint_step=common_factorized_value("timing_checkpoint_step"),
         factorized_timing_checkpoint_sha256=common_factorized_value("timing_checkpoint_sha256"),
@@ -1453,6 +1538,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "first_planning_submit_from_world_s": _describe(
             [row.get("first_planning_submit_from_world_s") for row in rows]
         ),
+        "first_plan_completed_from_world_s": _describe(
+            [row.get("first_plan_completed_from_world_s") for row in rows]
+        ),
         "first_command_start_from_world_s": _describe([row.get("first_command_start_from_world_s") for row in rows]),
         "first_bridge_start_from_world_s": _describe([row.get("first_bridge_start_from_world_s") for row in rows]),
         "first_handoff_from_world_s": _describe([row.get("first_handoff_from_world_s") for row in rows]),
@@ -1481,6 +1569,29 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "dense_environment_clearance_m": _describe([row.get("dense_environment_clearance_m") for row in rows]),
         "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
+        "corridor_a_refinement_s": _describe([row.get("corridor_a_refinement_mean_s") for row in rows]),
+        "corridor_a_grid_build_s": _describe([row.get("corridor_a_grid_build_mean_s") for row in rows]),
+        "corridor_a_branch_selection_s": _describe(
+            [row.get("corridor_a_branch_selection_mean_s") for row in rows]
+        ),
+        "corridor_a_refinement_forward_s": _describe(
+            [row.get("corridor_a_refinement_forward_mean_s") for row in rows]
+        ),
+        "corridor_a_refinement_backward_s": _describe(
+            [row.get("corridor_a_refinement_backward_mean_s") for row in rows]
+        ),
+        "corridor_a_final_validation_s": _describe(
+            [row.get("corridor_a_final_validation_mean_s") for row in rows]
+        ),
+        "corridor_a_profiled_total_s": _describe(
+            [row.get("corridor_a_profiled_total_mean_s") for row in rows]
+        ),
+        "corridor_a_changed_candidates": _describe([row.get("corridor_a_changed_candidates_mean") for row in rows]),
+        "corridor_a_dense_fallbacks": _describe([row.get("corridor_a_dense_fallbacks_mean") for row in rows]),
+        "corridor_a_payload_matches": sum(int(row.get("corridor_a_payload_match_count") or 0) for row in rows),
+        "corridor_a_payload_mismatches": sum(
+            int(row.get("corridor_a_payload_mismatch_count") or 0) for row in rows
+        ),
         "factorized_representations": sorted(
             {str(row["factorized_representation"]) for row in rows if row.get("factorized_representation") is not None}
         ),
@@ -1594,11 +1705,20 @@ def write_reports(
         "metric_semantics": {
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "dynamic_object_vs_static_environment": (
-                "spawn-to-crossing trajectories require positive static clearance; "
-                "full-episode clearance is diagnostic because objects continue after leaving the interaction zone"
+                "dynamic objects may pass through static furniture; static clearance is diagnostic. "
+                "robot-base exclusion remains enforced"
             ),
             "joint_l2_path_rad": "sum of Euclidean joint increments over realized command intervals",
             "clearance": "selected candidate guard clearance plus successful MPD DenseCheck clearance",
+            "corridor_a": (
+                "enabled only for *_corridor_a modes; per-request refinement diagnostics are "
+                "averaged over successful planning result files, while inference_total_sec "
+                "includes the complete request latency"
+            ),
+            "first_plan_completed_from_world_s": (
+                "earliest successful planner result created_unix_time minus scenario world-clock start; "
+                "includes initial warm-up and any rejected earlier requests"
+            ),
             "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
         },
         "by_mode": by_mode,
@@ -1624,7 +1744,7 @@ def write_reports(
         "## 指标口径",
         "",
         "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。uncovered command gap 只统计相邻实际命令区间没有任何 JTC goal 覆盖的时间；guarded terminal hold 是显式发送且经过动态 guard 验证的末端保持；controller reference jump 是切换时新 goal 首点与旧控制参考之间的最大关节位置差。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
-        "动态物体必须从 t=0 到 crossing anchor 的连续轨迹避开柜体、抽屉和货架，完整运动轨迹避开机器人底座，并在预定保护窗口内避开初始 Franka 的 56 个碰撞球；不满足条件的环境在执行前重采样。物体离开交互区后仍按方程运动，因此全 35 秒静态环境 clearance 仅作诊断。",
+        "动态物体允许穿过柜体、抽屉和货架；完整运动轨迹必须避开机器人底座，并在预定保护窗口内避开初始 Franka 的 56 个碰撞球。不满足后两项条件的环境在执行前重采样；静态环境 clearance 只作诊断。",
         "",
         "## 场景类型与难度",
         "",
@@ -1669,13 +1789,14 @@ def write_reports(
             "",
             "## 时长、路径与推理耗时",
             "",
-            "| 模式 | goal time mean s | episode mean s | 执行时长 mean s | 规划轨迹时长 mean s | path L2 mean rad | joint L1 mean rad | inference mean s |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| 模式 | first plan 完成/world start mean s | goal time mean s | episode mean s | 执行时长 mean s | 规划轨迹时长 mean s | path L2 mean rad | joint L1 mean rad | inference mean s |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for mode, data in by_mode.items():
         lines.append(
-            f"| {mode} | {_fmt(data['goal_time_s']['mean'])} | "
+            f"| {mode} | {_fmt(data['first_plan_completed_from_world_s']['mean'])} | "
+            f"{_fmt(data['goal_time_s']['mean'])} | "
             f"{_fmt(data['episode_duration_s']['mean'])} | "
             f"{_fmt(data['execution_duration_s']['mean'])} | "
             f"{_fmt(data['planned_duration_s']['mean'])} | "
@@ -1683,6 +1804,31 @@ def write_reports(
             f"{_fmt(data['joint_l1_travel_rad']['mean'])} | "
             f"{_fmt(data['inference_total_s']['mean'])} |"
         )
+    if any(mode in CORRIDOR_A_MODES for mode in report_modes):
+        lines.extend(
+            [
+                "",
+                "## Corridor A 诊断",
+                "",
+                "以下均为与 run-spec mode 身份匹配的成功规划结果均值；mismatch 表示发现 Corridor payload 但 mode/representation 身份不匹配。",
+                "",
+                "| 模式 | grid build s | branch s | refine forward s | refine backward s | final validation s | profiled total s | changed/plan | fallback/plan | payload match/mismatch |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for mode in report_modes:
+            data = by_mode[mode]
+            lines.append(
+                f"| {mode} | {_fmt(data['corridor_a_grid_build_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_branch_selection_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_refinement_forward_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_refinement_backward_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_final_validation_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_profiled_total_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_changed_candidates']['mean'])} | "
+                f"{_fmt(data['corridor_a_dense_fallbacks']['mean'])} | "
+                f"{data['corridor_a_payload_matches']}/{data['corridor_a_payload_mismatches']} |"
+            )
     lines.extend(
         [
             "",
@@ -2007,6 +2153,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "repeat": repeat,
                     "planner_repeat": repeat,
                     "mode": mode,
+                    "corridor_a_enabled": mode in CORRIDOR_A_MODES,
                     "phase": phase,
                     "timing_mode": timing_mode,
                     "planner_seed": planner_seed,
@@ -2058,6 +2205,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     if args.factorized_adapt_spatial_basis:
                         command.append("--factorized-adapt-spatial-basis")
                 command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
+                if mode in CORRIDOR_A_MODES:
+                    command.append("--corridor-a")
                 if not args.render:
                     command.append("--skip-render")
                 _write_json(attempt_dir / "run-spec.json", {**run_spec, "command": command})

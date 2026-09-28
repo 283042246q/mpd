@@ -148,31 +148,126 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
 
     def _postprocess_plan_results(self, results):
         import torch
+        import time
 
         control_points = results.control_points_iter_0
         normalized = self.planner.dataset.normalize_control_points(control_points)
         timing_control_points = self.space_time_guide.timing_control_points
-        with torch.no_grad():
-            _, cost_breakdown, timing = self.space_time_guide.evaluate_control_points(
-                normalized, timing_control_points
-            )
-            dense_cfg = self.planner.dense_validation_config
-            if int(dense_cfg["runtime_points"]) != int(timing.q.shape[1]):
-                raise ValueError(
-                    "Phase-5 full DenseCheck resolution must match the timing spline grid"
+        dense_cfg = self.planner.dense_validation_config
+
+        def evaluate_and_validate(parameters):
+            with torch.no_grad():
+                _, breakdown, evaluation = self.space_time_guide.evaluate_control_points(
+                    normalized, parameters
                 )
-            dense = self.planner.dense_validator.validate(
-                control_points=None,
-                num_points=int(dense_cfg["runtime_points"]),
-                q_position=timing.q,
-                q_velocity=timing.dq,
-                q_acceleration=timing.ddq,
-                trajectory_times=timing.time_from_start,
-                check_environment=dense_cfg["check_environment"],
-                check_self_collision=dense_cfg["check_self_collision"],
-                check_joint_position=dense_cfg["check_joint_position"],
-                check_joint_velocity=dense_cfg["check_joint_velocity"],
-                check_joint_acceleration=dense_cfg["check_joint_acceleration"],
+                if int(dense_cfg["runtime_points"]) != int(evaluation.q.shape[1]):
+                    raise ValueError(
+                        "Phase-5 full DenseCheck resolution must match the timing spline grid"
+                    )
+                checked = self.planner.dense_validator.validate(
+                    control_points=None,
+                    num_points=int(dense_cfg["runtime_points"]),
+                    q_position=evaluation.q,
+                    q_velocity=evaluation.dq,
+                    q_acceleration=evaluation.ddq,
+                    trajectory_times=evaluation.time_from_start,
+                    check_environment=dense_cfg["check_environment"],
+                    check_self_collision=dense_cfg["check_self_collision"],
+                    check_joint_position=dense_cfg["check_joint_position"],
+                    check_joint_velocity=dense_cfg["check_joint_velocity"],
+                    check_joint_acceleration=dense_cfg["check_joint_acceleration"],
+                )
+            return breakdown, evaluation, checked
+
+        original_parameters = timing_control_points
+        original_dense = None
+        original_timing = None
+        dense_batches = 0
+        self._corridor_a_stats = {"enabled": False}
+        if self.space_time_settings.corridor_a_enabled:
+            from mpd.inference.time_corridor import refine_time_corridor
+
+            factorized = hasattr(self.space_time_guide, "codec")
+            if factorized and self.factorized_settings.method != "f1":
+                raise ValueError("Corridor A is supported only by F1 factorized timing")
+            if not factorized and self.space_time_settings.mode != "phase5_joint":
+                raise ValueError("Corridor A is supported only by phase5_joint")
+            validation_started = time.perf_counter()
+            _, original_timing, original_dense = evaluate_and_validate(original_parameters)
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+            final_validation_s = time.perf_counter() - validation_started
+            dense_batches += 1
+            started = time.perf_counter()
+            timing_control_points, self._corridor_a_stats = refine_time_corridor(
+                self.space_time_guide, normalized, original_parameters, factorized=factorized
+            )
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+            self._corridor_a_stats["elapsed_s"] = time.perf_counter() - started
+            self._corridor_a_stats["runtime_identity"] = {
+                "guidance_mode": self.space_time_settings.mode,
+                "factorized_method": (self.factorized_settings.method if factorized else None),
+                "factorized_representation": (
+                    self.factorized_settings.representation if factorized else None
+                ),
+                "corridor_variant": "corridor_a",
+            }
+            self.space_time_guide.timing_control_points = timing_control_points
+
+        validation_started = time.perf_counter()
+        cost_breakdown, timing, dense = evaluate_and_validate(timing_control_points)
+        if self.space_time_settings.corridor_a_enabled:
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+            final_validation_s += time.perf_counter() - validation_started
+        dense_batches += 1
+        if original_dense is not None:
+            original_finite = (
+                torch.isfinite(original_timing.q).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(original_timing.dq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(original_timing.ddq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(original_timing.time_from_start).all(dim=-1)
+            )
+            original_valid = (
+                original_dense.trajectory_valid_mask & original_finite
+                & (original_timing.duration >= self.space_time_settings.duration_min)
+                & (original_timing.duration <= self.space_time_settings.duration_max)
+            )
+            refined_finite = (
+                torch.isfinite(timing.q).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(timing.dq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(timing.ddq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(timing.time_from_start).all(dim=-1)
+            )
+            refined_valid = (
+                dense.trajectory_valid_mask & refined_finite
+                & (timing.duration >= self.space_time_settings.duration_min)
+                & (timing.duration <= self.space_time_settings.duration_max)
+            )
+            fallback = original_valid & ~refined_valid
+            if fallback.any():
+                timing_control_points = torch.where(
+                    fallback[:, None], original_parameters, timing_control_points
+                )
+                self.space_time_guide.timing_control_points = timing_control_points
+                self._corridor_a_stats["dense_fallbacks"] = int(fallback.sum().item())
+                validation_started = time.perf_counter()
+                cost_breakdown, timing, dense = evaluate_and_validate(timing_control_points)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize(self.device)
+                final_validation_s += time.perf_counter() - validation_started
+                dense_batches += 1
+            else:
+                self._corridor_a_stats["dense_fallbacks"] = 0
+            self._corridor_a_stats["dense_batches"] = dense_batches
+            self._corridor_a_stats["final_validation_s"] = float(final_validation_s)
+            self._corridor_a_stats["profiled_total_s"] = float(
+                self._corridor_a_stats.get("grid_build_s", 0.0)
+                + self._corridor_a_stats.get("branch_selection_s", 0.0)
+                + self._corridor_a_stats.get("refinement_forward_s", 0.0)
+                + self._corridor_a_stats.get("refinement_backward_s", 0.0)
+                + final_validation_s
             )
 
         duration_valid = (
@@ -395,6 +490,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             "reuse_spatial_kinematics": (
                 self.space_time_guide.reuse_spatial_kinematics_enabled
             ),
+            "corridor_a_enabled": self.space_time_settings.corridor_a_enabled,
         }
         return response
 
@@ -466,6 +562,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             "steps": self.space_time_guide.statistics,
             "full_candidate_specific_dense_check": True,
             "status": "full_candidate_specific_dense_validated",
+            "corridor_a": self._corridor_a_stats,
         }
         artifacts.result_payload["dynamic_world"].update(
             fixed_timing=False,

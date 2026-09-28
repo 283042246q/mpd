@@ -32,6 +32,7 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     generate_suite,
     main,
     materialize_scenario_for_mode,
+    materialize_suite,
     object_position_at,
     write_reports,
 )
@@ -195,13 +196,23 @@ def test_same_category_arrivals_have_bounded_random_variation():
     assert all(len(set(arrivals)) > 1 for arrivals in arrivals_by_category.values())
 
 
-def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
+def test_benchmark_defaults_to_paired_corridor_comparison():
     args = _parser().parse_args([])
 
     assert args.environment_count_per_category == DEFAULT_ENVIRONMENT_COUNT_PER_CATEGORY
     assert args.planner_repeats == DEFAULT_PLANNER_REPEATS
     assert args.timing_protocol == DEFAULT_TIMING_PROTOCOL == "motion_aligned"
     assert args.modes == list(DEFAULT_MODES)
+    assert DEFAULT_MODES == (
+        "phase4_aligned",
+        "joint",
+        "joint_corridor_a",
+        "f1_tau_r",
+        "f1_tau_r_corridor_a",
+        "f1_c",
+        "f1_c_corridor_a",
+        "f3_tau_r",
+    )
     assert args.categories is None
     assert MODE_SPECS["phase4"] == ("phase4", None)
     assert MODE_SPECS["phase4_aligned"] == ("phase4_aligned", None)
@@ -210,6 +221,9 @@ def test_benchmark_preserves_five_mode_default_and_exposes_factorized_modes():
     assert MODE_SPECS["f3"] == ("factorized", None)
     assert MODE_SPECS["f1_c"] == ("factorized", None)
     assert MODE_SPECS["f3_tau_r"] == ("factorized", None)
+    assert MODE_SPECS["joint_corridor_a"] == ("phase5", "phase5_joint")
+    assert MODE_SPECS["f1_tau_r_corridor_a"] == ("factorized", None)
+    assert MODE_SPECS["f1_c_corridor_a"] == ("factorized", None)
     assert args.factorized_c_checkpoint == DEFAULT_FACTORIZED_C_CHECKPOINT
     assert args.factorized_tau_r_checkpoint == DEFAULT_FACTORIZED_TAU_R_CHECKPOINT
 
@@ -238,6 +252,7 @@ def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry
 
     assert suite["schema_version"] == 5
     assert suite["generation_policy"]["revision"] == BENCHMARK_GENERATION_REVISION
+    assert suite["generation_policy"]["static_environment_intersection_policy"] == "allowed_and_reported"
     assert suite["scenario_count"] == len(CATEGORIES)
     assert suite["environment_count_per_category"] == 1
     assert suite["generation_policy"]["environment_randomized_fields"] == [
@@ -253,6 +268,7 @@ def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry
     validate_suite(suite)
 
     saw_mode_specific_crossing = False
+    saw_static_furniture_penetration = False
     for environment in suite["scenarios"]:
         variants = [materialize_scenario_for_mode(environment, mode) for mode in modes]
         assert all(_shared_object_geometry(variant) == _shared_object_geometry(variants[0]) for variant in variants[1:])
@@ -262,11 +278,16 @@ def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry
             for item in variant["objects"]:
                 lower, upper = STARTUP_SAFE_ANCHOR_BOUNDS[item["anchor_id"]]
                 assert all(low <= actual <= high for actual, low, high in zip(item["anchor_position"], lower, upper))
-                assert static_interaction_clearance(item) > 0.0
+                interaction_clearance = static_interaction_clearance(item)
+                assert item["minimum_static_interaction_clearance_m"] == pytest.approx(
+                    interaction_clearance
+                )
+                saw_static_furniture_penetration |= interaction_clearance <= 0.0
                 assert item["minimum_initial_franka_clearance_m"] > 0.005
             if len(variant["objects"]) >= 2:
                 assert variant["attempt_sampling"]["direction_line_contract"]["satisfied"]
     assert saw_mode_specific_crossing
+    assert saw_static_furniture_penetration
 
 
 def test_absolute_world_time_shares_crossing_times_as_well_as_geometry():
@@ -284,6 +305,32 @@ def test_absolute_world_time_shares_crossing_times_as_well_as_geometry():
         assert all([item["crossing_time_s"] for item in variant["objects"]] == expected for variant in variants[1:])
 
 
+def test_furniture_rejecting_suite_cannot_be_reused(tmp_path):
+    (tmp_path / "suite.json").write_text(
+        json.dumps(
+            {
+                "suite_seed": 42,
+                "environment_count_per_category": 1,
+                "planner_repeats": 1,
+                "timing_protocol": "motion_aligned",
+                "modes": ["phase4"],
+                "generation_policy": {"revision": "paired-startup-safe-environments-v2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="use a new output directory"):
+        materialize_suite(
+            tmp_path,
+            1,
+            42,
+            timing_protocol="motion_aligned",
+            modes=["phase4"],
+            planner_repeats=1,
+        )
+
+
 @pytest.mark.parametrize(
     ("mode", "profile"),
     [
@@ -297,13 +344,28 @@ def test_ablation_modes_reuse_parent_timing_profiles(mode, profile):
     assert _timing_profile_mode(mode) == profile
 
 
+@pytest.mark.parametrize(
+    ("enabled", "baseline"),
+    [
+        ("joint_corridor_a", "joint"),
+        ("f1_tau_r_corridor_a", "f1_tau_r"),
+        ("f1_c_corridor_a", "f1_c"),
+    ],
+)
+def test_corridor_modes_reuse_exact_parent_timing_profile(enabled, baseline):
+    assert _timing_profile_mode(enabled) == baseline
+
+
 def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
     path = tmp_path / "ros.log"
     path.write_text(
         "scenario world clock started unix_ns=12300000000 mode=first_joint_state\n"
         "initial dynamic-world warm-up complete and first planning submitted "
         "unix_ns=12800000000 from_world_s=0.500000 observations=5 "
-        "track_age_s=0.400000\n",
+        "track_age_s=0.400000\n"
+        "[node] [13.0] dynamic plan rejected: RequestValidationError: "
+        "q_pos_start is in collision in the configured MPD scene.\n"
+        "[node] [14.0] goal reached; holding position\n",
         encoding="utf-8",
     )
 
@@ -313,6 +375,7 @@ def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
     assert parsed["first_planning_submit_from_world_s"] == pytest.approx(0.5)
     assert parsed["initial_world_warmup_observations"] == 5
     assert parsed["initial_world_warmup_age_s"] == pytest.approx(0.4)
+    assert parsed["goal_reached"] is True
 
 
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
@@ -390,6 +453,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
         encoding="utf-8",
     )
     (attempt / "ros-replan.log").write_text(
+        "scenario world clock started unix_ns=1000000000 mode=first_joint_state\n"
         "[1.000] dynamic MPD replanner started\n"
         '[2.000] top-K candidate rejections: [{"reason": "dynamic_collision"}]\n'
         "[3.000] goal reached; holding position\n",
@@ -401,6 +465,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
         json.dumps(
             {
                 "status": "success",
+                "created_unix_time": 2.4,
                 "timing": {"inference_total_sec": 0.4},
                 "trajectory": {
                     "minimum_environment_clearance_m": 0.02,
@@ -408,6 +473,24 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
                 },
                 "space_time_guidance": {
                     "settings": {"spatial_dynamic_max_grad_norm": 2.0},
+                    "corridor_a": {
+                        "enabled": True,
+                        "elapsed_s": 0.12,
+                        "grid_build_s": 0.02,
+                        "branch_selection_s": 0.01,
+                        "refinement_forward_s": 0.04,
+                        "refinement_backward_s": 0.03,
+                        "final_validation_s": 0.05,
+                        "profiled_total_s": 0.15,
+                        "changed": 3,
+                        "dense_fallbacks": 1,
+                        "runtime_identity": {
+                            "guidance_mode": "phase5_joint",
+                            "factorized_method": None,
+                            "factorized_representation": None,
+                            "corridor_variant": "corridor_a",
+                        },
+                    },
                     "steps": [
                         {
                             "spatial_clip_ratio": 0.25,
@@ -434,7 +517,8 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
         "scenario_id": "scenario-000",
         "category": "single_crossing",
         "repeat": 0,
-        "mode": "joint",
+        "mode": "joint_corridor_a",
+        "corridor_a_enabled": True,
         "planner_seed": 42,
     }
 
@@ -445,6 +529,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert metrics["failure_class"] is None
     assert metrics["goal_reached"]
     assert metrics["goal_time_s"] == pytest.approx(2.0)
+    assert metrics["first_plan_completed_from_world_s"] == pytest.approx(1.4)
     assert metrics["joint_l2_path_rad"] == pytest.approx(1.0)
     assert metrics["hard_minimum_clearance_m"] == pytest.approx(0.04)
     assert metrics["guard_dynamic_collision_rejections"] == 1
@@ -456,6 +541,17 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert metrics["factorized_spatial_basis_adapted"] is True
     assert metrics["factorized_space_nfe_mean"] == pytest.approx(32.0)
     assert metrics["factorized_timing_nfe_mean"] == pytest.approx(100.0)
+    assert metrics["corridor_a_refinement_mean_s"] == pytest.approx(0.12)
+    assert metrics["corridor_a_grid_build_mean_s"] == pytest.approx(0.02)
+    assert metrics["corridor_a_branch_selection_mean_s"] == pytest.approx(0.01)
+    assert metrics["corridor_a_refinement_forward_mean_s"] == pytest.approx(0.04)
+    assert metrics["corridor_a_refinement_backward_mean_s"] == pytest.approx(0.03)
+    assert metrics["corridor_a_final_validation_mean_s"] == pytest.approx(0.05)
+    assert metrics["corridor_a_profiled_total_mean_s"] == pytest.approx(0.15)
+    assert metrics["corridor_a_changed_candidates_mean"] == pytest.approx(3.0)
+    assert metrics["corridor_a_dense_fallbacks_mean"] == pytest.approx(1.0)
+    assert metrics["corridor_a_payload_match_count"] == 1
+    assert metrics["corridor_a_payload_mismatch_count"] == 0
 
     suite = generate_suite(1, 42)
     write_reports(tmp_path, [metrics], suite)
@@ -470,6 +566,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "难度分层结果" in report
     assert "规划轨迹时长 mean s" in report
     assert "Phase 5 / Factorized 梯度裁剪诊断" in report
+    assert "Corridor A 诊断" in report
     assert (tmp_path / "report" / "runs.csv").is_file()
     assert json.loads((tmp_path / "report" / "summary.json").read_text())["schema_version"] == 5
 
@@ -700,6 +797,41 @@ def test_c_and_tau_r_factorized_modes_run_together_with_best_defaults(tmp_path):
         if mode.startswith("f"):
             assert spec["factorized_method"] == mode.split("_")[0]
     assert seeds == {20260829}
+
+
+def test_corridor_comparison_dry_run_pairs_world_seed_and_checkpoints(tmp_path):
+    output = tmp_path / "corridor-benchmark"
+    assert main([
+        "--output-dir", str(output),
+        "--environment-count-per-category", "1",
+        "--planner-repeats", "1",
+        "--dry-run",
+    ]) == 0
+    validate_suite(json.loads((output / "suite.json").read_text(encoding="utf-8")))
+
+    specs = {}
+    scenarios = {}
+    for mode in DEFAULT_MODES:
+        spec_path = next((output / "runs" / "scenario-000" / "repeat-00" / mode).glob("*/run-spec.json"))
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        specs[mode] = spec
+        scenarios[mode] = json.loads(Path(spec["scenario_file"]).read_text(encoding="utf-8"))
+        assert spec["corridor_a_enabled"] == mode.endswith("_corridor_a")
+        assert ("--corridor-a" in spec["command"]) == mode.endswith("_corridor_a")
+    assert {spec["planner_seed"] for spec in specs.values()} == {20260829}
+    for baseline, enabled in (
+        ("joint", "joint_corridor_a"),
+        ("f1_tau_r", "f1_tau_r_corridor_a"),
+        ("f1_c", "f1_c_corridor_a"),
+    ):
+        assert scenarios[baseline]["objects"] == scenarios[enabled]["objects"]
+        assert scenarios[baseline]["anchor_schedule"] == scenarios[enabled]["anchor_schedule"]
+        assert specs[baseline]["phase"] == specs[enabled]["phase"]
+        if baseline.startswith("f1"):
+            assert specs[baseline]["factorized_timing_checkpoint"] == specs[enabled]["factorized_timing_checkpoint"]
+            assert specs[baseline]["factorized_method"] == specs[enabled]["factorized_method"] == "f1"
+    assert "--corridor-a" not in specs["phase4_aligned"]["command"]
+    assert "--corridor-a" not in specs["f3_tau_r"]["command"]
 
 
 def test_existing_rows_keep_historical_infrastructure_attempt_count(tmp_path):
