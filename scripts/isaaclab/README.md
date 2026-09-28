@@ -175,8 +175,12 @@ uses paired planner seeds for eight modes: `phase4_aligned`, `joint`,
 the matching mode without the suffix leaves it off. Each on/off pair receives
 the same frozen obstacle geometry, direction, speed, size, motion law, planner
 seed, and timing checkpoint. With `motion_aligned`, every mode—including the
-three Corridor modes—uses its own measured motion-start profile, so slower
-Corridor modes receive later crossing times. With `absolute_world_time`, all
+three Corridor modes—uses its own measured first-plan completion profile. The
+reference is the earliest completed planner result after world start, whether
+that result is successful or a terminal failure such as `no_valid_trajectory`;
+it does not wait for the first successful trajectory or significant robot
+motion. Slower Corridor modes therefore receive later crossing times. With
+`absolute_world_time`, all
 modes share identical crossing times and the Corridor startup delay remains a
 real online penalty. Use `--timing-protocol both` to materialize both protocols
 from one accepted geometry sample and run/report them separately.
@@ -261,7 +265,9 @@ checkpoint so the comparison isolates sampler design. The generic legacy modes
 
 `motion_aligned` is the default timing protocol. It holds object geometry and motion
 parameters fixed across modes, then shifts crossing times using each mode's measured
-significant-motion profile. `absolute_world_time` also shares crossing times exactly,
+time to its first completed planner result, regardless of terminal status. This aligns
+the modes at the end of the first planning attempt without waiting for a successful
+path or visible motion. `absolute_world_time` shares crossing times exactly,
 so every mode sees an identical world-clock trajectory. Both protocols perform bounded
 rejection sampling before execution: robot-base clearance over the full design episode,
 initial parked-Franka 56-sphere clearance through the expected-goal safety boundary,
@@ -286,8 +292,10 @@ of `phase4`, `phase4_aligned`, `joint`, `f1_c`, `f2_c`, `f3_c`, `f1_tau_r`,
 ```
 
 Planner and geometry seeds change deterministically on every retry. Each attempt uses
-the selected mode's measured significant-motion profile to move the original crossing
-schedule later, while retaining a 0.5 s reserve before the mode's expected goal. Anchor,
+the selected mode's measured first-plan completion profile to move the original crossing
+schedule later, while retaining a 0.5 s reserve before the mode's expected goal. The
+alignment reference is the earliest completed planner result, whether it succeeded or
+failed; it does not wait for a valid path or significant robot motion. Anchor,
 direction, speed, size, and crossing time are all resampled. The complete moving box is
 checked from world time zero through the mode's expected-goal safety boundary against
 all 56 collision spheres of the initial Franka pose; candidates must retain more than
@@ -311,8 +319,8 @@ the ROS node continues replanning, while the latter makes the attempt fail even 
 later reaches the goal without braking. The start-collision warning remains in the
 attempt diagnostics.
 
-Audit the significant-motion profiles from recorded replays at both 0.01 and 0.02 rad
-joint-displacement thresholds with:
+Audit both first-plan completion time and significant-motion profiles from recorded
+replays at 0.01 and 0.02 rad joint-displacement thresholds with:
 
 ```bash
 /home/eric/anaconda3/envs/mpd-splines-public/bin/python \

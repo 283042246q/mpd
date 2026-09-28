@@ -121,8 +121,9 @@ class AttemptAssessment:
 
 @dataclass(frozen=True)
 class ModeTimingProfile:
-    # Measured from existing successful replays at a 0.01 rad joint-motion
-    # threshold. These are normal first-plan medians, not retry outliers.
+    # first_plan_completed_s is measured from world start to the earliest
+    # completed planner result, regardless of success/failure status.
+    first_plan_completed_s: float
     significant_motion_start_s: float
     expected_goal_s: float
     crossing_shift_min_s: float
@@ -130,22 +131,25 @@ class ModeTimingProfile:
 
 
 MODE_TIMING_PROFILES = {
-    "phase4": ModeTimingProfile(3.04, 12.70, 1.10, 1.40),
-    "phase4_aligned": ModeTimingProfile(3.04, 12.70, 1.20, 1.50),
-    "joint": ModeTimingProfile(4.02, 12.80, 1.65, 1.95),
-    "f1_c": ModeTimingProfile(3.97, 8.80, 1.40, 1.70),
-    "f2_c": ModeTimingProfile(3.98, 8.90, 1.50, 1.80),
-    "f3_c": ModeTimingProfile(3.97, 8.90, 1.60, 1.90),
-    "f1_tau_r": ModeTimingProfile(4.05, 10.20, 1.70, 2.00),
-    "f2_tau_r": ModeTimingProfile(4.07, 10.80, 1.80, 2.10),
-    "f3_tau_r": ModeTimingProfile(4.13, 11.00, 1.90, 2.20),
+    "phase4": ModeTimingProfile(1.43, 3.04, 12.70, 1.10, 1.40),
+    "phase4_aligned": ModeTimingProfile(1.65, 3.04, 12.70, 1.20, 1.50),
+    "joint": ModeTimingProfile(1.60, 4.02, 12.80, 1.65, 1.95),
+    "f1_c": ModeTimingProfile(2.25, 3.97, 8.80, 1.40, 1.70),
+    "f2_c": ModeTimingProfile(3.07, 3.98, 8.90, 1.50, 1.80),
+    "f3_c": ModeTimingProfile(1.94, 3.97, 8.90, 1.60, 1.90),
+    "f1_tau_r": ModeTimingProfile(2.23, 4.05, 10.20, 1.70, 2.00),
+    "f2_tau_r": ModeTimingProfile(3.06, 4.07, 10.80, 1.80, 2.10),
+    "f3_tau_r": ModeTimingProfile(1.94, 4.13, 11.00, 1.90, 2.20),
     # Recalibrated on the same frozen Corridor-A scene batch on 2026-09-28.
     # Corridor modes keep their own online-latency profile: mapping them back
     # to the parent mode would schedule the crossing before they start moving.
-    "joint_corridor_a": ModeTimingProfile(16.50, 25.75, 14.00, 17.50),
-    "f1_c_corridor_a": ModeTimingProfile(11.70, 16.75, 9.10, 11.50),
-    "f1_tau_r_corridor_a": ModeTimingProfile(13.70, 19.75, 11.10, 13.20),
+    "joint_corridor_a": ModeTimingProfile(12.67, 16.50, 24.00, 7.50, 11.00),
+    "f1_c_corridor_a": ModeTimingProfile(8.24, 11.70, 15.00, 3.50, 6.50),
+    "f1_tau_r_corridor_a": ModeTimingProfile(10.12, 13.70, 18.25, 5.00, 8.00),
 }
+MINIMUM_CROSSING_AFTER_FIRST_PLAN_S = 1.25
+# Backward-compatible name for external imports; crossing alignment now uses
+# MINIMUM_CROSSING_AFTER_FIRST_PLAN_S and never waits for significant motion.
 MINIMUM_CROSSING_AFTER_MOTION_START_S = 1.25
 GOAL_CROSSING_RESERVE_S = 0.50
 MINIMUM_INITIAL_FRANKA_CLEARANCE_M = 0.005
@@ -158,7 +162,7 @@ FORCED_DIRECTION_LINE_SEPARATION_RANGE_RAD = (
     math.radians(50.0),
     math.radians(60.0),
 )
-ATTEMPT_GENERATION_REVISION = "actual-premotion-safe-distinct-direction-lines-v3"
+ATTEMPT_GENERATION_REVISION = "first-plan-aligned-premotion-safe-direction-lines-v4"
 
 
 def mode_contract(mode: str) -> RunnerMode:
@@ -527,7 +531,7 @@ def _success_record_uses_current_attempt_policy(record: dict[str, Any]) -> bool:
 def _require_current_attempt_policy(
     payload: dict[str, Any], *, expected_mode: str
 ) -> None:
-    """Fail closed if an attempt was not materialized by the shared v3 policy."""
+    """Fail closed if an attempt was not materialized by the current shared policy."""
 
     if not _success_record_uses_current_attempt_policy(payload):
         revision = payload.get("attempt_sampling", {}).get("revision")
@@ -566,8 +570,8 @@ def resample_mode_attempt_scenario(
     original_times = [float(item["crossing_time_s"]) for item in original_objects]
     shift_lower = max(
         profile.crossing_shift_min_s,
-        profile.significant_motion_start_s
-        + MINIMUM_CROSSING_AFTER_MOTION_START_S
+        profile.first_plan_completed_s
+        + MINIMUM_CROSSING_AFTER_FIRST_PLAN_S
         - min(original_times),
     )
     shift_upper = min(
@@ -699,14 +703,16 @@ def resample_mode_attempt_scenario(
     ]
     sampled["mode_timing_profile"] = {
         "mode": mode,
+        "alignment_basis": "first_plan_completed_any_status",
+        "first_plan_completed_s": profile.first_plan_completed_s,
         "significant_motion_threshold_rad": 0.01,
         "significant_motion_start_s": profile.significant_motion_start_s,
         "expected_goal_s": profile.expected_goal_s,
         "goal_crossing_reserve_s": goal_reserve_s,
         "crossing_shift_s": crossing_shift_s,
         "crossing_shift_range_s": [shift_lower, shift_upper],
-        "minimum_crossing_after_motion_start_s": (
-            MINIMUM_CROSSING_AFTER_MOTION_START_S
+        "minimum_crossing_after_first_plan_s": (
+            MINIMUM_CROSSING_AFTER_FIRST_PLAN_S
         ),
     }
     sampled["attempt_sampling"] = {

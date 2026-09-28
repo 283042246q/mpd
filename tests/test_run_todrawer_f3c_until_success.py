@@ -10,7 +10,7 @@ from scripts.isaaclab.run_todrawer_f3c_until_success import (
     ATTEMPT_GENERATION_REVISION,
     GOAL_CROSSING_RESERVE_S,
     MINIMUM_DIRECTION_LINE_SEPARATION_RAD,
-    MINIMUM_CROSSING_AFTER_MOTION_START_S,
+    MINIMUM_CROSSING_AFTER_FIRST_PLAN_S,
     MINIMUM_INITIAL_FRANKA_CLEARANCE_M,
     MODE_TIMING_PROFILES,
     SUPPORTED_MODES,
@@ -254,7 +254,7 @@ def test_runtime_policy_guard_rejects_old_revision() -> None:
         "mode_timing_profile": {"mode": "phase4"},
     }
 
-    with pytest.raises(RuntimeError, match="expected .*v3"):
+    with pytest.raises(RuntimeError, match=rf"expected .*{ATTEMPT_GENERATION_REVISION}"):
         _require_current_attempt_policy(payload, expected_mode="phase4")
 
 
@@ -320,8 +320,8 @@ def test_mode_attempt_randomizes_geometry_and_respects_timing_contract(mode: str
     assert item["crossing_time_s"] > original_item["crossing_time_s"]
     assert (
         item["crossing_time_s"]
-        >= profile.significant_motion_start_s
-        + MINIMUM_CROSSING_AFTER_MOTION_START_S
+        >= profile.first_plan_completed_s
+        + MINIMUM_CROSSING_AFTER_FIRST_PLAN_S
     )
     assert item["crossing_time_s"] <= profile.expected_goal_s - GOAL_CROSSING_RESERVE_S
     assert sampled["attempt_sampling"]["parked_franka_protection_until_s"] == pytest.approx(

@@ -234,8 +234,16 @@ def validate_scenario(
     elif mode_profile is None:
         _require(all(4.0 <= time <= 6.5 for time in times), f"{scenario_id}: crossing outside primary window")
     if mode_profile is not None:
-        motion_start = float(mode_profile["significant_motion_start_s"])
-        minimum_delay = float(mode_profile["minimum_crossing_after_motion_start_s"])
+        alignment_basis = mode_profile.get("alignment_basis")
+        if alignment_basis == "first_plan_completed_any_status":
+            alignment_reference = float(mode_profile["first_plan_completed_s"])
+            minimum_delay = float(mode_profile["minimum_crossing_after_first_plan_s"])
+            alignment_label = "first completed plan"
+        else:
+            # Backward compatibility for previously frozen suites.
+            alignment_reference = float(mode_profile["significant_motion_start_s"])
+            minimum_delay = float(mode_profile["minimum_crossing_after_motion_start_s"])
+            alignment_label = "mode motion start"
         expected_goal = float(mode_profile["expected_goal_s"])
         goal_reserve = float(mode_profile["goal_crossing_reserve_s"])
         attempt_sampling = scenario.get("attempt_sampling", {})
@@ -249,8 +257,8 @@ def validate_scenario(
                 f"{scenario_id}: parked-Franka protection window mismatch",
             )
         _require(
-            min(times) >= motion_start + minimum_delay - 1e-12,
-            f"{scenario_id}: crossing precedes mode motion-start allowance",
+            min(times) >= alignment_reference + minimum_delay - 1e-12,
+            f"{scenario_id}: crossing precedes {alignment_label} allowance",
         )
         _require(
             max(times) <= expected_goal - goal_reserve + 1e-12,

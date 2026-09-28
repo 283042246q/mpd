@@ -36,7 +36,7 @@ DEFAULT_MODES = (
 
 
 def measure_first_plan_completion(manifest_path: Path) -> float | None:
-    """World start to the first successful MPD result created by the worker."""
+    """World start to the first completed MPD result, regardless of status."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     world_start_ns = manifest.get("world_start_unix_ns")
     if world_start_ns is None:
@@ -46,8 +46,6 @@ def measure_first_plan_completion(manifest_path: Path) -> float | None:
         try:
             result = json.loads(result_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        if result.get("status") != "success":
             continue
         created = result.get("created_unix_time")
         if isinstance(created, (int, float)) and math.isfinite(float(created)):
@@ -190,7 +188,8 @@ def analyze_logs(
         summaries[mode]["first_plan_completed_from_world_s"] = _describe(first_plan_times[mode])
     return {
         "schema": "mpd_todrawer_mode_motion_start_audit",
-        "schema_version": 1,
+        "schema_version": 2,
+        "first_plan_completion_semantics": "earliest_result_any_status",
         "logs_root": logs_root.resolve().as_posix(),
         "thresholds_rad": list(thresholds_rad),
         "modes": summaries,

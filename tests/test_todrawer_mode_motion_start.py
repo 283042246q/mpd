@@ -52,6 +52,12 @@ def _write_replay(tmp_path):
     (result_dir / "result.json").write_text(
         json.dumps({"status": "success", "created_unix_time": 12.5}), encoding="utf-8"
     )
+    failed_dir = episode.parent / "planner-results" / "request-0"
+    failed_dir.mkdir(parents=True)
+    (failed_dir / "result.json").write_text(
+        json.dumps({"status": "no_valid_trajectory", "created_unix_time": 12.2}),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -65,7 +71,7 @@ def test_measure_manifest_motion_start_uses_joint_displacement_threshold(tmp_pat
     assert low["motion_start_from_world_s"] == pytest.approx(3.4)
     assert high["motion_start_from_world_s"] == pytest.approx(3.5)
     assert low["handoff_from_world_s"] == pytest.approx(3.2)
-    assert measure_first_plan_completion(manifest) == pytest.approx(2.5)
+    assert measure_first_plan_completion(manifest) == pytest.approx(2.2)
 
 
 def test_analyze_logs_groups_mode_and_threshold(tmp_path):
@@ -78,4 +84,6 @@ def test_analyze_logs_groups_mode_and_threshold(tmp_path):
     assert report["modes"]["f3_c"]["0.01"]["count"] == 1
     assert report["modes"]["f3_c"]["0.01"]["median"] == pytest.approx(3.4)
     assert report["modes"]["f3_c"]["0.02"]["median"] == pytest.approx(3.5)
-    assert report["modes"]["f3_c"]["first_plan_completed_from_world_s"]["median"] == pytest.approx(2.5)
+    assert report["schema_version"] == 2
+    assert report["first_plan_completion_semantics"] == "earliest_result_any_status"
+    assert report["modes"]["f3_c"]["first_plan_completed_from_world_s"]["median"] == pytest.approx(2.2)

@@ -176,7 +176,7 @@ MAX_GENERATION_RESAMPLE_ATTEMPTS = 50
 DEFAULT_ANCHOR_JITTER_M = 0.015
 DENSE_ANCHOR_JITTER_M = 0.020
 GENERATION_REVISION = "world-clock-robot-aware-crossings-v1"
-BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v4-dual-protocol"
+BENCHMARK_GENERATION_REVISION = "paired-startup-safe-environments-v5-first-plan-aligned"
 TIMING_PROTOCOLS = ("absolute_world_time", "motion_aligned")
 TIMING_PROTOCOL_CHOICES = (*TIMING_PROTOCOLS, "both")
 DEFAULT_TIMING_PROTOCOL = "motion_aligned"
@@ -216,6 +216,7 @@ REPORT_FIELDS = (
     "world_start_unix_s",
     "first_planning_submit_from_world_s",
     "first_plan_completed_from_world_s",
+    "first_plan_status",
     "first_command_start_from_world_s",
     "first_bridge_start_from_world_s",
     "first_handoff_from_world_s",
@@ -772,7 +773,7 @@ def _mode_timing_shift(
 ) -> tuple[float, dict[str, Any] | None, float]:
     from scripts.isaaclab.run_todrawer_f3c_until_success import (
         GOAL_CROSSING_RESERVE_S,
-        MINIMUM_CROSSING_AFTER_MOTION_START_S,
+        MINIMUM_CROSSING_AFTER_FIRST_PLAN_S,
         MODE_TIMING_PROFILES,
     )
 
@@ -788,7 +789,7 @@ def _mode_timing_shift(
         raise ValueError(f"unsupported timing protocol {protocol!r}")
     shift_lower = max(
         profile.crossing_shift_min_s,
-        profile.significant_motion_start_s + MINIMUM_CROSSING_AFTER_MOTION_START_S - min(original_times),
+        profile.first_plan_completed_s + MINIMUM_CROSSING_AFTER_FIRST_PLAN_S - min(original_times),
     )
     shift_upper = min(
         profile.crossing_shift_max_s,
@@ -803,13 +804,15 @@ def _mode_timing_shift(
     metadata = {
         "mode": mode,
         "profile_mode": profile_mode,
+        "alignment_basis": "first_plan_completed_any_status",
+        "first_plan_completed_s": profile.first_plan_completed_s,
         "significant_motion_threshold_rad": 0.01,
         "significant_motion_start_s": profile.significant_motion_start_s,
         "expected_goal_s": profile.expected_goal_s,
         "goal_crossing_reserve_s": GOAL_CROSSING_RESERVE_S,
         "crossing_shift_s": shift,
         "crossing_shift_range_s": [shift_lower, shift_upper],
-        "minimum_crossing_after_motion_start_s": (MINIMUM_CROSSING_AFTER_MOTION_START_S),
+        "minimum_crossing_after_first_plan_s": (MINIMUM_CROSSING_AFTER_FIRST_PLAN_S),
     }
     return shift, metadata, protection_until_s
 
@@ -1364,16 +1367,26 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     joint_l2, joint_l1 = _trajectory_segment_metrics(manifest_path, executed)
     selected_clearance = _selected_clearance(executed)
 
-    result_payloads = []
+    all_result_payloads = []
     for result_path in sorted((attempt_dir / "planner-results").glob("*/result.json")):
         try:
             payload = _read_json(result_path)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        if payload.get("status") == "success":
-            result_payloads.append(payload)
+        all_result_payloads.append(payload)
+    result_payloads = [
+        payload for payload in all_result_payloads if payload.get("status") == "success"
+    ]
     inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
-    plan_created_unix_s = _finite([payload.get("created_unix_time") for payload in result_payloads])
+    completed_results = [
+        payload for payload in all_result_payloads
+        if _finite([payload.get("created_unix_time")])
+    ]
+    first_completed_result = min(
+        completed_results,
+        key=lambda payload: float(payload["created_unix_time"]),
+        default=None,
+    )
     guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
     corridor_candidates = [
         guidance.get("corridor_a", {}) for guidance in guidance_payloads
@@ -1464,8 +1477,11 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
             else timing.get("first_planning_submit_from_world_s")
         ),
         first_plan_completed_from_world_s=(
-            min(plan_created_unix_s) - float(world_start_unix_s)
-            if plan_created_unix_s and world_start_unix_s is not None else None
+            float(first_completed_result["created_unix_time"]) - float(world_start_unix_s)
+            if first_completed_result is not None and world_start_unix_s is not None else None
+        ),
+        first_plan_status=(
+            first_completed_result.get("status") if first_completed_result is not None else None
         ),
         first_command_start_from_world_s=timing.get("first_command_start_from_world_s"),
         first_bridge_start_from_world_s=timing.get("first_bridge_start_from_world_s"),
@@ -1796,13 +1812,14 @@ def write_reports(
                 "includes the complete request latency"
             ),
             "first_plan_completed_from_world_s": (
-                "earliest successful planner result created_unix_time minus scenario world-clock start; "
-                "includes initial warm-up and any rejected earlier requests"
+                "earliest completed planner result created_unix_time minus scenario world-clock start, "
+                "regardless of success, no_valid_trajectory, or other terminal result status"
             ),
             "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
             "timing_protocol_comparison": (
                 "motion_aligned compares crossing difficulty relative to each mode's measured "
-                "motion start; absolute_world_time preserves the real online penalty of slower modes"
+                "first completed planner result, regardless of status; absolute_world_time "
+                "preserves the real online penalty of slower modes"
             ),
         },
         "by_timing_protocol": by_timing_protocol,
@@ -1844,7 +1861,8 @@ def write_reports(
                 "",
                 "## 时间协议分开汇总",
                 "",
-                "`motion_aligned` 比较机器人真正开始运动后的相对 crossing 难度；"
+                "`motion_aligned` 比较第一次 planner result 结束后的相对 crossing 难度，"
+                "不要求该 result 成功；"
                 "`absolute_world_time` 保留慢模式在真实在线系统中的启动延迟代价。",
             ]
         )
@@ -2412,7 +2430,8 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_TIMING_PROTOCOL,
         help=(
             "absolute_world_time shares crossing times exactly; motion_aligned "
-            "uses per-mode motion-start profiles while retaining shared geometry; "
+            "uses each mode's first completed plan result (any terminal status) "
+            "while retaining shared geometry; "
             "both materializes and runs both protocols from one frozen geometry batch"
         ),
     )

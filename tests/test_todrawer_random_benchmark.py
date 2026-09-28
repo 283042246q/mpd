@@ -584,6 +584,18 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
         ),
         encoding="utf-8",
     )
+    failed_result_dir = attempt / "planner-results" / "request-0"
+    failed_result_dir.mkdir(parents=True)
+    (failed_result_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "no_valid_trajectory",
+                "created_unix_time": 2.2,
+                "timing": {"inference_total_sec": 0.3},
+            }
+        ),
+        encoding="utf-8",
+    )
     run_spec = {
         "scenario_id": "scenario-000",
         "category": "single_crossing",
@@ -600,7 +612,8 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert metrics["failure_class"] is None
     assert metrics["goal_reached"]
     assert metrics["goal_time_s"] == pytest.approx(2.0)
-    assert metrics["first_plan_completed_from_world_s"] == pytest.approx(1.4)
+    assert metrics["first_plan_completed_from_world_s"] == pytest.approx(1.2)
+    assert metrics["first_plan_status"] == "no_valid_trajectory"
     assert metrics["joint_l2_path_rad"] == pytest.approx(1.0)
     assert metrics["hard_minimum_clearance_m"] == pytest.approx(0.04)
     assert metrics["guard_dynamic_collision_rejections"] == 1
