@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import copy
 import csv
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ import numpy as np
 
 from scripts.isaaclab.summarize_replan_timing import summarize_manifest
 from scripts.isaaclab.analyze_todrawer_mode_motion_start import measure_manifest_motion_start
+from scripts.isaaclab.todrawer_metric_catalog import METRIC_CATALOG
 from scripts.isaaclab.todrawer_scenario_validation import (
     DESIGN_EPISODE_DURATION_S,
     ROBOT_BASE_EXCLUSION_MAX,
@@ -204,7 +206,24 @@ REPORT_FIELDS = (
     "repeat",
     "planner_repeat",
     "mode",
+    "phase",
+    "timing_mode",
+    "scenario_file",
+    "strrt_solve_budget_s",
+    "strrt_range",
+    "strrt_edge_dt_s",
     "corridor_a_enabled",
+    "corridor_a_backend",
+    "corridor_a_chunk_size",
+    "corridor_a_dp_init",
+    "corridor_a_k_best",
+    "corridor_a_branch_fallback",
+    "corridor_a_dense_branch_budget",
+    "corridor_a_selective_k",
+    "corridor_a_early_stop",
+    "factorized_method",
+    "factorized_representation",
+    "factorized_timing_checkpoint",
     "timing_protocol",
     "planner_seed",
     "pipeline_returncode",
@@ -238,10 +257,12 @@ REPORT_FIELDS = (
     "minimum_static_interaction_clearance_m",
     "brake_count",
     "guard_dynamic_collision_rejections",
+    "candidate_rejection_reasons",
     "accepted_nonpositive_clearance_count",
     "episode_duration_s",
     "execution_duration_s",
     "executed_plan_count",
+    "plan_record_count",
     "joint_l2_path_rad",
     "joint_l1_travel_rad",
     "planned_duration_mean_s",
@@ -277,7 +298,6 @@ REPORT_FIELDS = (
     "corridor_a_early_stopped_branches_mean",
     "corridor_a_payload_match_count",
     "corridor_a_payload_mismatch_count",
-    "factorized_representation",
     "factorized_timing_checkpoint_step",
     "factorized_timing_checkpoint_sha256",
     "factorized_spatial_basis_adapted",
@@ -295,6 +315,7 @@ REPORT_FIELDS = (
     "maximum_controller_reference_jump_rad",
     "maximum_command_gap_s",
     "no_valid_trajectory_count",
+    "jtc_error_count",
     "error",
     "attempt_dir",
 )
@@ -1445,10 +1466,14 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         payload for payload in all_result_payloads if payload.get("status") == "success"
     ]
     inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
-    solver_times = _finite([payload.get("timing", {}).get("solve_s") for payload in result_payloads])
+    split_timing_payloads = [
+        payload for payload in result_payloads
+        if "ik_s" in payload.get("timing", {}) and "precheck_s" in payload.get("timing", {})
+    ]
+    solver_times = _finite([payload.get("timing", {}).get("solve_s") for payload in split_timing_payloads])
     ik_times = _finite([payload.get("timing", {}).get("ik_s") for payload in result_payloads])
     precheck_times = _finite([payload.get("timing", {}).get("precheck_s") for payload in result_payloads])
-    postprocess_times = _finite([payload.get("timing", {}).get("postprocess_s") for payload in result_payloads])
+    postprocess_times = _finite([payload.get("timing", {}).get("postprocess_s") for payload in split_timing_payloads])
     guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
     corridor_candidates = [
         guidance.get("corridor_a", {}) for guidance in guidance_payloads
@@ -1619,9 +1644,10 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         precheck_mean_s=(float(np.mean(precheck_times)) if precheck_times else None),
         solver_mean_s=(float(np.mean(solver_times)) if solver_times else None),
         postprocess_mean_s=(float(np.mean(postprocess_times)) if postprocess_times else None),
-        postprocess_invalid_count=sum(
-            "postprocess_invalid" in str(payload.get("error", {}).get("message", ""))
-            for payload in all_result_payloads
+        postprocess_invalid_count=(
+            sum("postprocess_invalid" in str(payload.get("error", {}).get("message", ""))
+                for payload in all_result_payloads)
+            if run_spec.get("mode") == "strrt" else None
         ),
         corridor_a_refinement_mean_s=(float(np.mean(corridor_elapsed)) if corridor_elapsed else None),
         corridor_a_grid_build_mean_s=(float(np.mean(corridor_grid_build)) if corridor_grid_build else None),
@@ -1885,6 +1911,13 @@ def write_reports(
     suite: dict[str, Any],
     mode_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
+    missing_definitions = set(REPORT_FIELDS) - set(METRIC_CATALOG)
+    extra_definitions = set(METRIC_CATALOG) - set(REPORT_FIELDS)
+    if missing_definitions or extra_definitions or len(REPORT_FIELDS) != len(set(REPORT_FIELDS)):
+        raise ValueError(
+            "ToDrawer report field dictionary mismatch: "
+            f"missing={sorted(missing_definitions)}, extra={sorted(extra_definitions)}"
+        )
     report_modes = _report_modes(rows, mode_names)
     reports = output_dir / "report"
     reports.mkdir(parents=True, exist_ok=True)
@@ -1941,6 +1974,7 @@ def write_reports(
         "timing_protocols": list(reported_protocols),
         "run_count": len(rows),
         "modes": list(report_modes),
+        "metric_catalog": METRIC_CATALOG,
         "metric_semantics": {
             "collision": "guard/DenseCheck prediction; physical contact is not measured by passive replay",
             "dynamic_object_vs_static_environment": (
@@ -1990,6 +2024,7 @@ def write_reports(
         "",
         "`碰撞`统计 guard/DenseCheck 的预测碰撞拒绝；被接受轨迹出现非正 hard clearance 会单独计数。被动 replay 不测量真实物理接触，因此报告不会把预测碰撞写成实际接触。uncovered command gap 只统计相邻实际命令区间没有任何 JTC goal 覆盖的时间；guarded terminal hold 是显式发送且经过动态 guard 验证的末端保持；controller reference jump 是切换时新 goal 首点与旧控制参考之间的最大关节位置差。总路径为实际生效命令区间的关节空间路径。基础设施失败统计保留的全部历史 attempt；其他指标采用每个场景/repeat/mode 的最新 attempt。",
         "动态物体允许穿过柜体、抽屉和货架；完整运动轨迹必须避开机器人底座，并在预定保护窗口内避开初始 Franka 的 56 个碰撞球。不满足后两项条件的环境在执行前重采样；静态环境 clearance 只作诊断。",
+        "`runs.csv` 每行代表一个场景、repeat、mode 的最新 attempt。表内 count 为次数；mean/min/p95 只统计有值的运行，mode 汇总对每个运行等权。`—` 表示该模式不适用或没有可用样本，`0` 表示确实观测到零次。成功结果耗时只统计 status=success，失败请求另由状态计数呈现。字段逐项来源见文末指标字典。",
         "",
         "## 场景类型与难度",
         "",
@@ -2063,6 +2098,45 @@ def write_reports(
             )
             + " |"
         )
+    lines.extend([
+        "", "## 首轮时序与动态成功", "",
+        "本表事件时间都以场景世界时钟起点为零点。first result 包含失败结果；first command 才表示执行开始。",
+        "", "| 模式 | 首次提交 mean s | 首个 result mean s | 首次运动 mean s | 首次命令 mean s | 首次 handoff mean s | 穿越前运动 runs | valid_dynamic_success runs | deadline 后拒绝次数 | worker 往返 mean s |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for mode, data in by_mode.items():
+        lines.append(
+            f"| {mode} | {_fmt(data['first_planning_submit_from_world_s']['mean'])} | "
+            f"{_fmt(data['first_plan_completed_from_world_s']['mean'])} | "
+            f"{_fmt(data['first_significant_motion_from_world_s']['mean'])} | "
+            f"{_fmt(data['first_command_start_from_world_s']['mean'])} | "
+            f"{_fmt(data['first_handoff_from_world_s']['mean'])} | "
+            f"{data['first_motion_before_crossing']} | {data['valid_dynamic_success']} | "
+            f"{data['deadline_expired_after_planning']} | {_fmt(data['server_round_trip_s']['mean'])} |"
+        )
+    lines.extend([
+        "", "## 规划请求状态", "",
+        "状态计数来自 worker 的 response.json；无解、超时和 STALE 不计入成功结果的平均求解耗时。",
+        "", "| 模式 | 首个 result 状态 | planner result 状态次数 | 在线接受状态次数 | 后处理无效次数 | ROS NoValidTrajectoryError 日志次数 |",
+        "|---|---|---|---|---:|---:|",
+    ])
+    for mode in report_modes:
+        mode_rows = [row for row in rows if row.get("mode") == mode]
+        planner_counts: Counter[str] = Counter()
+        acceptance_counts: Counter[str] = Counter()
+        first_statuses: Counter[str] = Counter()
+        for row in mode_rows:
+            planner_counts.update(row.get("planner_result_status_counts") or {})
+            acceptance_counts.update(row.get("online_acceptance_status_counts") or {})
+            if row.get("first_plan_status") is not None:
+                first_statuses[str(row["first_plan_status"])] += 1
+        display = lambda counts: ", ".join(f"{key}:{counts[key]}" for key in sorted(counts)) or "—"
+        lines.append(
+            f"| {mode} | {display(first_statuses)} | {display(planner_counts)} | "
+            f"{display(acceptance_counts)} | "
+            f"{by_mode[mode]['postprocess_invalid'] if mode == 'strrt' else '—'} | "
+            f"{sum(int(row.get('no_valid_trajectory_count') or 0) for row in mode_rows)} |"
+        )
     lines.extend(
         [
             "",
@@ -2086,7 +2160,7 @@ def write_reports(
     if "strrt" in report_modes:
         lines.extend([
             "", "## ST-RRT* 求解与后处理", "",
-            "成功规划结果的耗时以 worker result.json 为准；后处理失败计入失败次数。",
+            "成功规划结果的耗时以 worker result.json 为准；旧产物未拆分 IK/预检时，solve 与 postprocess 显示 `—`，避免把总准备时间误作 OMPL 求解。后处理失败单独计数。",
             "", "| 模式 | IK mean s | precheck mean s | solve mean s | postprocess mean s | postprocess invalid |",
             "|---|---:|---:|---:|---:|---:|",
         ])
@@ -2095,7 +2169,8 @@ def write_reports(
             lines.append(
                 f"| {mode} | {_fmt(data['ik_s']['mean'])} | {_fmt(data['precheck_s']['mean'])} | "
                 f"{_fmt(data['solver_s']['mean'])} | "
-                f"{_fmt(data['postprocess_s']['mean'])} | {data['postprocess_invalid']} |"
+                f"{_fmt(data['postprocess_s']['mean'])} | "
+                f"{data['postprocess_invalid'] if mode == 'strrt' else '—'} |"
             )
     if any(mode in CORRIDOR_A_MODES for mode in report_modes):
         lines.extend(
@@ -2279,25 +2354,28 @@ def write_reports(
     analyzable_modes = {mode: data for mode, data in by_mode.items() if data["manifest_runs"]}
     lines.extend(["", "## 描述性结论", ""])
     if analyzable_modes:
-        goal_best = max(
-            analyzable_modes,
-            key=lambda mode: analyzable_modes[mode]["goal_reached"] / analyzable_modes[mode]["manifest_runs"],
-        )
-        brake_best = min(
-            analyzable_modes,
-            key=lambda mode: analyzable_modes[mode]["brake_runs"] / analyzable_modes[mode]["manifest_runs"],
-        )
-        lines.append(f"- 当前样本目标到达率最高：`{goal_best}`。")
-        lines.append(f"- 当前样本 brake run 比例最低：`{brake_best}`。")
+        goal_rates = {
+            mode: data["goal_reached"] / data["manifest_runs"]
+            for mode, data in analyzable_modes.items()
+        }
+        brake_rates = {
+            mode: data["brake_runs"] / data["manifest_runs"]
+            for mode, data in analyzable_modes.items()
+        }
+        goal_best = [mode for mode, rate in goal_rates.items() if rate == max(goal_rates.values())]
+        brake_best = [mode for mode, rate in brake_rates.items() if rate == min(brake_rates.values())]
+        lines.append("- 当前样本目标到达率最高：" + "、".join(f"`{mode}`" for mode in goal_best) + "。")
+        lines.append("- 当前样本 brake run 比例最低：" + "、".join(f"`{mode}`" for mode in brake_best) + "。")
         clearance_modes = {
             mode: data for mode, data in analyzable_modes.items() if data["hard_minimum_clearance_m"]["min"] is not None
         }
         if clearance_modes:
-            clearance_best = max(
-                clearance_modes,
-                key=lambda mode: clearance_modes[mode]["hard_minimum_clearance_m"]["min"],
-            )
-            lines.append(f"- 当前样本最差 hard clearance 最大：`{clearance_best}`。")
+            largest_minimum = max(data["hard_minimum_clearance_m"]["min"] for data in clearance_modes.values())
+            clearance_best = [
+                mode for mode, data in clearance_modes.items()
+                if data["hard_minimum_clearance_m"]["min"] == largest_minimum
+            ]
+            lines.append("- 当前样本最差 hard clearance 最大：" + "、".join(f"`{mode}`" for mode in clearance_best) + "。")
     lines.append("- 以上是描述性统计；场景/重复数较小时不代表统计显著性。")
     failures = [row for row in rows if not row.get("pipeline_completed")]
     if failures:
@@ -2308,6 +2386,17 @@ def write_reports(
                 f"{row.get('failure_class') or row.get('error') or 'pipeline failed'} "
                 f"(`{row.get('attempt_dir')}`)"
             )
+    lines.extend([
+        "", "## runs.csv 指标字典", "",
+        "每个字段与 `runs.csv` 同名；`summary.json.metric_catalog` 提供相同的机器可读定义。MPD 专属指标对 ST-RRT* 显示 `—`，ST-RRT* 专属计时对 MPD 显示 `—`。",
+    ])
+    groups = dict.fromkeys(METRIC_CATALOG[field]["group"] for field in REPORT_FIELDS)
+    for group in groups:
+        lines.extend(["", f"### {group}", "", "| 字段 | 来源 | 含义/计算口径 |", "|---|---|---|"])
+        for field in REPORT_FIELDS:
+            definition = METRIC_CATALOG[field]
+            if definition["group"] == group:
+                lines.append(f"| `{field}` | {definition['source']} | {definition['meaning']} |")
     (reports / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
