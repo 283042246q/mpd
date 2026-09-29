@@ -60,12 +60,18 @@ PHASE5_MPD_GUIDANCE="on"
 PHASE5_MPD_SELECTION="on"
 PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM="2.0"
 PHASE5_ABLATION_EXPLICIT=false
+STRRT_SOLVE_BUDGET_S="1.2"
+STRRT_RANGE="1.5"
+STRRT_EDGE_DT_S="0.02"
 
 usage() {
   printf '%s\n' \
     "Usage: $0 [options]" \
     "  --profile NAME          Environment profile (currently: to_drawer)" \
-    "  --phase NAME            Planner phase: phase4, phase4_aligned, phase5, or factorized (default: phase5)" \
+    "  --phase NAME            Planner phase: phase4, phase4_aligned, phase5, factorized, or strrt (default: phase5)" \
+    "  --strrt-solve-budget-s S  ST-RRT* solver budget (default: 1.2)" \
+    "  --strrt-range R         ST-RRT* planner range (default: 1.5)" \
+    "  --strrt-edge-dt-s S     ST-RRT* edge validation interval (default: 0.02)" \
     "  --timing-mode MODE      Phase-5 mode (default: phase5_joint)" \
     "  --factorized-method M   Factorized method: f1, f2, or f3 (default: f1)" \
     "  --factorized-timing-checkpoint P  Learned c or tau_r checkpoint" \
@@ -116,6 +122,9 @@ while (($#)); do
   case "$1" in
     --profile) PROFILE="$2"; shift 2 ;;
     --phase) PHASE="$2"; shift 2 ;;
+    --strrt-solve-budget-s) STRRT_SOLVE_BUDGET_S="$2"; shift 2 ;;
+    --strrt-range) STRRT_RANGE="$2"; shift 2 ;;
+    --strrt-edge-dt-s) STRRT_EDGE_DT_S="$2"; shift 2 ;;
     --timing-mode) TIMING_MODE="$2"; TIMING_MODE_EXPLICIT=true; shift 2 ;;
     --factorized-method) FACTORIZED_METHOD="$2"; FACTORIZED_METHOD_EXPLICIT=true; shift 2 ;;
     --factorized-timing-checkpoint) FACTORIZED_TIMING_CHECKPOINT="$2"; shift 2 ;;
@@ -194,8 +203,9 @@ case "$PHASE" in
   phase4aligned|phase4-aligned|phase4_aligned) PHASE="phase4_aligned" ;;
   5|phase5) PHASE="phase5" ;;
   factorized|factorised) PHASE="factorized" ;;
+  strrt|strrtstar) PHASE="strrt" ;;
   *)
-    printf 'Unsupported phase: %s (supported: phase4, phase4_aligned, phase5, factorized)\n' "$PHASE" >&2
+    printf 'Unsupported phase: %s (supported: phase4, phase4_aligned, phase5, factorized, strrt)\n' "$PHASE" >&2
     exit 2
     ;;
 esac
@@ -304,7 +314,19 @@ esac
 
 SERVER_EXTRA_ARGS=()
 ROS_EXTRA_ARGS=()
+ROS_PACKAGE="mpd_dynamic_planner_adapter"
+ROS_BUILD_PACKAGE="mpd_dynamic_planner_adapter"
 case "$PHASE" in
+  strrt)
+    SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/strrt_server.py"
+    ROS_LAUNCH="replan_strrt_fake_hardware.launch.py"
+    ROS_PACKAGE="strrt_planner_adapter"
+    ROS_BUILD_PACKAGE="strrt_planner_adapter"
+    SOCKET_BASENAME="strrt-runtime.sock"
+    TIMING_LABEL="strrtstar"
+    HEALTH_TIMEOUT_S=5
+    SERVER_EXTRA_ARGS+=(--solve-budget-s "$STRRT_SOLVE_BUDGET_S" --planner-range "$STRRT_RANGE" --edge-dt-s "$STRRT_EDGE_DT_S")
+    ;;
   phase4)
     SERVER_SCRIPT="${MPD_ROOT}/scripts/runtime/infer_dynamic_server.py"
     ROS_LAUNCH="replan_dynamic_fake_hardware.launch.py"
@@ -390,6 +412,8 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}-phase4-aligned"
   elif [[ "$PHASE" == "phase5" ]]; then
     LOG_GROUP="dynamic-replay-${PROFILE}-phase5"
+  elif [[ "$PHASE" == "strrt" ]]; then
+    LOG_GROUP="dynamic-replay-${PROFILE}-strrt"
   else
     LOG_GROUP="dynamic-replay-${PROFILE}-factorized-${FACTORIZED_METHOD}"
   fi
@@ -420,12 +444,16 @@ SCREENSHOT_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-final.png"
 SUMMARY_PATH="${OUTPUT_DIR}/${PROFILE}-dynamic-replay-summary.json"
 TIMING_SUMMARY_PATH="${OUTPUT_DIR}/${PROFILE}-replan-timing.json"
 
-for required in "$MPD_PYTHON" "$CONDA_EXECUTABLE" "${ISAACLAB_ROOT}/isaaclab.sh" "$MPD_CONFIG"; do
+for required in "$MPD_PYTHON" "$CONDA_EXECUTABLE" "${ISAACLAB_ROOT}/isaaclab.sh"; do
   if [[ ! -e "$required" ]]; then
     printf 'Required path does not exist: %s\n' "$required" >&2
     exit 1
   fi
 done
+if [[ "$PHASE" != "strrt" && ! -f "$MPD_CONFIG" ]]; then
+  printf 'Required config does not exist: %s\n' "$MPD_CONFIG" >&2
+  exit 1
+fi
 
 SERVER_PID=""
 SOCKET_RUNTIME_DIR=""
@@ -483,18 +511,33 @@ if [[ -n "$WORLD_SCENARIO_FILE" ]]; then
     --output "${OUTPUT_DIR}/scenario-preflight.json"
 fi
 
-printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
+if [[ "$PHASE" == "strrt" ]]; then
+  printf '[2/6] Starting resident ST-RRT* worker\n'
+else
+  printf '[2/6] Starting resident MPD %s worker (cold model load occurs once)\n' "$PHASE"
+fi
 printf '  runtime socket: %s\n' "$SOCKET_PATH"
 MPD_ENV_PREFIX="$(dirname "$(dirname "$MPD_PYTHON")")"
-env -u PYTHONPATH \
-  LD_LIBRARY_PATH="${MPD_ENV_PREFIX}/lib" \
-  "$CONDA_EXECUTABLE" run --no-capture-output \
-  -n mpd-splines-public python "$SERVER_SCRIPT" \
-  --socket "$SOCKET_PATH" \
-  --output-root "$PLANNER_RESULTS" \
-  --config "$MPD_CONFIG" \
-  --device cuda:0 \
-  "${SERVER_EXTRA_ARGS[@]}" >"${OUTPUT_DIR}/mpd-server.log" 2>&1 &
+if [[ "$PHASE" == "strrt" ]]; then
+  IFS=, read -r -a STRRT_TARGET_POSE <<< "$TARGET_POSE"
+  env PYTHONPATH="${MPD_ROOT}/deps/pybullet_ompl/ompl/py-bindings:${MPD_ROOT}" \
+    LD_LIBRARY_PATH="${MPD_ENV_PREFIX}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$MPD_PYTHON" "$SERVER_SCRIPT" \
+    --socket "$SOCKET_PATH" --output-root "$PLANNER_RESULTS" \
+    --static-scene "$STATIC_SCENE" --target-pose-xyzw "${STRRT_TARGET_POSE[@]}" \
+    --worker-seed "$PLANNER_SEED" "${SERVER_EXTRA_ARGS[@]}" \
+    >"${OUTPUT_DIR}/mpd-server.log" 2>&1 &
+else
+  env -u PYTHONPATH \
+    LD_LIBRARY_PATH="${MPD_ENV_PREFIX}/lib" \
+    "$CONDA_EXECUTABLE" run --no-capture-output \
+    -n mpd-splines-public python "$SERVER_SCRIPT" \
+    --socket "$SOCKET_PATH" \
+    --output-root "$PLANNER_RESULTS" \
+    --config "$MPD_CONFIG" \
+    --device cuda:0 \
+    "${SERVER_EXTRA_ARGS[@]}" >"${OUTPUT_DIR}/mpd-server.log" 2>&1 &
+fi
 SERVER_PID=$!
 
 READY=false
@@ -523,15 +566,15 @@ if [[ -n "$WORLD_SCENARIO_FILE" ]]; then
 fi
 cd "$AIRUNTIME_ROOT"
 if [[ "$SKIP_BUILD" != true ]]; then
-  pixi run build --packages-up-to mpd_dynamic_planner_adapter \
+  pixi run build --packages-up-to "$ROS_BUILD_PACKAGE" \
     >"${OUTPUT_DIR}/ros-build.log" 2>&1
 fi
 set +e
 timeout --signal=INT --kill-after=20s "${RUN_DURATION_S}s" \
   pixi run env -u CYCLONEDDS_URI \
   ROS_DOMAIN_ID="$PIPELINE_ROS_DOMAIN_ID" \
-  bash -lc 'source install/setup.bash && exec "$@"' bash \
-  ros2 launch mpd_dynamic_planner_adapter "$ROS_LAUNCH" \
+  bash -lc 'source install/setup.bash || exit $?; if [[ "$1" == "strrt_planner_adapter" ]]; then source install/strrt_planner_adapter/share/strrt_planner_adapter/package.bash || exit $?; export AMENT_PREFIX_PATH="$PWD/install/strrt_planner_adapter:${AMENT_PREFIX_PATH:-}"; fi; shift; exec "$@"' bash "$ROS_PACKAGE" \
+  ros2 launch "$ROS_PACKAGE" "$ROS_LAUNCH" \
   plan_only:=false \
   "plan_rate_hz:=${PLAN_RATE_HZ}" \
   "planner_seed:=${PLANNER_SEED}" \

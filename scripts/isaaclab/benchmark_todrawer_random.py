@@ -67,6 +67,7 @@ MODE_SPECS = {
     "scalar_duration": ("phase5", "phase5_scalar_duration"),
     "timing_only": ("phase5", "phase5_timing_only"),
     "joint": ("phase5", "phase5_joint"),
+    "strrt": ("strrt", None),
     "joint_corridor_a": ("phase5", "phase5_joint"),
     "f1": ("factorized", None),
     "f2": ("factorized", None),
@@ -252,6 +253,12 @@ REPORT_FIELDS = (
     "dense_self_clearance_m",
     "inference_total_mean_s",
     "inference_total_p95_s",
+    "planner_name",
+    "ik_mean_s",
+    "precheck_mean_s",
+    "solver_mean_s",
+    "postprocess_mean_s",
+    "postprocess_invalid_count",
     "corridor_a_refinement_mean_s",
     "corridor_a_grid_build_mean_s",
     "corridor_a_branch_selection_mean_s",
@@ -789,16 +796,17 @@ def _mode_timing_shift(
         MODE_TIMING_PROFILES,
     )
 
+    if protocol == "absolute_world_time":
+        reference = MODE_TIMING_PROFILES["joint"]
+        return 0.0, None, reference.expected_goal_s - GOAL_CROSSING_RESERVE_S
+    if protocol != "motion_aligned":
+        raise ValueError(f"unsupported timing protocol {protocol!r}")
     profile_mode = _timing_profile_mode(mode)
     if profile_mode not in MODE_TIMING_PROFILES:
         raise ValueError(f"mode {mode!r} has no motion-alignment profile")
     profile = MODE_TIMING_PROFILES[profile_mode]
     original_times = [float(item["crossing_time_s"]) for item in scenario["objects"]]
     protection_until_s = profile.expected_goal_s - GOAL_CROSSING_RESERVE_S
-    if protocol == "absolute_world_time":
-        return 0.0, None, protection_until_s
-    if protocol != "motion_aligned":
-        raise ValueError(f"unsupported timing protocol {protocol!r}")
     shift_lower = max(
         profile.crossing_shift_min_s,
         profile.first_plan_completed_s + MINIMUM_CROSSING_AFTER_FIRST_PLAN_S - min(original_times),
@@ -887,7 +895,7 @@ def _materialize_timing_variant(
         variant["mode_timing_profile"] = profile
     variant["benchmark_timing"] = {
         "protocol": protocol,
-        "mode": mode,
+        "mode": "joint" if protocol == "absolute_world_time" else mode,
         "crossing_shift_s": shift,
         "geometry_shared_across_modes": True,
     }
@@ -970,7 +978,8 @@ def generate_benchmark_suite(
             )
             timing_fraction = random.Random(geometry_seed ^ 0x5A17C9E3).random()
             try:
-                reference_mode = _timing_profile_mode(selected_modes[0])
+                reference_mode = ("joint" if timing_protocol == "absolute_world_time"
+                                  else _timing_profile_mode(selected_modes[0]))
                 geometry = resample_mode_attempt_scenario(
                     template,
                     mode=reference_mode,
@@ -1436,6 +1445,10 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         payload for payload in all_result_payloads if payload.get("status") == "success"
     ]
     inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
+    solver_times = _finite([payload.get("timing", {}).get("solve_s") for payload in result_payloads])
+    ik_times = _finite([payload.get("timing", {}).get("ik_s") for payload in result_payloads])
+    precheck_times = _finite([payload.get("timing", {}).get("precheck_s") for payload in result_payloads])
+    postprocess_times = _finite([payload.get("timing", {}).get("postprocess_s") for payload in result_payloads])
     guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
     corridor_candidates = [
         guidance.get("corridor_a", {}) for guidance in guidance_payloads
@@ -1601,6 +1614,15 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         dense_self_clearance_m=min(dense_self, default=None),
         inference_total_mean_s=(float(np.mean(inference_times)) if inference_times else None),
         inference_total_p95_s=(float(np.percentile(inference_times, 95)) if inference_times else None),
+        planner_name=(result_payloads[0].get("planner_name") if result_payloads else None),
+        ik_mean_s=(float(np.mean(ik_times)) if ik_times else None),
+        precheck_mean_s=(float(np.mean(precheck_times)) if precheck_times else None),
+        solver_mean_s=(float(np.mean(solver_times)) if solver_times else None),
+        postprocess_mean_s=(float(np.mean(postprocess_times)) if postprocess_times else None),
+        postprocess_invalid_count=sum(
+            "postprocess_invalid" in str(payload.get("error", {}).get("message", ""))
+            for payload in all_result_payloads
+        ),
         corridor_a_refinement_mean_s=(float(np.mean(corridor_elapsed)) if corridor_elapsed else None),
         corridor_a_grid_build_mean_s=(float(np.mean(corridor_grid_build)) if corridor_grid_build else None),
         corridor_a_branch_selection_mean_s=(
@@ -1733,6 +1755,11 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "dense_environment_clearance_m": _describe([row.get("dense_environment_clearance_m") for row in rows]),
         "dense_self_clearance_m": _describe([row.get("dense_self_clearance_m") for row in rows]),
         "inference_total_s": _describe([row.get("inference_total_mean_s") for row in rows]),
+        "ik_s": _describe([row.get("ik_mean_s") for row in rows]),
+        "precheck_s": _describe([row.get("precheck_mean_s") for row in rows]),
+        "solver_s": _describe([row.get("solver_mean_s") for row in rows]),
+        "postprocess_s": _describe([row.get("postprocess_mean_s") for row in rows]),
+        "postprocess_invalid": sum(int(row.get("postprocess_invalid_count") or 0) for row in rows),
         "corridor_a_refinement_s": _describe([row.get("corridor_a_refinement_mean_s") for row in rows]),
         "corridor_a_grid_build_s": _describe([row.get("corridor_a_grid_build_mean_s") for row in rows]),
         "corridor_a_branch_selection_s": _describe(
@@ -2056,6 +2083,20 @@ def write_reports(
             f"{_fmt(data['joint_l1_travel_rad']['mean'])} | "
             f"{_fmt(data['inference_total_s']['mean'])} |"
         )
+    if "strrt" in report_modes:
+        lines.extend([
+            "", "## ST-RRT* 求解与后处理", "",
+            "成功规划结果的耗时以 worker result.json 为准；后处理失败计入失败次数。",
+            "", "| 模式 | IK mean s | precheck mean s | solve mean s | postprocess mean s | postprocess invalid |",
+            "|---|---:|---:|---:|---:|---:|",
+        ])
+        for mode in report_modes:
+            data = by_mode[mode]
+            lines.append(
+                f"| {mode} | {_fmt(data['ik_s']['mean'])} | {_fmt(data['precheck_s']['mean'])} | "
+                f"{_fmt(data['solver_s']['mean'])} | "
+                f"{_fmt(data['postprocess_s']['mean'])} | {data['postprocess_invalid']} |"
+            )
     if any(mode in CORRIDOR_A_MODES for mode in report_modes):
         lines.extend(
             [
@@ -2485,9 +2526,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
     airuntime_root = Path(os.environ.get("AIRUNTIME_ROOT", DEFAULT_AIRUNTIME_ROOT)).resolve()
     if not args.skip_build:
         build_log = output_dir / "ros-build.log"
-        print("[setup] building mpd_dynamic_planner_adapter", flush=True)
+        build_package = "strrt_planner_adapter" if "strrt" in args.modes else "mpd_dynamic_planner_adapter"
+        print(f"[setup] building {build_package}", flush=True)
         status = _run_command(
-            ["pixi", "run", "build", "--packages-up-to", "mpd_dynamic_planner_adapter"],
+            ["pixi", "run", "build", "--packages-up-to", build_package],
             airuntime_root,
             build_log,
         )
@@ -2569,6 +2611,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         "repeat": repeat,
                         "planner_repeat": repeat,
                         "mode": mode,
+                        "strrt_solve_budget_s": args.strrt_solve_budget_s if mode == "strrt" else None,
+                        "strrt_range": args.strrt_range if mode == "strrt" else None,
+                        "strrt_edge_dt_s": args.strrt_edge_dt_s if mode == "strrt" else None,
                         "corridor_a_enabled": mode in CORRIDOR_A_MODES,
                         "corridor_a_backend": args.corridor_a_backend if mode in CORRIDOR_A_MODES else None,
                         "corridor_a_chunk_size": args.corridor_a_chunk_size if mode in CORRIDOR_A_MODES else None,
@@ -2628,6 +2673,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         )
                         if args.factorized_adapt_spatial_basis:
                             command.append("--factorized-adapt-spatial-basis")
+                    if phase == "strrt":
+                        command.extend(("--strrt-solve-budget-s", str(args.strrt_solve_budget_s),
+                                        "--strrt-range", str(args.strrt_range),
+                                        "--strrt-edge-dt-s", str(args.strrt_edge_dt_s)))
                     command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
                     if mode in CORRIDOR_A_MODES:
                         command.extend(("--corridor-a", "--corridor-a-backend", args.corridor_a_backend,
@@ -2732,6 +2781,9 @@ def _parser() -> argparse.ArgumentParser:
         metavar="MODE",
         help="Run only these modes, separated by spaces; repeat --modes once, e.g. --modes phase4_aligned f1_c_corridor_a f3_tau_r",
     )
+    parser.add_argument("--strrt-solve-budget-s", type=float, default=1.2)
+    parser.add_argument("--strrt-range", type=float, default=1.5)
+    parser.add_argument("--strrt-edge-dt-s", type=float, default=0.02)
     parser.add_argument(
         "--factorized-timing-checkpoint",
         type=Path,
@@ -2791,6 +2843,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     args.modes = list(dict.fromkeys(args.modes))
+    if "strrt" in args.modes and args.timing_protocol != "absolute_world_time" and not args.report_only:
+        parser.error("strrt currently requires --timing-protocol absolute_world_time")
+    if min(args.strrt_solve_budget_s, args.strrt_range, args.strrt_edge_dt_s) <= 0:
+        parser.error("ST-RRT* settings must be positive")
     if args.dry_run:
         args.skip_build = True
     if (
