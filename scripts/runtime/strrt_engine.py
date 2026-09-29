@@ -292,17 +292,21 @@ class StrrtEngine:
         if not self.dynamic_world.is_valid(q_start, start_unix_s):
             raise NoValidTrajectoryError("start is invalid in the handoff world")
         started = time.perf_counter()
+        ik_started = time.perf_counter()
         if request["goal_type"] == "joint":
             goals = [request["q_pos_goal"]]
         else:
             goals = self._ik_goals(tuple(request["ee_pose_goal"].tolist()))
+        ik_s = time.perf_counter() - ik_started
         goals = sorted(goals, key=lambda q: float(np.linalg.norm(q - q_start)))
         remaining = (deadline_ns - time.time_ns()) * 1e-9 - 0.12
         budget = min(self.solve_budget_s, remaining)
         if budget <= 0.05:
             raise NoValidTrajectoryError("deadline leaves no ST-RRT* solve budget")
+        solve_started = time.perf_counter()
         path_q, path_t = self._solve(q_start, goals, start_unix_s, duration_limit, budget)
-        solve_s = time.perf_counter() - started
+        postprocess_started = time.perf_counter()
+        solve_s = postprocess_started - solve_started
         times, q, dq, ddq, spheres, scale = self._trajectory(
             path_q, path_t, dq_start, ddq_start, start_unix_s, duration_limit)
         if request["goal_type"] == "joint":
@@ -323,7 +327,9 @@ class StrrtEngine:
         if len(hold_times) and not self.dynamic_world.centers_many_valid(
             np.broadcast_to(spheres[-1], (len(hold_times), *spheres[-1].shape)), hold_times):
             raise NoValidTrajectoryError("terminal hold collides within the prediction horizon")
-        total_s = time.perf_counter() - started
+        completed = time.perf_counter()
+        postprocess_s = completed - postprocess_started
+        total_s = completed - started
         arrays = {
             "joint_names": np.asarray(request["joint_names"], dtype=np.str_),
             "positions": q,
@@ -341,7 +347,10 @@ class StrrtEngine:
             "created_unix_time": time.time(),
             "trajectory_file": "trajectory.npz",
             "trajectory_artifact": {"schema_version": 1, "planner": "strrtstar"},
-            "timing": {"solve_s": solve_s, "postprocess_s": total_s - solve_s,
+            "timing": {"ik_s": ik_s,
+                       "precheck_s": solve_started - started - ik_s,
+                       "solve_s": solve_s,
+                       "postprocess_s": postprocess_s,
                        "total_s": total_s, "inference_total_sec": total_s},
             "trajectory": {"duration_s": float(times[-1]), "time_scale": scale,
                            "waypoint_count": len(path_t), "sample_count": len(times),
