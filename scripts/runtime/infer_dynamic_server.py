@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from pathlib import Path
 import threading
 from typing import Any
@@ -49,6 +50,7 @@ class DynamicResidentPlannerService(ResidentPlannerService):
             }
         try:
             version = self._engine.update_world(snapshot)
+            self._latest_world_snapshot = deepcopy(snapshot)
             return {
                 "schema_version": PROTOCOL_SCHEMA_VERSION,
                 "status": "OK",

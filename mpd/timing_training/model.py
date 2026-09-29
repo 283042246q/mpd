@@ -223,13 +223,16 @@ class TimingDenoiser(nn.Module):
         nn.init.zeros_(self.output.bias)
 
     def forward(
-        self, noisy_timing: torch.Tensor, timesteps: torch.Tensor, path: torch.Tensor
+        self, noisy_timing: torch.Tensor, timesteps: torch.Tensor,
+        path: Optional[torch.Tensor],
+        *, path_condition: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if noisy_timing.ndim != 2 or noisy_timing.shape[-1] != self.latent_dim:
             raise ValueError("noisy_timing must have shape [batch, 6]")
         if timesteps.shape != (noisy_timing.shape[0],):
             raise ValueError("timesteps must have shape [batch]")
-        path_condition = self.path_encoder(path)
+        if path_condition is None:
+            path_condition = self.path_encoder(path)
         time_condition = self.time_embedding(timesteps)
         condition = torch.cat((path_condition, time_condition), dim=-1)
         hidden = self.input(noisy_timing)

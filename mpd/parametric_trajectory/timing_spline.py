@@ -152,10 +152,14 @@ class TimingSpline:
         q_ss: Optional[torch.Tensor] = None,
         require_duration_bounds: bool = False,
         require_fixed_endpoint_derivatives: bool = True,
+        validate_inputs: bool = True,
     ) -> TimingSplineEvaluation:
         """Evaluate timing and optional space-time joint derivatives."""
 
-        self._validate_control_points(control_points)
+        if not validate_inputs and require_fixed_endpoint_derivatives:
+            raise ValueError("unchecked timing evaluation requires externally fixed endpoints")
+        if validate_inputs:
+            self._validate_control_points(control_points)
         if require_fixed_endpoint_derivatives:
             self.assert_endpoint_derivatives_fixed(control_points)
 
@@ -174,7 +178,7 @@ class TimingSpline:
             (duration < self.duration_min).any().item() or (duration > self.duration_max).any().item()
         ):
             raise ValueError(f"timing duration must remain in [{self.duration_min}, {self.duration_max}] seconds")
-        if not (torch.diff(time_from_start, dim=-1) > 0.0).all().item():
+        if validate_inputs and not (torch.diff(time_from_start, dim=-1) > 0.0).all().item():
             raise ValueError("timing spline did not produce strictly increasing time")
 
         supplied = (q is not None, q_s is not None, q_ss is not None)

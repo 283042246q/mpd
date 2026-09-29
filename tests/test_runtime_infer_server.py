@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import socket
 import threading
 import time
@@ -64,7 +65,8 @@ def _wait_until_ready(socket_path: Path):
     raise AssertionError("Resident planner did not become READY.")
 
 
-def test_service_plans_once_and_rejects_replayed_sequence(tmp_path):
+def test_service_plans_once_and_rejects_replayed_sequence(tmp_path, monkeypatch):
+    monkeypatch.setenv("MPD_CAPTURE_PLANNER_REQUESTS", "1")
     socket_path = tmp_path / "mpd.sock"
     output_root = tmp_path / "output"
     service = ResidentPlannerService(
@@ -91,6 +93,13 @@ def test_service_plans_once_and_rejects_replayed_sequence(tmp_path):
         assert response["request_seq"] == 7
         assert Path(response["result_path"]).is_file()
         assert Path(response["trajectory_path"]).is_file()
+        request_dir = Path(response["result_path"]).parent
+        assert json.loads((request_dir / "request.json").read_text())["request_id"] == "test-plan"
+        outcome = json.loads((request_dir / "response.json").read_text())
+        assert outcome["planner_result_status"] == "success"
+        assert outcome["online_acceptance_status"] == "OK"
+        assert outcome["request_captured"] is True
+        assert len(outcome["request_sha256"]) == 64
 
         replay = _request(socket_path, message)
         assert replay["status"] == "STALE"

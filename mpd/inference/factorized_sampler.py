@@ -6,6 +6,7 @@ All physical guidance operates on clean predictions, never noisy states.
 from dataclasses import dataclass
 import math
 import time
+from typing import Optional
 
 import torch
 
@@ -24,10 +25,24 @@ class FactorizedSettings:
     eta: float = 0.
     alternating_rounds: int = 1
     timing_steps_per_space_step: int = 1
+    timing_grad_only: Optional[bool] = None
+    fixed_path_cache: Optional[bool] = None
+    path_encoding_cache: Optional[bool] = None
 
     def __post_init__(self):
         if self.method not in ("f1", "f2", "f3"):
             raise ValueError("method must be f1, f2 or f3")
+        defaults = {
+            "timing_grad_only": True,
+            "fixed_path_cache": True,
+            "path_encoding_cache": True,
+        }
+        for name, default in defaults.items():
+            value = getattr(self, name)
+            if value is None:
+                object.__setattr__(self, name, default)
+            elif not isinstance(value, bool):
+                raise ValueError(name + " must be a boolean")
         if min(self.space_steps, self.timing_steps, self.alternating_rounds) < 1:
             raise ValueError("step counts and alternating rounds must be positive")
         if self.refinement_steps < 0 or self.timing_steps_per_space_step not in (1, 2):
@@ -106,11 +121,14 @@ class FactorizedSampler:
         self._record("space", step, stage, guided)
         return out.detach(), clean
 
-    def _timing_step(self, z, pair, p, *, guided=False, stage="timing"):
+    def _timing_step(self, z, pair, p, *, guided=False, stage="timing", path_condition=None):
         step, following = pair
         t = torch.full((len(z),), step, dtype=torch.long, device=z.device)
-        path = self.guide.condition(p.detach())
-        eps = self.timing_model.denoiser(z, t, path)
+        if path_condition is None:
+            path = self.guide.condition(p.detach())
+            eps = self.timing_model.denoiser(z, t, path)
+        else:
+            eps = self.timing_model.denoiser(z, t, None, path_condition=path_condition)
         clean = self.timing_model.predict_clean_from_noise(z, t, eps).detach()
         if guided:
             _, clean = self._refine(p.detach(), clean, active="timing")
@@ -120,12 +138,31 @@ class FactorizedSampler:
         self._record("timing", step, stage, guided)
         return out.detach(), clean.detach()
 
+    def _timing_block(self, z, pairs, p, *, guided, stage):
+        use_fixed_path = (self.settings.fixed_path_cache and self.settings.timing_grad_only
+                          and any(guided(pair) for pair in pairs)
+                          and hasattr(self.guide, "prepare_fixed_path"))
+        if use_fixed_path:
+            self.guide.prepare_fixed_path(p)
+        try:
+            path_condition = None
+            if self.settings.path_encoding_cache:
+                path = self.guide.condition(p.detach())
+                path_condition = self.timing_model.denoiser.path_encoder(path)
+            for pair in pairs:
+                z, clean = self._timing_step(z, pair, p, guided=guided(pair),
+                                              stage=stage, path_condition=path_condition)
+            return z, clean
+        finally:
+            if use_fixed_path and hasattr(self.guide, "clear_fixed_path"):
+                self.guide.clear_fixed_path()
+
     def _full_separated(self, p, context, ps, ts):
         for pair in ps:
             p, _ = self._space_step(p, pair, context, guided=pair[0] <= self.p_gate, weak=True)
         z = torch.randn((len(p), 6), device=p.device, dtype=p.dtype)
-        for pair in ts:
-            z, _ = self._timing_step(z, pair, p, guided=pair[0] <= self.t_gate)
+        z, _ = self._timing_block(z, ts, p, guided=lambda pair: pair[0] <= self.t_gate,
+                                  stage="timing")
         return p, z
 
     def _partial_alternating(self, p, z, context, ps, ts):
@@ -144,8 +181,8 @@ class FactorizedSampler:
                 p, _ = self._space_step(p, pair, context, z=z, guided=True,
                                          stage=f"f2_space_{iteration}")
             z = forward_noise(z, self.timing_model.alphas_cumprod[self.t_gate], torch.randn_like(z))
-            for pair in partial_t:
-                z, _ = self._timing_step(z, pair, p, guided=True, stage=f"f2_timing_{iteration}")
+            z, _ = self._timing_block(z, partial_t, p, guided=lambda pair: True,
+                                      stage=f"f2_timing_{iteration}")
         return p, z
 
     def _fine_alternating(self, p, context, ps, ts):
@@ -177,8 +214,9 @@ class FactorizedSampler:
             self._record("space", low_p[0][0], "f3_condition_bootstrap", False)
         z = p.new_empty((len(p), 6)).normal_()
         z_clean = None
-        for pair in high_t:
-            z, z_clean = self._timing_step(z, pair, p_clean, stage="f3_timing_high")
+        if high_t:
+            z, z_clean = self._timing_block(z, high_t, p_clean,
+                                            guided=lambda pair: False, stage="f3_timing_high")
         if z_clean is None:
             t = torch.full((len(z),), self.t_gate, dtype=torch.long, device=z.device)
             eps = self.timing_model.denoiser(z, t, self.guide.condition(p_clean))
@@ -189,9 +227,9 @@ class FactorizedSampler:
             # first low update. Do not cross-guide space with that timing yet.
             p, p_clean = self._space_step(p, pair, context, z=z_clean,
                 guided=True, weak=index == 0, stage="f3_space_low")
-            for timing_pair in low_t[index * ratio:(index + 1) * ratio]:
-                z, z_clean = self._timing_step(z, timing_pair, p_clean,
-                    guided=True, stage="f3_timing_low")
+            z, z_clean = self._timing_block(z, low_t[index * ratio:(index + 1) * ratio],
+                                            p_clean, guided=lambda pair: True,
+                                            stage="f3_timing_low")
         return p, z
 
     @torch.no_grad()

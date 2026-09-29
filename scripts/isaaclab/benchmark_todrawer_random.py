@@ -8,6 +8,7 @@ import copy
 import csv
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import math
 import os
@@ -22,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from scripts.isaaclab.summarize_replan_timing import summarize_manifest
+from scripts.isaaclab.analyze_todrawer_mode_motion_start import measure_manifest_motion_start
 from scripts.isaaclab.todrawer_scenario_validation import (
     DESIGN_EPISODE_DURATION_S,
     ROBOT_BASE_EXCLUSION_MAX,
@@ -217,6 +219,13 @@ REPORT_FIELDS = (
     "first_planning_submit_from_world_s",
     "first_plan_completed_from_world_s",
     "first_plan_status",
+    "planner_result_status_counts",
+    "online_acceptance_status_counts",
+    "deadline_expired_after_planning_count",
+    "server_round_trip_mean_s",
+    "first_significant_motion_from_world_s",
+    "first_motion_before_crossing",
+    "valid_dynamic_success",
     "first_command_start_from_world_s",
     "first_bridge_start_from_world_s",
     "first_handoff_from_world_s",
@@ -252,6 +261,13 @@ REPORT_FIELDS = (
     "corridor_a_profiled_total_mean_s",
     "corridor_a_changed_candidates_mean",
     "corridor_a_dense_fallbacks_mean",
+    "corridor_a_optimized_unique_window_sequences_mean",
+    "corridor_a_validated_unique_window_sequences_mean",
+    "corridor_a_alternate_branch_rescued_candidates_mean",
+    "corridor_a_dp_fit_abs_error_s_mean",
+    "corridor_a_alternative_branches_checked_mean",
+    "corridor_a_time_invariant_skipped_mean",
+    "corridor_a_early_stopped_branches_mean",
     "corridor_a_payload_match_count",
     "corridor_a_payload_mismatch_count",
     "factorized_representation",
@@ -703,10 +719,6 @@ def generate_suite(count: int, seed: int) -> dict[str, Any]:
 
 
 def _timing_profile_mode(mode: str) -> str:
-    if mode in {"scalar_duration", "timing_only"}:
-        return "joint"
-    if mode in {"f1", "f2", "f3"}:
-        return f"{mode}_c"
     if mode.startswith("aligned_"):
         return "phase4_aligned"
     if mode.startswith("phase5_"):
@@ -1344,6 +1356,60 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         "attempt_dir": attempt_dir.as_posix(),
         "error": None,
     }
+    outcomes = []
+    for response_path in sorted((attempt_dir / "planner-results").glob("*/response.json")):
+        try:
+            outcomes.append(_read_json(response_path))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    all_result_payloads = []
+    for result_path in sorted((attempt_dir / "planner-results").glob("*/result.json")):
+        try:
+            all_result_payloads.append(_read_json(result_path))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    completed_results = [
+        payload for payload in all_result_payloads
+        if _finite([payload.get("created_unix_time")])
+    ]
+    first_completed_result = min(
+        completed_results,
+        key=lambda payload: float(payload["created_unix_time"]),
+        default=None,
+    )
+    ros = _parse_ros_log(attempt_dir / "ros-replan.log")
+    world_start_unix_s = ros["world_start_unix_s"]
+    metrics.update(
+        world_start_unix_s=world_start_unix_s,
+        first_planning_submit_from_world_s=ros["first_planning_submit_from_world_s"],
+        first_plan_completed_from_world_s=(
+            float(first_completed_result["created_unix_time"]) - float(world_start_unix_s)
+            if first_completed_result is not None and world_start_unix_s is not None else None
+        ),
+        first_plan_status=(
+            first_completed_result.get("status") if first_completed_result is not None else None
+        ),
+    )
+    planner_status_counts: dict[str, int] = {}
+    acceptance_status_counts: dict[str, int] = {}
+    for outcome in outcomes:
+        for counts, value in (
+            (planner_status_counts, outcome.get("planner_result_status")),
+            (acceptance_status_counts, outcome.get("online_acceptance_status")),
+        ):
+            if value is not None:
+                name = str(value)
+                counts[name] = counts.get(name, 0) + 1
+    round_trips = _finite([item.get("server_round_trip_sec") for item in outcomes])
+    metrics.update(
+        planner_result_status_counts=planner_status_counts,
+        online_acceptance_status_counts=acceptance_status_counts,
+        deadline_expired_after_planning_count=sum(
+            item.get("online_rejection_reason") == "deadline_expired_after_planning"
+            for item in outcomes
+        ),
+        server_round_trip_mean_s=(float(np.mean(round_trips)) if round_trips else None),
+    )
     if not manifest_path.is_file():
         metrics["error"] = "replay manifest missing"
         return _normalize_metrics(metrics)
@@ -1363,30 +1429,13 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     scenario_static_interaction_clearances = _finite(
         [item.get("minimum_static_interaction_clearance_m") for item in scenario_objects]
     )
-    ros = _parse_ros_log(attempt_dir / "ros-replan.log")
     joint_l2, joint_l1 = _trajectory_segment_metrics(manifest_path, executed)
     selected_clearance = _selected_clearance(executed)
 
-    all_result_payloads = []
-    for result_path in sorted((attempt_dir / "planner-results").glob("*/result.json")):
-        try:
-            payload = _read_json(result_path)
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        all_result_payloads.append(payload)
     result_payloads = [
         payload for payload in all_result_payloads if payload.get("status") == "success"
     ]
     inference_times = _finite([payload.get("timing", {}).get("inference_total_sec") for payload in result_payloads])
-    completed_results = [
-        payload for payload in all_result_payloads
-        if _finite([payload.get("created_unix_time")])
-    ]
-    first_completed_result = min(
-        completed_results,
-        key=lambda payload: float(payload["created_unix_time"]),
-        default=None,
-    )
     guidance_payloads = [payload.get("space_time_guidance", {}) for payload in result_payloads]
     corridor_candidates = [
         guidance.get("corridor_a", {}) for guidance in guidance_payloads
@@ -1426,6 +1475,10 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
     corridor_profiled_total = _finite([item.get("profiled_total_s") for item in corridor_payloads])
     corridor_changed = _finite([item.get("changed") for item in corridor_payloads])
     corridor_fallbacks = _finite([item.get("dense_fallbacks") for item in corridor_payloads])
+
+    def corridor_mean(name: str) -> float | None:
+        values = _finite([item.get(name) for item in corridor_payloads])
+        return float(np.mean(values)) if values else None
     guidance_steps = [
         step for guidance in guidance_payloads for step in guidance.get("steps", []) if isinstance(step, dict)
     ]
@@ -1467,6 +1520,18 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         ros["world_start_unix_s"] if ros["world_start_unix_s"] is not None
         else timing.get("world_start_unix_s")
     )
+    try:
+        motion = measure_manifest_motion_start(manifest_path, threshold_rad=0.01)
+    except (OSError, ValueError, KeyError):
+        motion = None
+    first_motion_s = None if motion is None else motion["motion_start_from_world_s"]
+    first_crossing_s = min(scheduled_crossings, default=None)
+    # The benchmark's crossing semantics require the arm to be visibly moving
+    # before the obstacle reaches its anchor, not merely to reach the goal later.
+    motion_before_crossing = (
+        first_motion_s is not None and first_crossing_s is not None
+        and first_motion_s + 1.25 <= first_crossing_s
+    )
     metrics.update(
         goal_reached=ros["goal_reached"],
         goal_time_s=ros["goal_time_s"],
@@ -1482,6 +1547,12 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         ),
         first_plan_status=(
             first_completed_result.get("status") if first_completed_result is not None else None
+        ),
+        first_significant_motion_from_world_s=first_motion_s,
+        first_motion_before_crossing=motion_before_crossing,
+        valid_dynamic_success=(
+            ros["goal_reached"] and motion_before_crossing
+            and not any(event.get("type") == "brake" for event in events)
         ),
         first_command_start_from_world_s=timing.get("first_command_start_from_world_s"),
         first_bridge_start_from_world_s=timing.get("first_bridge_start_from_world_s"),
@@ -1549,6 +1620,21 @@ def extract_run_metrics(attempt_dir: Path, run_spec: dict[str, Any], returncode:
         ),
         corridor_a_changed_candidates_mean=(float(np.mean(corridor_changed)) if corridor_changed else None),
         corridor_a_dense_fallbacks_mean=(float(np.mean(corridor_fallbacks)) if corridor_fallbacks else None),
+        corridor_a_optimized_unique_window_sequences_mean=corridor_mean(
+            "optimized_unique_window_sequences"
+        ),
+        corridor_a_validated_unique_window_sequences_mean=corridor_mean(
+            "validated_unique_window_sequences"
+        ),
+        corridor_a_alternate_branch_rescued_candidates_mean=corridor_mean(
+            "alternate_branch_rescued_candidates"
+        ),
+        corridor_a_dp_fit_abs_error_s_mean=corridor_mean("dp_fit_abs_error_s_mean"),
+        corridor_a_alternative_branches_checked_mean=corridor_mean(
+            "alternative_branches_checked"
+        ),
+        corridor_a_time_invariant_skipped_mean=corridor_mean("time_invariant_skipped"),
+        corridor_a_early_stopped_branches_mean=corridor_mean("early_stopped_branches"),
         corridor_a_payload_match_count=len(corridor_payloads),
         corridor_a_payload_mismatch_count=corridor_mismatch_count,
         factorized_representation=common_factorized_value("representation"),
@@ -1586,6 +1672,11 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "infrastructure_failure_attempts": sum(int(row.get("infrastructure_failure_attempts") or 0) for row in rows),
         "unresolved_infrastructure_failures": sum(row.get("failure_class") == "dds_startup" for row in rows),
         "goal_reached": sum(bool(row.get("goal_reached")) for row in rows),
+        "first_motion_before_crossing": sum(bool(row.get("first_motion_before_crossing")) for row in rows),
+        "valid_dynamic_success": sum(bool(row.get("valid_dynamic_success")) for row in rows),
+        "deadline_expired_after_planning": sum(
+            int(row.get("deadline_expired_after_planning_count") or 0) for row in rows
+        ),
         "brake_runs": sum(int(row.get("brake_count") or 0) > 0 for row in rows),
         "brake_events": sum(int(row.get("brake_count") or 0) for row in rows),
         "goal_and_brake_runs": sum(
@@ -1610,6 +1701,10 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "first_plan_completed_from_world_s": _describe(
             [row.get("first_plan_completed_from_world_s") for row in rows]
         ),
+        "first_significant_motion_from_world_s": _describe(
+            [row.get("first_significant_motion_from_world_s") for row in rows]
+        ),
+        "server_round_trip_s": _describe([row.get("server_round_trip_mean_s") for row in rows]),
         "first_command_start_from_world_s": _describe([row.get("first_command_start_from_world_s") for row in rows]),
         "first_bridge_start_from_world_s": _describe([row.get("first_bridge_start_from_world_s") for row in rows]),
         "first_handoff_from_world_s": _describe([row.get("first_handoff_from_world_s") for row in rows]),
@@ -1657,6 +1752,27 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "corridor_a_changed_candidates": _describe([row.get("corridor_a_changed_candidates_mean") for row in rows]),
         "corridor_a_dense_fallbacks": _describe([row.get("corridor_a_dense_fallbacks_mean") for row in rows]),
+        "corridor_a_optimized_unique_window_sequences": _describe(
+            [row.get("corridor_a_optimized_unique_window_sequences_mean") for row in rows]
+        ),
+        "corridor_a_validated_unique_window_sequences": _describe(
+            [row.get("corridor_a_validated_unique_window_sequences_mean") for row in rows]
+        ),
+        "corridor_a_alternate_branch_rescued_candidates": _describe(
+            [row.get("corridor_a_alternate_branch_rescued_candidates_mean") for row in rows]
+        ),
+        "corridor_a_dp_fit_abs_error_s": _describe(
+            [row.get("corridor_a_dp_fit_abs_error_s_mean") for row in rows]
+        ),
+        "corridor_a_alternative_branches_checked": _describe(
+            [row.get("corridor_a_alternative_branches_checked_mean") for row in rows]
+        ),
+        "corridor_a_time_invariant_skipped": _describe(
+            [row.get("corridor_a_time_invariant_skipped_mean") for row in rows]
+        ),
+        "corridor_a_early_stopped_branches": _describe(
+            [row.get("corridor_a_early_stopped_branches_mean") for row in rows]
+        ),
         "corridor_a_payload_matches": sum(int(row.get("corridor_a_payload_match_count") or 0) for row in rows),
         "corridor_a_payload_mismatches": sum(
             int(row.get("corridor_a_payload_mismatch_count") or 0) for row in rows
@@ -1872,14 +1988,19 @@ def write_reports(
                     "",
                     f"### `{protocol}`",
                     "",
-                    "| 模式 | 完成/总数 | first plan mean s | goal mean s | inference mean s | Corridor profiled total mean s |",
-                    "|---|---:|---:|---:|---:|---:|",
+                    "| 模式 | 完成/总数 | first plan mean s | 首次明显运动 mean s | crossing 前运动 | 有效动态成功 | deadline 过期 | server round trip mean s | goal mean s | inference mean s | Corridor profiled total mean s |",
+                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
                 ]
             )
             for mode, data in by_timing_protocol[protocol]["by_mode"].items():
                 lines.append(
                     f"| {mode} | {data['completed']}/{data['runs']} | "
                     f"{_fmt(data['first_plan_completed_from_world_s']['mean'])} | "
+                    f"{_fmt(data['first_significant_motion_from_world_s']['mean'])} | "
+                    f"{data['first_motion_before_crossing']} | "
+                    f"{data['valid_dynamic_success']} | "
+                    f"{data['deadline_expired_after_planning']} | "
+                    f"{_fmt(data['server_round_trip_s']['mean'])} | "
                     f"{_fmt(data['goal_time_s']['mean'])} | "
                     f"{_fmt(data['inference_total_s']['mean'])} | "
                     f"{_fmt(data['corridor_a_profiled_total_s']['mean'])} |"
@@ -1959,6 +2080,24 @@ def write_reports(
                 f"{_fmt(data['corridor_a_changed_candidates']['mean'])} | "
                 f"{_fmt(data['corridor_a_dense_fallbacks']['mean'])} | "
                 f"{data['corridor_a_payload_matches']}/{data['corridor_a_payload_mismatches']} |"
+            )
+        lines.extend([
+            "",
+            "窗口序列按优化后的连续到达时刻归类，在每条空间路径内去重再求和；以下为每次成功规划结果的均值，备选救回仅计实际通过 DenseCheck 的候选。",
+            "",
+            "| 模式 | 优化后不同窗口序列 | DenseCheck 有效窗口序列 | 备选救回候选 | DP 拟合误差 s | 备选 DenseCheck 数 | 时间不可修复跳过数 | C1 早停分支数 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
+        ])
+        for mode in report_modes:
+            data = by_mode[mode]
+            lines.append(
+                f"| {mode} | {_fmt(data['corridor_a_optimized_unique_window_sequences']['mean'])} | "
+                f"{_fmt(data['corridor_a_validated_unique_window_sequences']['mean'])} | "
+                f"{_fmt(data['corridor_a_alternate_branch_rescued_candidates']['mean'])} | "
+                f"{_fmt(data['corridor_a_dp_fit_abs_error_s']['mean'])} | "
+                f"{_fmt(data['corridor_a_alternative_branches_checked']['mean'])} | "
+                f"{_fmt(data['corridor_a_time_invariant_skipped']['mean'])} | "
+                f"{_fmt(data['corridor_a_early_stopped_branches']['mean'])} |"
             )
     lines.extend(
         [
@@ -2215,9 +2354,115 @@ def _run_command(command: list[str], cwd: Path, log_path: Path) -> int:
         return int(process.wait())
 
 
+def _calibrate_crossing_from_report(
+    report_path: Path, modes: list[str], *, motion_floor: bool = False,
+) -> dict[str, Any]:
+    """Use the median completed hard-scene first plan for the next test round.
+
+    Corridor modes inherit their non-Corridor parent's relative offsets;
+    other modes retain their own offsets. The median completed hard-scene
+    first-plan clock anchors each profile. Failed planning results count if
+    they returned a timestamp; missing results do not. Optionally, measured first
+    motion can impose a later floor, but startup variability can make that
+    calibration invalid in the next run; it is never the default.
+    """
+    from scripts.isaaclab.run_todrawer_f3c_until_success import (
+        MODE_TIMING_PROFILES, ModeTimingProfile,
+    )
+
+    with report_path.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    calibration = {
+        "schema": "todrawer_crossing_calibration_v4_median",
+        "source_report": report_path.resolve().as_posix(),
+        "source_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+        "selection": (
+            "median_completed_hard_scene_first_plan_with_motion_start_floor"
+            if motion_floor else "median_completed_hard_scene_first_plan_from_world_s"
+        ),
+        "motion_floor_enabled": motion_floor,
+        "modes": {},
+    }
+    seen_profiles = set()
+    for mode in sorted(
+        modes,
+        key=lambda candidate: (
+            candidate in CORRIDOR_A_MODES,
+            candidate != _timing_profile_mode(candidate),
+        ),
+    ):
+        profile_mode = _timing_profile_mode(mode)
+        if profile_mode in seen_profiles:
+            continue
+        seen_profiles.add(profile_mode)
+        samples = []
+        motion_samples = []
+        for row in rows:
+            if row.get("mode") != mode or row.get("difficulty") != "hard":
+                continue
+            raw = row.get("first_plan_completed_from_world_s")
+            if not raw:
+                continue
+            value = float(raw)
+            if math.isfinite(value) and value > 0.0:
+                samples.append(value)
+                raw_motion = row.get("first_significant_motion_from_world_s")
+                if raw_motion:
+                    motion = float(raw_motion)
+                    if math.isfinite(motion) and motion > 0.0:
+                        motion_samples.append(motion)
+        if not samples:
+            raise ValueError(f"no completed hard-scene first plan for {mode} in {report_path}")
+        first_plan = float(np.median(samples))
+        parent_mode = (mode[: -len("_corridor_a")]
+                       if mode in CORRIDOR_A_MODES else profile_mode)
+        parent = MODE_TIMING_PROFILES[parent_mode]
+        first_plan_offset = first_plan - parent.first_plan_completed_s
+        motion_offset = (
+            float(np.median(motion_samples)) - parent.significant_motion_start_s
+            if motion_samples else float("-inf")
+        )
+        offset = max(first_plan_offset, motion_offset) if motion_floor else first_plan_offset
+        profile = ModeTimingProfile(
+            first_plan,
+            parent.significant_motion_start_s + offset,
+            parent.expected_goal_s + offset,
+            parent.crossing_shift_min_s + offset,
+            parent.crossing_shift_max_s + offset,
+        )
+        MODE_TIMING_PROFILES[profile_mode] = profile
+        calibration["modes"][mode] = {
+            "hard_scene_samples_s": samples,
+            "hard_scene_sample_count": len(samples),
+            "hard_scene_first_motion_samples_s": motion_samples,
+            "first_plan_completed_s": first_plan,
+            "profile_mode": profile_mode,
+            "parent_mode": parent_mode,
+            "parent_offset_s": offset,
+            "first_plan_offset_s": first_plan_offset,
+            "first_motion_offset_s": motion_offset if motion_samples else None,
+            "offset_source": (
+                "first_motion" if motion_floor and motion_offset > first_plan_offset else "first_plan"
+            ),
+            "inferred_significant_motion_start_s": profile.significant_motion_start_s,
+            "inferred_expected_goal_s": profile.expected_goal_s,
+            "crossing_shift_range_s": [
+                profile.crossing_shift_min_s, profile.crossing_shift_max_s,
+            ],
+        }
+    return calibration
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.calibrate_crossing_from_report is not None and not args.report_only:
+        calibration = _calibrate_crossing_from_report(
+            args.calibrate_crossing_from_report, args.modes,
+            motion_floor=args.calibrate_crossing_motion_floor,
+        )
+        _write_json(output_dir / "crossing-calibration.json", calibration)
+        print(f"[calibration] {output_dir / 'crossing-calibration.json'}", flush=True)
     suite = materialize_suite(
         output_dir,
         args.environment_count_per_category,
@@ -2325,6 +2570,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
                         "planner_repeat": repeat,
                         "mode": mode,
                         "corridor_a_enabled": mode in CORRIDOR_A_MODES,
+                        "corridor_a_backend": args.corridor_a_backend if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_chunk_size": args.corridor_a_chunk_size if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_dp_init": args.corridor_a_dp_init if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_k_best": args.corridor_a_k_best if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_branch_fallback": args.corridor_a_branch_fallback if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_dense_branch_budget": args.corridor_a_dense_branch_budget if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_selective_k": args.corridor_a_selective_k if mode in CORRIDOR_A_MODES else None,
+                        "corridor_a_early_stop": args.corridor_a_early_stop if mode in CORRIDOR_A_MODES else None,
                         "phase": phase,
                         "timing_mode": timing_mode,
                         "planner_seed": planner_seed,
@@ -2377,7 +2630,19 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             command.append("--factorized-adapt-spatial-basis")
                     command.extend(MODE_PIPELINE_ARGS.get(mode, ()))
                     if mode in CORRIDOR_A_MODES:
-                        command.append("--corridor-a")
+                        command.extend(("--corridor-a", "--corridor-a-backend", args.corridor_a_backend,
+                                        "--corridor-a-chunk-size", str(args.corridor_a_chunk_size)))
+                        if args.corridor_a_dp_init:
+                            command.append("--corridor-a-dp-init")
+                        if args.corridor_a_k_best:
+                            command.extend(("--corridor-a-k-best", str(args.corridor_a_k_best)))
+                        if args.corridor_a_branch_fallback:
+                            command.append("--corridor-a-branch-fallback")
+                        command.extend(("--corridor-a-dense-branch-budget", str(args.corridor_a_dense_branch_budget)))
+                        if args.corridor_a_selective_k:
+                            command.append("--corridor-a-selective-k")
+                        if args.corridor_a_early_stop:
+                            command.append("--corridor-a-early-stop")
                     if not args.render:
                         command.append("--skip-render")
                     _write_json(attempt_dir / "run-spec.json", {**run_spec, "command": command})
@@ -2438,6 +2703,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--suite-seed", type=int, default=20260829)
     parser.add_argument("--duration-sec", type=float, default=35.0)
     parser.add_argument("--plan-rate-hz", type=float, default=1.0)
+    parser.add_argument("--corridor-a-backend", choices=("serial", "batch_exact", "batch_time_table", "batch_event_intervals"), default="serial")
+    parser.add_argument("--corridor-a-chunk-size", type=int, default=8)
+    parser.add_argument("--corridor-a-dp-init", action="store_true")
+    parser.add_argument("--corridor-a-k-best", type=int, choices=(0, 4, 8), default=0)
+    parser.add_argument("--corridor-a-branch-fallback", action="store_true")
+    parser.add_argument("--corridor-a-dense-branch-budget", type=int, default=64)
+    parser.add_argument("--corridor-a-selective-k", action="store_true")
+    parser.add_argument("--corridor-a-early-stop", action="store_true")
+    parser.add_argument(
+        "--calibrate-crossing-from-report", type=Path,
+        help="Use each mode's median completed hard-scene first-plan time from a prior runs.csv for this round",
+    )
+    parser.add_argument(
+        "--calibrate-crossing-motion-floor", action="store_true",
+        help="Experimental: also floor crossing by prior hard-scene first motion; unstable under late handoff",
+    )
     parser.add_argument(
         "--ros-domain-id",
         type=int,
@@ -2448,6 +2729,8 @@ def _parser() -> argparse.ArgumentParser:
         nargs="+",
         choices=tuple(MODE_SPECS),
         default=list(DEFAULT_MODES),
+        metavar="MODE",
+        help="Run only these modes, separated by spaces; repeat --modes once, e.g. --modes phase4_aligned f1_c_corridor_a f3_tau_r",
     )
     parser.add_argument(
         "--factorized-timing-checkpoint",
@@ -2507,6 +2790,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    args.modes = list(dict.fromkeys(args.modes))
     if args.dry_run:
         args.skip_build = True
     if (

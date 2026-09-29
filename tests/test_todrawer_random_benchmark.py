@@ -21,6 +21,7 @@ from scripts.isaaclab.benchmark_todrawer_random import (
     MODE_SPECS,
     PREDICTION_HORIZON_S,
     _existing_rows,
+    _calibrate_crossing_from_report,
     _normalize_metrics,
     _paired_summary,
     _parse_ros_log,
@@ -42,6 +43,112 @@ from scripts.isaaclab.todrawer_scenario_validation import (
     trajectory_clearances,
 )
 from scripts.isaaclab.validate_todrawer_random_suite import validate_suite
+from scripts.isaaclab.test_todrawer_first_plan_calibration import _summarize as summarize_first_plan_test
+
+
+def test_hard_scene_median_first_plan_calibrates_next_crossing_with_parent_offsets(tmp_path, monkeypatch):
+    from scripts.isaaclab.run_todrawer_f3c_until_success import MODE_TIMING_PROFILES
+
+    original = MODE_TIMING_PROFILES["joint_corridor_a"]
+    monkeypatch.setitem(MODE_TIMING_PROFILES, "joint_corridor_a", original)
+    report = tmp_path / "runs.csv"
+    report.write_text(
+        "mode,difficulty,first_plan_completed_from_world_s\n"
+        "joint_corridor_a,easy,2.1\n"
+        "joint_corridor_a,hard,4.7\n"
+        "joint_corridor_a,hard,4.9\n",
+        encoding="utf-8",
+    )
+
+    calibration = _calibrate_crossing_from_report(report, ["joint_corridor_a"])
+
+    parent = MODE_TIMING_PROFILES["joint"]
+    profile = MODE_TIMING_PROFILES["joint_corridor_a"]
+    offset = 4.8 - parent.first_plan_completed_s
+    assert calibration["modes"]["joint_corridor_a"]["first_plan_completed_s"] == pytest.approx(4.8)
+    assert profile.first_plan_completed_s == pytest.approx(4.8)
+    assert profile.significant_motion_start_s == pytest.approx(parent.significant_motion_start_s + offset)
+    assert profile.crossing_shift_min_s == pytest.approx(parent.crossing_shift_min_s + offset)
+    assert profile.expected_goal_s == pytest.approx(parent.expected_goal_s + offset)
+
+
+def test_non_corridor_calibration_uses_hard_plan_median(tmp_path, monkeypatch):
+    from scripts.isaaclab.run_todrawer_f3c_until_success import MODE_TIMING_PROFILES
+
+    original = MODE_TIMING_PROFILES["f2_c"]
+    monkeypatch.setitem(MODE_TIMING_PROFILES, "f2_c", original)
+    report = tmp_path / "runs.csv"
+    report.write_text(
+        "mode,difficulty,category,first_plan_completed_from_world_s\n"
+        "f2_c,hard,fast_crossing,2.0\n"
+        "f2_c,hard,fast_crossing,2.2\n"
+        "f2_c,hard,inflated_dense,2.8\n",
+        encoding="utf-8",
+    )
+    calibration = _calibrate_crossing_from_report(report, ["f2_c"])
+    profile = MODE_TIMING_PROFILES["f2_c"]
+    assert calibration["modes"]["f2_c"]["first_plan_completed_s"] == pytest.approx(2.2)
+    assert profile.first_plan_completed_s == pytest.approx(2.2)
+    assert profile.expected_goal_s == pytest.approx(original.expected_goal_s + 2.2 - original.first_plan_completed_s)
+
+
+def test_first_plan_test_counts_failed_results_and_keeps_missing_separate():
+    rows = [
+        {"mode": "f1_c", "difficulty": "hard", "category": "fast_crossing",
+         "first_plan_completed_from_world_s": "2.0", "first_plan_status": "success"},
+        {"mode": "f1_c", "difficulty": "hard", "category": "inflated_dense",
+         "first_plan_completed_from_world_s": "3.0", "first_plan_status": "no_valid_trajectory"},
+        {"mode": "f1_c", "difficulty": "hard", "category": "mixed_motion_multi",
+         "first_plan_completed_from_world_s": "", "first_plan_status": ""},
+    ]
+    result = summarize_first_plan_test(rows, ["f1_c"], 2.5)["f1_c"]
+    assert result["median_s"] == pytest.approx(2.5)
+    assert result["over_threshold_count"] == 1
+    assert result["planning_failed_results"] == 1
+    assert result["returned_results"] == 2
+    assert result["missing_results"] == 1
+
+
+def test_compatibility_modes_calibrate_independently(tmp_path, monkeypatch):
+    from scripts.isaaclab.run_todrawer_f3c_until_success import MODE_TIMING_PROFILES
+
+    monkeypatch.setitem(MODE_TIMING_PROFILES, "joint", MODE_TIMING_PROFILES["joint"])
+    monkeypatch.setitem(MODE_TIMING_PROFILES, "scalar_duration", MODE_TIMING_PROFILES["scalar_duration"])
+    report = tmp_path / "runs.csv"
+    report.write_text(
+        "mode,difficulty,first_plan_completed_from_world_s\n"
+        "scalar_duration,hard,9.0\n"
+        "joint,hard,2.0\n",
+        encoding="utf-8",
+    )
+    calibration = _calibrate_crossing_from_report(report, ["scalar_duration", "joint"])
+    assert set(calibration["modes"]) == {"joint", "scalar_duration"}
+    assert MODE_TIMING_PROFILES["joint"].first_plan_completed_s == pytest.approx(2.0)
+    assert MODE_TIMING_PROFILES["scalar_duration"].first_plan_completed_s == pytest.approx(9.0)
+
+
+def test_stale_first_plans_calibrate_crossing_after_observed_robot_motion(tmp_path, monkeypatch):
+    from scripts.isaaclab.run_todrawer_f3c_until_success import MODE_TIMING_PROFILES
+
+    original = MODE_TIMING_PROFILES["f1_c_corridor_a"]
+    monkeypatch.setitem(MODE_TIMING_PROFILES, "f1_c_corridor_a", original)
+    report = tmp_path / "runs.csv"
+    report.write_text(
+        "mode,difficulty,first_plan_completed_from_world_s,first_significant_motion_from_world_s\n"
+        "f1_c_corridor_a,hard,3.6,14.0\n",
+        encoding="utf-8",
+    )
+    calibration = _calibrate_crossing_from_report(
+        report, ["f1_c_corridor_a"], motion_floor=True,
+    )
+    parent = MODE_TIMING_PROFILES["f1_c"]
+    profile = MODE_TIMING_PROFILES["f1_c_corridor_a"]
+    assert calibration["modes"]["f1_c_corridor_a"]["offset_source"] == "first_motion"
+    assert profile.first_plan_completed_s == pytest.approx(3.6)
+    assert profile.significant_motion_start_s == pytest.approx(14.0)
+    assert profile.crossing_shift_min_s == pytest.approx(
+        parent.crossing_shift_min_s + 14.0 - parent.significant_motion_start_s
+    )
 
 
 def test_random_suite_is_deterministic_and_covers_categories():
@@ -449,6 +556,32 @@ def test_ros_log_extracts_world_clock_and_initial_warmup(tmp_path):
     assert parsed["goal_reached"] is True
 
 
+def test_failed_run_keeps_planner_and_online_outcomes_without_manifest(tmp_path):
+    attempt = tmp_path / "attempt-001"
+    request_dir = attempt / "planner-results" / "request-0001"
+    request_dir.mkdir(parents=True)
+    (request_dir / "response.json").write_text(json.dumps({
+        "planner_result_status": "success",
+        "online_acceptance_status": "STALE",
+        "online_rejection_reason": "deadline_expired_after_planning",
+        "server_round_trip_sec": 4.2,
+    }), encoding="utf-8")
+    (request_dir / "result.json").write_text(json.dumps({
+        "status": "success", "created_unix_time": 12.4,
+    }), encoding="utf-8")
+    (attempt / "ros-replan.log").write_text(
+        "scenario world clock started unix_ns=10000000000\n", encoding="utf-8",
+    )
+    metrics = extract_run_metrics(attempt, {"mode": "joint_corridor_a"}, 1)
+    assert not metrics["manifest_available"]
+    assert metrics["planner_result_status_counts"] == {"success": 1}
+    assert metrics["online_acceptance_status_counts"] == {"STALE": 1}
+    assert metrics["deadline_expired_after_planning_count"] == 1
+    assert metrics["server_round_trip_mean_s"] == pytest.approx(4.2)
+    assert metrics["first_plan_completed_from_world_s"] == pytest.approx(2.4)
+    assert metrics["first_plan_status"] == "success"
+
+
 def test_realized_joint_path_uses_only_active_interval(tmp_path):
     episode = tmp_path / "episode"
     archive = episode / "plans" / "plan-0000" / "trajectory.npz"
@@ -837,6 +970,23 @@ def test_factorized_dry_run_writes_paired_commands_with_explicit_basis(tmp_path)
         assert command[command.index("--factorized-method") + 1] == method
         assert "--factorized-adapt-spatial-basis" in command
         assert specs[method]["factorized_spatial_basis_adapted"] is True
+
+
+def test_space_separated_modes_run_only_requested_subset(tmp_path):
+    output = tmp_path / "selected-modes"
+    selected = ("phase4_aligned", "f1_c_corridor_a", "f3_tau_r")
+    assert main([
+        "--output-dir", str(output),
+        "--environment-count-per-category", "1",
+        "--planner-repeats", "1",
+        "--categories", "single_crossing",
+        "--modes", *selected, "f1_c_corridor_a",
+        "--dry-run",
+    ]) == 0
+    suite = json.loads((output / "suite.json").read_text(encoding="utf-8"))
+    assert suite["modes"] == list(selected)
+    mode_dirs = {path.name for path in (output / "runs" / "scenario-000" / "repeat-00").iterdir()}
+    assert mode_dirs == set(selected)
 
 
 def test_c_and_tau_r_factorized_modes_run_together_with_best_defaults(tmp_path):

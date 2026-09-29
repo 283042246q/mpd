@@ -1,5 +1,6 @@
-"""Stateless physical cost evaluation; only the sampler applies updates."""
+"""Physical cost evaluation with block-scoped fixed-path caching."""
 import torch
+from torch_robotics.torch_kinematics_tree.geometrics.utils import link_pos_from_link_tensor
 
 from mpd.inference.space_time_guidance import (
     InferenceOnlySpaceTimeGuide, SpaceTimeTrajectoryState, _clip_per_candidate,
@@ -20,6 +21,28 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
     def reset(self, candidate_count):
         self.timing_control_points = None
         self.statistics = []
+        self.clear_fixed_path()
+
+    def prepare_fixed_path(self, p):
+        """Cache only path-dependent quantities for one unchanged timing block."""
+        full = self.full_path(p.detach())
+        bspline = self.planning_task.parametric_trajectory.bspline
+        q, qs, qss = [torch.einsum("hk,bkd->bhd", basis.squeeze(0), full)
+                      for basis in (bspline.N, bspline.dN, bspline.ddN)]
+        batch, horizon, _ = q.shape
+        poses = self.collision_robot.fk_collision_spheres(q.reshape(batch * horizon, -1))
+        poses = torch.stack(poses).transpose(0, 1).reshape(batch, horizon, -1, 3, 4)
+        positions = link_pos_from_link_tensor(poses)[..., :3]
+        self._fixed_path = (p.data_ptr(), p._version, q, qs, qss, positions)
+
+    def clear_fixed_path(self):
+        self._fixed_path = None
+
+    def _cached_path(self, p):
+        cached = getattr(self, "_fixed_path", None)
+        if cached is not None and not p.requires_grad and p.data_ptr() == cached[0] and p._version == cached[1]:
+            return cached
+        return None
 
     def full_path(self, p):
         trajectory = self.planning_task.parametric_trajectory
@@ -38,18 +61,25 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
         return torch.zeros((len(p), 6), device=p.device, dtype=p.dtype)
 
     def state(self, p, z, *, weak=False, collision_kinematics=True):
-        full = self.full_path(p)
-        bspline = self.planning_task.parametric_trajectory.bspline
-        q, qs, qss = [torch.einsum("hk,bkd->bhd", basis.squeeze(0), full)
-                      for basis in (bspline.N, bspline.dN, bspline.ddN)]
+        cached = self._cached_path(p)
+        if cached is None:
+            full = self.full_path(p)
+            bspline = self.planning_task.parametric_trajectory.bspline
+            q, qs, qss = [torch.einsum("hk,bkd->bhd", basis.squeeze(0), full)
+                          for basis in (bspline.N, bspline.dN, bspline.ddN)]
+        else:
+            q, qs, qss = cached[2:5]
         if weak:
             c = self.timing_spline.linear_control_points(self.settings.nominal_duration, batch_shape=(len(p),))
             timing = self.timing_spline.evaluate(c, q=q, q_s=qs, q_ss=qss)
         else:
             timing, _ = self.codec.evaluate(z, q, qs, qss)
         state = SpaceTimeTrajectoryState(q, qs, qss, timing)
-        return (self._attach_collision_kinematics(state, include_spatial_jacobians=False)
-                if collision_kinematics else state)
+        if not collision_kinematics:
+            return state
+        if cached is not None:
+            return SpaceTimeTrajectoryState(q, qs, qss, timing, collision_sphere_positions=cached[5])
+        return self._attach_collision_kinematics(state, include_spatial_jacobians=False)
 
     def evaluate_control_points(self, p, timing_control_points=None, *, return_state=False, **kwargs):
         z = self.timing_control_points if timing_control_points is None else timing_control_points
@@ -77,11 +107,17 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
     def gradients(self, p, z, *, active, weak=False):
         if active not in ("space", "timing", "joint"):
             raise ValueError("active must be space, timing or joint")
-        p = p.detach().requires_grad_(True)
+        timing_only = active == "timing" and self.factorized_settings.timing_grad_only
+        p = p.detach() if timing_only else p.detach().requires_grad_(True)
         z = z.detach().requires_grad_(True)
         total, _, _ = self.evaluate(p, z, weak=weak)
-        gp, gz = (torch.autograd.grad(total.sum(), (p, z), allow_unused=True)
-                  if total.requires_grad else (None, None))
+        if not total.requires_grad:
+            gp, gz = None, None
+        elif timing_only:
+            gp = None
+            gz, = torch.autograd.grad(total.sum(), (z,), allow_unused=True)
+        else:
+            gp, gz = torch.autograd.grad(total.sum(), (p, z), allow_unused=True)
         gp = torch.zeros_like(p) if gp is None else gp
         gz = torch.zeros_like(z) if gz is None else gz
         if active in ("space", "joint"):
@@ -99,7 +135,7 @@ class FactorizedCostGuide(InferenceOnlySpaceTimeGuide):
         gp, gz = self.gradients(p, z, active=active, weak=weak)
         gp, _, _ = _clip_per_candidate(gp, self.settings.spatial_dynamic_max_grad_norm)
         gz, _, _ = _clip_per_candidate(gz, self.settings.timing_max_grad_norm)
-        proposed_p = (p - self.factorized_settings.space_lr * gp).clamp(-1., 1.)
+        proposed_p = p if active == "timing" else (p - self.factorized_settings.space_lr * gp).clamp(-1., 1.)
         proposed_z = z - self.factorized_settings.timing_lr * gz
         with torch.no_grad():
             if not weak:

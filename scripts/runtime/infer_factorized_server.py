@@ -44,6 +44,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--corridor-a-clearance-m", type=float, default=0.0)
     parser.add_argument("--corridor-a-steps", type=int, default=20)
     parser.add_argument("--corridor-a-learning-rate", type=float, default=0.04)
+    parser.add_argument("--corridor-a-backend", choices=("serial", "batch_exact", "batch_time_table", "batch_event_intervals"), default="serial")
+    parser.add_argument("--corridor-a-chunk-size", type=int, default=8)
+    parser.add_argument("--corridor-a-dp-init", action="store_true")
+    parser.add_argument("--corridor-a-k-best", type=int, choices=(0, 4, 8), default=0)
+    parser.add_argument("--corridor-a-branch-fallback", action="store_true")
+    parser.add_argument("--corridor-a-dense-branch-budget", type=int, default=64)
+    parser.add_argument("--corridor-a-selective-k", action="store_true")
+    parser.add_argument("--corridor-a-early-stop", action="store_true")
     parser.add_argument("--spatial-dynamic-max-grad-norm", type=float, default=2.0)
     parser.add_argument("--space-steps", type=int, default=32)
     parser.add_argument("--timing-steps", type=int, default=100)
@@ -56,6 +64,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eta", type=float, default=0.0)
     parser.add_argument("--alternating-rounds", type=int, default=1)
     parser.add_argument("--timing-steps-per-space-step", type=int, choices=(1, 2), default=1)
+    for name in ("timing-grad-only", "fixed-path-cache", "path-encoding-cache"):
+        parser.add_argument("--" + name, dest=name.replace("-", "_"), action="store_true")
+        parser.add_argument("--no-" + name, dest=name.replace("-", "_"), action="store_false")
+        parser.set_defaults(**{name.replace("-", "_"): None})
     parser.add_argument(
         "--dynamic-guidance", dest="dynamic_guidance", action="store_true", default=True
     )
@@ -99,6 +111,14 @@ def main(argv=None) -> int:
         "corridor_a_clearance_m": args.corridor_a_clearance_m,
         "corridor_a_steps": args.corridor_a_steps,
         "corridor_a_learning_rate": args.corridor_a_learning_rate,
+        "corridor_a_backend": args.corridor_a_backend,
+        "corridor_a_chunk_size": args.corridor_a_chunk_size,
+        "corridor_a_dp_init": args.corridor_a_dp_init,
+        "corridor_a_k_best": args.corridor_a_k_best,
+        "corridor_a_branch_fallback": args.corridor_a_branch_fallback,
+        "corridor_a_dense_branch_budget": args.corridor_a_dense_branch_budget,
+        "corridor_a_selective_k": args.corridor_a_selective_k,
+        "corridor_a_early_stop": args.corridor_a_early_stop,
         "spatial_dynamic_max_grad_norm": args.spatial_dynamic_max_grad_norm,
         "dynamic_guidance_enabled": args.dynamic_guidance,
     }
@@ -119,6 +139,9 @@ def main(argv=None) -> int:
             "timing_steps_per_space_step",
         )
     }
+    for key in ("timing_grad_only", "fixed_path_cache", "path_encoding_cache"):
+        if getattr(args, key) is not None:
+            factorized_settings[key] = getattr(args, key)
 
     def engine_factory(state_callback):
         return FactorizedMpdRuntimeEngine(

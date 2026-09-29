@@ -71,6 +71,14 @@ class SpaceTimeGuidanceSettings:
     corridor_a_clearance_m: float = 0.0
     corridor_a_steps: int = 20
     corridor_a_learning_rate: float = 0.04
+    corridor_a_backend: str = "serial"
+    corridor_a_chunk_size: int = 8
+    corridor_a_dp_init: bool = False
+    corridor_a_k_best: int = 0
+    corridor_a_branch_fallback: bool = False
+    corridor_a_dense_branch_budget: int = 64
+    corridor_a_selective_k: bool = False
+    corridor_a_early_stop: bool = False
 
     @classmethod
     def from_mapping(cls, values: Any, *, mode: str | None = None):
@@ -111,6 +119,19 @@ class SpaceTimeGuidanceSettings:
             raise ValueError("Corridor A clearance/steps are invalid")
         if settings.corridor_a_learning_rate <= 0.0:
             raise ValueError("Corridor A learning rate must be positive")
+        if settings.corridor_a_backend not in {"serial", "batch_exact", "batch_time_table", "batch_event_intervals"}:
+            raise ValueError("unsupported Corridor A backend")
+        if settings.corridor_a_chunk_size < 1:
+            raise ValueError("Corridor A chunk size must be positive")
+        if settings.corridor_a_k_best not in (0, 4, 8):
+            raise ValueError("Corridor A K-best must be 0, 4 or 8")
+        if settings.corridor_a_dense_branch_budget < 0:
+            raise ValueError("Corridor A DenseCheck branch budget must be nonnegative")
+        if (settings.corridor_a_branch_fallback or settings.corridor_a_selective_k
+                or settings.corridor_a_early_stop) and settings.corridor_a_backend == "serial":
+            raise ValueError("Corridor A branch fallback/selective K/early stop require a batch backend")
+        if settings.corridor_a_early_stop and not settings.corridor_a_dp_init:
+            raise ValueError("Corridor A early stopping requires DP initialization")
         return settings
 
 
@@ -182,6 +203,8 @@ class SpaceTimeCostEvaluator:
         q_ss: torch.Tensor | None = None,
         collision_sphere_positions: torch.Tensor | None = None,
         trajectory_state: SpaceTimeTrajectoryState | None = None,
+        trusted_candidate_times: bool = False,
+        minimum_distance_override: torch.Tensor | None = None,
     ):
         if trajectory_state is None:
             if timing_control_points is None:
@@ -201,10 +224,16 @@ class SpaceTimeCostEvaluator:
             collision_sphere_positions = trajectory_state.collision_sphere_positions
         if collision_sphere_positions is None:
             raise ValueError("collision_sphere_positions are required")
-        minimum_distance = self.dynamic_world.minimum_signed_distance(
-            collision_sphere_positions,
-            trajectory_times=evaluation.time_from_start,
-        )
+        if minimum_distance_override is None:
+            minimum_distance = self.dynamic_world.minimum_signed_distance(
+                collision_sphere_positions,
+                trajectory_times=evaluation.time_from_start,
+                validate_times=not trusted_candidate_times,
+            )
+        else:
+            if minimum_distance_override.shape != collision_sphere_positions.shape[:-1]:
+                raise ValueError("minimum_distance_override shape must match collision spheres")
+            minimum_distance = minimum_distance_override
         margins = self.collision_margins.to(dtype=q.dtype, device=q.device) + self.cutoff_margin
         penetration = torch.relu(margins - minimum_distance)
         if self.settings.collision_power != 2.0:

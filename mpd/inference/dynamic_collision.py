@@ -334,24 +334,27 @@ class FixedCapacityDynamicWorld:
             self._time_table_cache[key] = table
         return table
 
-    def _candidate_time_table(self, trajectory_times: torch.Tensor) -> dict[str, Any]:
+    def _candidate_time_table(
+        self, trajectory_times: torch.Tensor, *, validate_times: bool = True
+    ) -> dict[str, Any]:
         """Build an uncached differentiable table for candidate-specific times."""
 
         if self.plan_start_unix_ns <= 0:
             raise DynamicWorldError("dynamic plan context has not been set")
         if trajectory_times.ndim != 2:
             raise ValueError("trajectory_times must have shape [batch,time]")
-        if not torch.isfinite(trajectory_times).all().item():
-            raise ValueError("trajectory_times contains NaN or Inf")
-        # This low-level query also receives time chunks from full DenseCheck;
-        # only the complete candidate contract is required to begin at zero.
-        if not (torch.diff(trajectory_times, dim=-1) > 0.0).all().item():
-            raise ValueError("trajectory_times must be strictly increasing")
+        if validate_times:
+            if not torch.isfinite(trajectory_times).all().item():
+                raise ValueError("trajectory_times contains NaN or Inf")
+            # This low-level query also receives time chunks from full DenseCheck;
+            # only the complete candidate contract is required to begin at zero.
+            if not (torch.diff(trajectory_times, dim=-1) > 0.0).all().item():
+                raise ValueError("trajectory_times must be strictly increasing")
 
         plan_offset = (self.plan_start_unix_ns - self.stamp_unix_ns) * 1e-9
         relative_times = trajectory_times + plan_offset
         valid_horizon = (self.valid_until_unix_ns - self.stamp_unix_ns) * 1e-9
-        if (relative_times[..., -1] > valid_horizon + 1e-9).any().item():
+        if validate_times and (relative_times[..., -1] > valid_horizon + 1e-9).any().item():
             raise DynamicWorldError("candidate trajectory exceeds dynamic-world prediction validity")
         capacity = self._active_capacity()
         centers = self.position[:capacity] + relative_times[..., None, None] * self.velocity[:capacity]
@@ -368,6 +371,8 @@ class FixedCapacityDynamicWorld:
         self,
         points: torch.Tensor,
         trajectory_times: torch.Tensor | None,
+        *,
+        validate_times: bool = True,
     ) -> dict[str, Any]:
         if trajectory_times is None:
             table = self._time_table(points.shape[1], points.dtype, points.device)
@@ -383,7 +388,7 @@ class FixedCapacityDynamicWorld:
             )
         if trajectory_times.dtype != points.dtype or trajectory_times.device != points.device:
             raise ValueError("trajectory_times must match points dtype and device")
-        return self._candidate_time_table(trajectory_times)
+        return self._candidate_time_table(trajectory_times, validate_times=validate_times)
 
     @staticmethod
     def _shape_distance(
@@ -553,13 +558,15 @@ class FixedCapacityDynamicWorld:
         self,
         points: torch.Tensor,
         trajectory_times: torch.Tensor | None = None,
+        *,
+        validate_times: bool = True,
     ) -> torch.Tensor:
         """Return effective distances as ``[B,H,M,L]`` without SDF gradients."""
 
         if points.ndim != 4 or points.shape[-1] != 3:
             raise ValueError("dynamic SDF expects [batch,time,links,3] points")
         batch, horizon, links, _ = points.shape
-        table = self._query_table(points, trajectory_times)
+        table = self._query_table(points, trajectory_times, validate_times=validate_times)
         capacity = table["capacity"]
         distances = torch.full(
             (batch, horizon, capacity, links),
@@ -582,11 +589,15 @@ class FixedCapacityDynamicWorld:
         self,
         points: torch.Tensor,
         trajectory_times: torch.Tensor | None = None,
+        *,
+        validate_times: bool = True,
     ) -> torch.Tensor:
         """Reduce dynamic SDF distances without constructing analytic gradients."""
 
         if not self.fused_reduction_enabled or not self.shape_grouping_enabled:
-            distances = self.signed_distances(points, trajectory_times=trajectory_times)
+            distances = self.signed_distances(
+                points, trajectory_times=trajectory_times, validate_times=validate_times
+            )
             if not distances.shape[-2]:
                 return torch.full(
                     points.shape[:-2] + (points.shape[-2],),
@@ -598,7 +609,7 @@ class FixedCapacityDynamicWorld:
         if points.ndim != 4 or points.shape[-1] != 3:
             raise ValueError("dynamic SDF expects [batch,time,links,3] points")
         links = points.shape[-2]
-        table = self._query_table(points, trajectory_times)
+        table = self._query_table(points, trajectory_times, validate_times=validate_times)
         best_distance = torch.full(
             points.shape[:-2] + (links,),
             torch.inf,

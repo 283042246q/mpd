@@ -203,7 +203,7 @@ class DenseTrajectoryValidator:
             q_position, q_velocity, q_acceleration = trajectory["pos"], trajectory["vel"], trajectory["acc"]
         return _resample(q_position, num_points), _resample(q_velocity, num_points), _resample(q_acceleration, num_points)
 
-    def _environment_clearance(self, positions, trajectory_times=None):
+    def _environment_clearance(self, positions, trajectory_times=None, *, static_only=False):
         clearances = []
         for field in (
             self.planning_task.get_collision_objects_field(),
@@ -211,6 +211,8 @@ class DenseTrajectoryValidator:
         ):
             if field is None:
                 continue
+            if static_only:
+                field = getattr(field, "static_field", field)
             if trajectory_times is not None and hasattr(field, "dynamic_world"):
                 signed = field.object_signed_distances(
                     positions, trajectory_times=trajectory_times

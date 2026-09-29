@@ -1,0 +1,3842 @@
+单臂的spacetime 双臂的cooperative的motivation与problem formulation可以怎么讲，不要只对比mpd，也要多找延伸工作那部分的论文对比，它们各自解决了什么，什么没有解决，做出的工作提出了哪些假设才完成
+
+思考了 2m 37s
+可以把这两块讲成两个不同类型的“从生成先验到受约束规划”问题，而不是都说成“MPD 的扩展”。
+
+单臂 Space-Time 的核心矛盾是：空间路径和执行时间发生耦合；双臂 Cooperative 的核心矛盾是：两个高维机械臂通过同一个刚性物体形成闭链耦合。相关文献其实正好能帮你把这两条 motivation 讲得更像研究问题。
+
+一、Single-arm Space-Time：Motivation 应该怎么讲
+我建议开头不要说“原 MPD 不支持动态障碍，所以我加时间”。这太窄。
+
+更好的问题是：
+
+Dynamic manipulator planning is not only a geometric path planning problem.
+A spatially identical path can be safe or unsafe depending on when the robot traverses it.
+
+也就是说静态规划求：
+
+q
+(
+s
+)
+,
+s
+∈
+[
+0
+,
+1
+]
+q(s),s∈[0,1]
+而动态环境真正要求：
+
+q
+(
+t
+)
+,
+q(t),
+或者你这里更适合的分解：
+
+q
+(
+s
+)
+,
+t
+(
+s
+)
+.
+q(s),t(s).
+这产生一个很直观的例子：
+
+同一空间通道：
+
+障碍还没到    → early pass 可行
+障碍正在经过  → collision
+障碍已经离开  → late pass 可行
+因此“绕哪里走”和“什么时候经过”是两类不同决策。
+
+1.1 相关工作不是一条线，而是三条线
+PPT 上很适合画成：
+
+Static learned planning
+        │
+       MPD
+        │
+        └──────────────┐
+                       │
+Dynamic search         │       Dynamic optimization
+ST-RRT*, SIPP          │       ITOMP
+                       │
+                       ↓
+                Your Space-Time MPD
+          learned spatial prior
+                +
+          explicit physical time
+                +
+         differentiable guidance
+MPD 解决了什么
+MPD 的贡献是学习多模态 trajectory prior，并在 diffusion sampling 中通过 cost gradient 对新约束进行 adaptation；新版又用 B-spline 把规划变量压缩到低维平滑轨迹表示。它的主要实验问题还是静态空间中的 collision-free motion planning，包括 unseen static obstacles。
+
+所以 MPD 给你的东西是：
+
+good multimodal spatial prior
+good multimodal spatial prior
+​
+ 
+但它本身没有把机器人执行的物理时间作为独立规划变量，也没有直接解决 moving obstacle 的 before/after decision。
+
+ST-RRT* 解决了什么
+ST-RRT* 则是另一端。
+
+它直接把问题放进 space-time，处理：
+
+dynamic obstacles；
+velocity constraints；
+unknown arrival time；
+而且具有 probabilistic completeness，并对最短 arrival time 渐近最优；论文也在 7-DoF manipulator 上测试。
+
+它说明：
+
+动态机械臂规划本质上可以通过把 time 加入 search state 来解决。
+
+但代价是：
+
+(
+q
+,
+t
+)
+(q,t)
+搜索空间增加了一维，而且它没有利用已学习的 trajectory distribution 来快速提出“像样的”机器人运动。
+
+因此它解决：
+
+global space-time search
+global space-time search
+​
+ 
+但不是：
+
+learned multimodal prior + online adaptation
+.
+learned multimodal prior + online adaptation
+​
+ .
+SIPP 解决了什么
+SIPP 更直接启发你现在的 corridor。
+
+它注意到：一个 configuration 的所有安全时间点虽然可能很多，但通常只形成少量safe intervals，于是用
+
+(
+configuration
+,
+safe interval
+)
+(configuration,safe interval)
+代替逐时间步搜索，可以保留 time-aware planning 的 completeness / optimality，同时显著降低搜索复杂度。
+
+所以 SIPP 给你的启发不是 diffusion，而是：
+
+dynamic feasibility has temporal topology
+dynamic feasibility has temporal topology
+​
+ 
+即：
+
+[
+0
+,
+2
+]
+∪
+[
+5
+,
+7
+]
+[0,2]∪[5,7]
+不是一个连续 scalar penalty。
+
+这就是你现在 corridor 可以自然接上的地方。
+
+ITOMP 又解决了什么
+ITOMP 是另一类方案：不做完整全局 space-time search，而是在 dynamic environment 中做 stochastic trajectory optimization，并不断：
+
+plan
+→
+execute
+→
+update obstacle
+→
+replan
+.
+plan→execute→update obstacle→replan.
+它在 7-DoF PR2 manipulator 上演示了动态避障，还同时考虑 smoothness 和 dynamics constraints；它使用的是短期 conservative obstacle bound，不要求提前知道整个障碍物未来。
+
+所以 ITOMP 已经解决：
+
+online dynamic manipulator replanning
+online dynamic manipulator replanning
+​
+ 
+但仍然属于 trajectory optimization：
+
+对初始化敏感；
+多模态空间/时间解主要依赖 stochastic exploration；
+没有 learned trajectory prior。
+CoBL-Diffusion 更接近你
+CoBL-Diffusion 已经把 diffusion 和 dynamic planning 放在一起了：它用 CBF/CLF 等 differentiable constraints 引导 diffusion，在动态 multi-agent 场景中生成平滑、安全轨迹。
+
+所以 PPT 上不能说：
+
+“第一次把 diffusion 用于动态规划”。
+
+你更准确的位置应该是：
+
+We investigate how an MPD-style learned manipulator trajectory prior can be extended with an explicit low-dimensional physical-time parameterization, instead of generating the entire time-indexed trajectory from scratch.
+
+区别在于你是在操纵器 MPD/B-spline 框架里显式拆：
+
+geometry 
+P
++
+timing 
+z
+.
+geometry P
+​
+ + 
+timing z
+​
+ .
+二、Space-Time 的 research gap 应该怎么落
+把上述论文放在一起，gap 会非常自然：
+
+方法	学习运动先验	显式 physical time	动态障碍	高维机械臂	在线 guidance
+MPD	✓	×	非核心	✓	✓
+SIPP	×	✓	✓	非主要目标	search
+ST-RRT*	×	✓	✓	✓	search
+ITOMP	×	✓/trajectory time	✓	✓	optimization
+CoBL-Diffusion	✓	trajectory-indexed	✓	主要是 navigation/multi-agent	✓
+你的 Space-Time	✓	✓，独立低维 timing	✓	✓ Panda	✓ joint cost guidance
+于是你的 research question 可以直接写成：
+
+Can a learned spatial motion prior be retained, while introducing physical time as a low-dimensional decision variable for dynamic manipulator planning?
+
+这比“给 MPD 增加动态障碍”强很多。
+
+三、Space-Time 的 Problem Formulation
+你现在的 formulation 已经非常适合 PPT。
+
+先把 geometry/time 解耦：
+
+q
+(
+s
+)
+=
+B
+P
+(
+s
+)
+P
+,
+q(s)=B 
+P
+​
+ (s)P,
+其中 
+P
+P 为 spatial B-spline control points。
+
+定义：
+
+u
+(
+s
+)
+=
+d
+t
+d
+s
+>
+0
+,
+u(s)= 
+ds
+dt
+​
+ >0,
+因此：
+
+t
+(
+s
+)
+=
+∫
+0
+s
+u
+(
+v
+)
+d
+v
+.
+t(s)=∫ 
+0
+s
+​
+ u(v)dv.
+于是：
+
+q
+˙
+=
+q
+s
+u
+,
+q
+˙
+​
+ = 
+u
+q 
+s
+​
+ 
+​
+ ,
+q
+¨
+=
+q
+s
+s
+u
+2
+−
+q
+s
+u
+s
+u
+3
+.
+q
+¨
+​
+ = 
+u 
+2
+ 
+q 
+ss
+​
+ 
+​
+ − 
+u 
+3
+ 
+q 
+s
+​
+ u 
+s
+​
+ 
+​
+ .
+这些正是你当前 Space-Time 表示。
+
+动态障碍 
+W
+(
+t
+)
+W(t) 后：
+
+J
+d
+y
+n
+=
+J
+(
+q
+(
+s
+)
+,
+W
+(
+t
+e
+x
+e
+c
++
+t
+(
+s
+)
+)
+)
+.
+J 
+dyn
+​
+ =J(q(s),W(t 
+exec
+​
+ +t(s))).
+最终问题可以漂亮地写成：
+
+min
+⁡
+P
+,
+z
+−
+log
+⁡
+p
+θ
+(
+P
+∣
+x
+)
+−
+log
+⁡
+p
+ϕ
+(
+z
+∣
+P
+)
++
+λ
+J
+(
+P
+,
+z
+;
+W
+)
+P,z
+min
+​
+ −logp 
+θ
+​
+ (P∣x)−logp 
+ϕ
+​
+ (z∣P)+λJ(P,z;W)
+​
+ 
+subject to
+
+q
+(
+0
+)
+=
+q
+s
+,
+q
+(
+1
+)
+=
+q
+g
+,
+q(0)=q 
+s
+​
+ ,q(1)=q 
+g
+​
+ ,
+u
+(
+s
+)
+>
+0
+,
+u(s)>0,
+∣
+q
+˙
+∣
+≤
+v
+max
+⁡
+,
+∣
+q
+¨
+∣
+≤
+a
+max
+⁡
+,
+∣ 
+q
+˙
+​
+ ∣≤v 
+max
+​
+ ,∣ 
+q
+¨
+​
+ ∣≤a 
+max
+​
+ ,
+d
+(
+q
+(
+s
+)
+,
+W
+(
+t
+(
+s
+)
+)
+)
+≥
+0.
+d(q(s),W(t(s)))≥0.
+当前 factorized baseline 的确是：
+
+p
+(
+P
+,
+z
+∣
+x
+)
+=
+p
+(
+P
+∣
+x
+)
+p
+(
+z
+∣
+P
+)
+,
+p(P,z∣x)=p(P∣x)p(z∣P),
+世界主要进入 cost，而不是 learned timing model。
+
+四、这里一定要主动讲“我们做了哪些假设”
+这反而会让你的工作显得严谨。
+
+Space-Time 当前最重要的假设
+第一，动态世界未来在有限 horizon 内是可查询/预测的。
+
+你的 benchmark 明确建立了 crossing time、motion model、position covariance 等预测模型，并使用 15 s prediction horizon；有匀速、加速、曲线、uncertain 等场景。
+
+因此目前不是：
+
+arbitrary unknown human motion。
+
+而是：
+
+predicted dynamic world with bounded horizon。
+
+第二，只显式处理 velocity / acceleration 等 trajectory-level kinematics，而不是完整 torque/dynamics planning。
+
+你当前 timing formulation 用的是：
+
+v
+max
+⁡
+,
+a
+max
+⁡
+v 
+max
+​
+ ,a 
+max
+​
+ 
+和 B-spline derivative constraints。
+
+所以不要把它说成 general kinodynamic planner。
+
+第三，Timing 是低维的。
+
+当前：
+
+z
+∈
+R
+6
+.
+z∈R 
+6
+ .
+这带来效率，但同时假设复杂动态交互可以通过有限 timing knots 表达。文档也明确指出多次尖锐 wait/accelerate 可能超出六维 timing 表示能力。
+
+第四，现有 timing prior 本身不理解当前 world。
+
+它只学习：
+
+p
+(
+z
+∣
+P
+)
+,
+p(z∣P),
+输入 path features，不输入 dynamic world / corridor。
+
+因此当前方法的核心假设其实是：
+
+generic kinematic timing prior + sufficiently strong online cost guidance can adapt to the current dynamic scene.
+
+这正是未来 corridor / world-conditioned timing 要检验的假设。
+
+第五，当前 timing model 基本是 rest-to-rest。
+
+现有 learned timing 的完整路径假设零 endpoint velocity/acceleration；motion-to-motion handoff 目前依靠 runtime bridge，而不是已经训练好的 arbitrary-boundary timing model。
+
+这五个假设放一页 appendix 或 problem formulation 页下方小字，会非常专业。
+
+五、双臂 Cooperative 的 Motivation 应该完全换一套逻辑
+这里不要从：
+
+“单臂 MPD → 双臂 MPD”
+
+开始。
+
+应该从：
+
+Two arms manipulating the same rigid object are not two independent motion planning problems.
+
+开始。
+
+两个机械臂独立时：
+
+q
+L
+(
+s
+)
+,
+q
+R
+(
+s
+)
+q 
+L
+​
+ (s),q 
+R
+​
+ (s)
+基本只是联合 collision avoidance。
+
+但两只手同时刚性抓住同一个物体之后：
+
+left arm ── grasp ┐
+                  │ rigid object
+right arm ─ grasp ┘
+整个系统形成：
+
+closed kinematic chain
+closed kinematic chain
+​
+ 
+所以一个 arm 的 movement 会立即约束另一 arm。
+
+六、Classical bimanual planning 已经解决了什么
+这时候必须承认经典 constrained planning 很成熟。
+
+CBiRRT / TSR 系列早就针对：
+
+end-effector pose constraint；
+closed-chain kinematics；
+constrained manifold planning；
+提出了 TSR / TSR Chain + projection + bidirectional RRT，并且具有 probabilistic completeness。
+
+甚至还有 Certified-Complete Bimanual Manipulation Planner，专门针对两个机器人手同时刚性抓一个物体造成的 closed-chain constraint，并给出了 completeness certificate。
+
+所以 cooperative 的 motivation 绝对不能是：
+
+“过去没有方法处理闭链。”
+
+真正的问题是：
+
+Classical constrained planners can enforce the manifold, but they do not exploit a learned multimodal motion distribution.
+
+七、MMD 是和你非常值得对比的一篇
+我觉得 PPT 最值得加的是 Multi-Robot Motion Planning with Diffusion Models (MMD)。
+
+因为它和你现在的思路非常像：
+
+不训练 joint multi-robot diffusion model，
+而是复用 single-robot priors，再通过 constraint/search 把多个机器人协调起来。
+
+MMD 明确指出联合 multi-robot diffusion 数据成本和维数会很高，因此只学习 single-robot models，然后使用 MAPF-inspired spatiotemporal constraints 协调机器人。
+
+它解决的是：
+
+independent learned priors
++
+inter-robot collision coordination
+independent learned priors+inter-robot collision coordination
+​
+ 
+这和你：
+
+independent bimanual prior
++
+cooperative constraints
+independent bimanual prior+cooperative constraints
+​
+ 
+非常接近。
+
+但关键差别是：
+
+MMD
+robots 本质上还是独立 agents。
+
+constraint 是：
+
+R
+i
+(
+q
+i
+(
+t
+)
+)
+∩
+R
+j
+(
+q
+j
+(
+t
+)
+)
+=
+∅
+.
+R 
+i
+​
+ (q 
+i
+​
+ (t))∩R 
+j
+​
+ (q 
+j
+​
+ (t))=∅.
+即“不要撞”。 
+
+你的 cooperative
+两只手还必须满足：
+
+h
+(
+q
+L
+,
+q
+R
+)
+=
+0.
+h(q 
+L
+​
+ ,q 
+R
+​
+ )=0.
+也就是：
+
+不是只需要分开，还必须保持精确的相对几何关系。
+
+这是 equality constraint / manifold。
+
+所以一句很好用：
+
+MMD shows that independently learned motion priors can be coordinated through constraints, but cooperative rigid-object manipulation introduces a stronger coupling: the two arms must remain on a shared closed-chain manifold rather than merely avoid conflicts.
+
+八、SafeBimanual 又解决了另一部分
+SafeBimanual 也非常值得讲。
+
+它针对预训练 diffusion-based bimanual manipulation policy，在 test time 增加 trajectory optimization / safety guidance，处理：
+
+inter-arm collision；
+arm-object collision；
+object tearing；
+并用 VLM 根据当前 cooperative pattern 动态选择 cost。
+
+这和你最大的共同点是：
+
+do not discard learned prior
++
+add explicit physical constraints at inference
+do not discard learned prior+add explicit physical constraints at inference
+​
+ 
+但它主要是：
+
+diffusion manipulation policy 的 safety adaptation。
+
+而你当前工作是：
+
+global configuration-space motion planning for rigid cooperative transport。
+
+你的 closed-chain constraint 是几何 hard structure，而不仅仅是“避免 tearing”的 soft safety objective。
+
+所以不要说谁“更高级”，而是问题不同。
+
+九、APEX 可以作为第三种 learned bimanual work
+APEX 使用 latent diffusion 生成 dual-arm trajectories，并通过 classifier guidance 引入 obstacle information；但其任务抽象把很多 dual-arm manipulation 简化为“两向量对齐”。
+
+它说明 diffusion 确实可以学习 dual-arm coordinated trajectories。
+
+但与你的主要不同是：
+
+你重点研究的是独立数据先验能否在不重新学习 cooperative distribution 的情况下，被约束成 rigid closed-chain motion。
+
+十、因此 Cooperative 的 research gap 可以这样画
+方法	Learned prior	双臂	inter-arm collision	rigid closed-chain	不需要 cooperative training data
+CBiRRT / TSR	×	✓	✓	✓	✓
+Certified bimanual planner	×	✓	✓	✓	✓
+APEX	✓	✓	✓	非核心	×
+SafeBimanual	✓	✓	✓	safety relation	依赖 pretrained bimanual policy
+MMD	✓	multi-robot	✓	×	✓ single-agent data
+你的 Cooperative MPD	✓	✓	✓	✓ explicit projection/audit	✓ independent prior
+于是你的 research question 很清楚：
+
+Can a diffusion prior trained on largely independent dual-arm motions be adapted to rigid cooperative manipulation without retraining a dedicated cooperative generative model?
+
+这句话比：
+
+“把 MPD 从 7 DoF 扩成 14 DoF”
+
+好得多。
+
+十一、Cooperative 的 Problem Formulation
+令：
+
+q
+=
+[
+q
+L
+q
+R
+]
+∈
+R
+14
+.
+q=[ 
+q 
+L
+​
+ 
+q 
+R
+​
+ 
+​
+ ]∈R 
+14
+ .
+物体 pose：
+
+T
+O
+(
+s
+)
+∈
+S
+E
+(
+3
+)
+.
+T 
+O
+​
+ (s)∈SE(3).
+固定两侧 grasp transform：
+
+O
+T
+L
+,
+O
+T
+R
+.
+O
+ T 
+L
+​
+ , 
+O
+ T 
+R
+​
+ .
+那么 rigid grasp 要求：
+
+T
+L
+(
+q
+L
+(
+s
+)
+)
+=
+T
+O
+(
+s
+)
+ 
+O
+T
+L
+T 
+L
+​
+ (q 
+L
+​
+ (s))=T 
+O
+​
+ (s) 
+O
+ T 
+L
+​
+ 
+以及：
+
+T
+R
+(
+q
+R
+(
+s
+)
+)
+=
+T
+O
+(
+s
+)
+ 
+O
+T
+R
+.
+T 
+R
+​
+ (q 
+R
+​
+ (s))=T 
+O
+​
+ (s) 
+O
+ T 
+R
+​
+ .
+消掉 object pose：
+
+T
+L
+(
+q
+L
+)
+(
+O
+T
+L
+)
+−
+1
+=
+T
+R
+(
+q
+R
+)
+(
+O
+T
+R
+)
+−
+1
+T 
+L
+​
+ (q 
+L
+​
+ )( 
+O
+ T 
+L
+​
+ ) 
+−1
+ =T 
+R
+​
+ (q 
+R
+​
+ )( 
+O
+ T 
+R
+​
+ ) 
+−1
+ 
+​
+ 
+这就是闭链 constraint：
+
+h
+(
+q
+L
+,
+q
+R
+)
+=
+0.
+h(q 
+L
+​
+ ,q 
+R
+​
+ )=0.
+于是规划问题：
+
+min
+⁡
+P
+−
+log
+⁡
+p
+θ
+(
+P
+∣
+x
+)
++
+J
+e
+n
+v
++
+J
+s
+e
+l
+f
+/
+i
+n
+t
+e
+r
++
+J
+g
+o
+a
+l
+P
+min
+​
+ −logp 
+θ
+​
+ (P∣x)+J 
+env
+​
+ +J 
+self/inter
+​
+ +J 
+goal
+​
+ 
+subject to：
+
+h
+(
+q
+L
+(
+s
+)
+,
+q
+R
+(
+s
+)
+)
+=
+0
+,
+h(q 
+L
+​
+ (s),q 
+R
+​
+ (s))=0,
+以及：
+
+q
+min
+⁡
+≤
+q
+≤
+q
+max
+⁡
+q 
+min
+​
+ ≤q≤q 
+max
+​
+ 
+和 collision-free constraints。
+
+你的代码正是通过 left arm 推断物体：
+
+T
+O
+=
+T
+L
+(
+O
+T
+L
+)
+−
+1
+T 
+O
+​
+ =T 
+L
+​
+ ( 
+O
+ T 
+L
+​
+ ) 
+−1
+ 
+再得到 right target：
+
+T
+R
+t
+a
+r
+g
+e
+t
+=
+T
+O
+ 
+O
+T
+R
+T 
+R
+target
+​
+ =T 
+O
+​
+  
+O
+ T 
+R
+​
+ 
+随后解右臂 IK。
+
+十二、你这版 Cooperative 为了能做出来，实际上提出了很强但合理的假设
+这个一定值得主动讲。
+
+1. Payload 是 rigid body
+当前数据生成配置甚至强制：
+
+fixed-geometry box；
+fixed mass；
+rigid cooperative task。 
+所以没有：
+
+deformable object；
+grasp compliance；
+object deformation。
+2. 两个 grasp transform 固定
+代码从固定 default_box grasp profile 得到：
+
+O
+T
+L
+,
+O
+T
+R
+.
+O
+ T 
+L
+​
+ , 
+O
+ T 
+R
+​
+ .
+整个 transport 中保持不变。
+
+因此不存在：
+
+regrasp；
+finger slip；
+contact switching。
+3. Object motion 被降维
+当前 cooperative generator 在：
+
+x
+y
+z
+xyz
+或：
+
+x
+y
+z
++
+y
+a
+w
+xyz+yaw
+空间规划物体，而不是完整 arbitrary 
+S
+E
+(
+3
+)
+SE(3)。
+
+因此它是假设：
+
+payload 姿态自由度受到任务结构限制。
+
+这大幅降低了 cooperative planning 难度。
+
+4. 先假设能构造一条 closure-valid reference
+这其实是你方法最重要的 assumption。
+
+reference_residual 不是从纯 Gaussian noise 开始解决 cooperative task。
+
+它先：
+
+object proposal
+      ↓
+continuous paired IK
+      ↓
+B-spline optimization
+      ↓
+closure-valid reference
+然后把这个 reference 作为 normalized initial trajectory，再从某个 intermediate noise level 做 SDEdit 式 diffusion。
+
+因此你的问题实际上被改造成：
+
+adapt a feasible cooperative reference
+adapt a feasible cooperative reference
+​
+ 
+而不是：
+
+discover arbitrary closed-chain solution from noise
+.
+discover arbitrary closed-chain solution from noise
+​
+ .
+这点一定要诚实讲，但它不是缺点——这是你使 independent prior 可用的关键设计。
+
+5. Projection 是 asymmetric 的
+当前 projection：
+
+left arm → infer object pose → solve right arm IK。 
+
+所以实际上选择了：
+
+q
+L
+q 
+L
+​
+ 
+作为 master variable，一部分自由度由 
+q
+R
+q 
+R
+​
+  来满足闭链。
+
+这个设计隐含假设：
+
+对生成的 left-arm motion，大部分点附近存在连续、合适的 right-arm IK branch。
+
+否则 projection 会失败。
+
+6. Projection + refit 是数值近似，不是解析地永远待在 manifold 上
+流程是：
+
+\text{dense sample} \rightarrow \text{project right arm} \rightarrow \text{refit 14-D B-spline}. \] :chatgpt-content-reference{index="24"} 因为重新 fit spline 后可能重新产生 closure residual，所以最后还要 dense cooperative audit。 代码明确检查： - closure translation； - closure rotation； - payload/environment collision； - endpoint object pose； 超阈值就拒绝。:chatgpt-content-reference{index="25"} 所以不要说： > “hard projection guarantees continuous exact closed-chain constraint.” 更准确是： > **projection repeatedly restores the trajectory toward the closed-chain manifold, followed by dense oracle validation.** --- ### 7. 当前主要解决几何运动规划，不解决 internal force Rigid cooperative manipulation 真正物理执行还涉及： - internal force； - wrench sharing； - grasp force； - compliance； - payload dynamics。 你的当前 formulation 没有建模这些。 所以这里应主动限定： \[ \boxed{\text{kinematic/geometric cooperative planning}}
+而不是：
+
+full cooperative manipulation dynamics
+.
+full cooperative manipulation dynamics
+​
+ .
+十三、两个工作放一起时，可以形成一个很漂亮的统一叙事
+其实你可以用同一个公式框架讲。
+
+原始 generative planner：
+
+p
+θ
+(
+τ
+)
+p 
+θ
+​
+ (τ)
+给一个 learned prior。
+
+现实任务增加结构化 constraint：
+
+Space-Time
+增加：
+
+temporal coupling
+temporal coupling
+​
+ 
+J
+(
+q
+(
+s
+)
+,
+W
+(
+t
+(
+s
+)
+)
+)
+.
+J(q(s),W(t(s))).
+Cooperative
+增加：
+
+cross-arm geometric coupling
+cross-arm geometric coupling
+​
+ 
+h
+(
+q
+L
+,
+q
+R
+)
+=
+0.
+h(q 
+L
+​
+ ,q 
+R
+​
+ )=0.
+于是你这一阶段工作真正统一的问题可以表述为：
+
+How far can a learned motion prior be reused when new structured constraints are introduced at inference time?
+
+然后两个答案分别是：
+
+Single-arm dynamic:
+reuse spatial prior
++ introduce timing representation
++ space-time cost guidance
+
+Bimanual cooperative:
+reuse independent bimanual prior
++ cooperative reference
++ closed-chain projection
+这条线甚至比“Space-Time + Bimanual 是两个贡献”更有研究味道。
+
+十四、我建议 PPT 的 Motivation / Formulation 最终压成 4 页
+Beyond Static Single-Arm Motion Planning
+左边 MPD，右边两个新挑战：
+
+Dynamic World
+→
+Space-Time Coupling
+Dynamic World→Space-Time Coupling
+Shared Object
+→
+Closed-Chain Coupling
+Shared Object→Closed-Chain Coupling
+Single-Arm Space-Time Planning
+放 MPD / ST-RRT* / ITOMP / CoBL-Diffusion 的定位图，然后：
+
+q
+(
+s
+)
+,
+t
+(
+s
+)
+q(s),t(s)
+formulation。
+
+Bimanual Cooperative Planning
+放 CBiRRT / MMD / SafeBimanual / 你的方法，然后：
+
+h
+(
+q
+L
+,
+q
+R
+)
+=
+0
+h(q 
+L
+​
+ ,q 
+R
+​
+ )=0
+formulation。
+
+Scope and Assumptions
+左栏 Space-Time：
+predicted dynamic world / 6-D timing / v-a limits / rest-to-rest / world via guidance；
+右栏 Cooperative：
+rigid box / fixed grasps / xyz+yaw object motion / closure-valid reference / asymmetric projection / no force dynamics。
+
+最后这页很重要：它会让听众清楚你解决的是真问题的一个受控、可验证子问题，而不是把一般动态规划和一般双臂操作都声称解决了。
+
+spacetime部分阅读各类传统方法与learnbased的文章，分析各篇文章，提出各自的解决方式、缺陷（方案上或解决的问题范围上），我的方法可以算作受到哪些的启发，对比他们的不同又是什么，搜索全，给出的对比全
+可以。把范围限定在“与你现在单臂 Space-Time MPD 直接相关的动态机械臂运动规划”，我按两篇较新的综述重新梳理了一遍：2026 年的 dynamic-environment survey 汇总了 138 项工作，把方法分成 sampling、graph search、MPC、learning 和局部 reactive planning；2024 年专门针对机械臂的综述则覆盖 94 篇，主要分为 sampling、optimization、APF 和 learning。所以下面不是只围绕 MPD 找几篇相似论文，而是按这些谱系把与你最相关的代表工作和近年的 closest works 都纳进来。
+
+先给一个总判断：
+
+你的 Space-Time 最合理的学术定位，并不是“首次解决动态障碍”，甚至也不是“首次把 diffusion 用于动态环境”。
+
+它更像是把三条已有思想第一次在你这套 MPD manipulator framework 中组合起来：
+
+learned multimodal spatial prior
++
+path–timing decomposition
++
+predictive differentiable space-time guidance
+learned multimodal spatial prior
+​
+ + 
+path–timing decomposition
+​
+ + 
+predictive differentiable space-time guidance
+​
+ 
+并进一步计划引入
+
+safe temporal intervals / corridor
+safe temporal intervals / corridor
+​
+ 
+去显式处理 before/after 这样的离散 timing mode。
+
+这几个组成部分，各自在文献里都有很明确的祖先，但组合方式与你现在的表示和推理机制并不一样。
+
+一、最早也最重要的一条线：Path–Velocity Decomposition
+1. Kant & Zucker 1986 — Path-Velocity Decomposition
+这篇我认为是你 Space-Time formulation 最重要的传统思想来源之一。
+
+它直接提出：
+
+Trajectory Planning
+⇒
+Path Planning
++
+Velocity Planning
+.
+Trajectory Planning⇒Path Planning+Velocity Planning.
+先在静态障碍下找 geometric path，再沿固定路径决定 velocity，使机器人避开 moving obstacles。论文明确指出，这种 decomposition 在一定假设下成立，例如动态障碍独立运动、不会针对机器人运动。
+
+和你几乎可以一一对应：
+
+PVD: 
+q
+(
+s
+)
++
+s
+˙
+(
+s
+)
+PVD: q(s)+ 
+s
+˙
+ (s)
+而你现在是：
+
+q
+(
+s
+)
+=
+B
+P
+(
+s
+)
+P
+,
+u
+(
+s
+)
+=
+d
+t
+d
+s
+,
+t
+(
+s
+)
+=
+∫
+0
+s
+u
+(
+v
+)
+d
+v
+.
+q(s)=B 
+P
+​
+ (s)P,u(s)= 
+ds
+dt
+​
+ ,t(s)=∫ 
+0
+s
+​
+ u(v)dv.
+你自己的实现进一步由
+
+q
+˙
+=
+q
+s
+u
+,
+q
+¨
+=
+q
+s
+s
+u
+2
+−
+q
+s
+u
+s
+u
+3
+q
+˙
+​
+ = 
+u
+q 
+s
+​
+ 
+​
+ , 
+q
+¨
+​
+ = 
+u 
+2
+ 
+q 
+ss
+​
+ 
+​
+ − 
+u 
+3
+ 
+q 
+s
+​
+ u 
+s
+​
+ 
+​
+ 
+把 timing 和机器人 velocity/acceleration 联系起来。
+
+PVD 解决了什么
+它第一次非常明确地说：
+
+动态障碍不一定要求换空间路径，有时只需改变通过该空间位置的时间。
+
+这就是你 Space-Time motivation 的根。
+
+它的根本局限
+如果固定的 
+P
+P 本身没有任何可行 timing，就无解。
+
+Fraichard 后来专门指出一个典型失败：
+
+moving obstacle 停在已经选好的 geometric path 上，那么再怎么改 velocity 都过不去。
+
+于是 1998 年的扩展引入 adjacent paths，允许机器人不仅沿一个 path 改 timing，还可以在邻接 path 间切换。
+
+这其实和你现在的 F3 / future JointDual 问题极其相似：
+
+retiming cannot repair a wrong spatial topology
+retiming cannot repair a wrong spatial topology
+​
+ 
+你的 MD 也明确写了：固定 
+P
+P 如果存在静态几何碰撞，timing 没有修复能力；如果某条路径所有 temporal branches 都不可行，就应该换空间路径。
+
+你与它的区别
+你的升级主要有三点：
+
+hand-designed path
+→
+learned multimodal spatial prior
+hand-designed path→learned multimodal spatial prior
+explicit velocity search
+→
+6-D learned timing latent
+explicit velocity search→6-D learned timing latent
+以及：
+
+two-stage strict decomposition
+→
+F3 low-noise bidirectional refinement
+.
+two-stage strict decomposition→F3 low-noise bidirectional refinement.
+所以如果 PPT 只选一篇历史工作说明“为什么把 Space 和 Time 拆开”，我会选这篇。
+
+二、TOPP / TOPP-RA：解决“怎么沿给定路径走”，但不解决动态世界里的“什么时候过”
+TOPP-RA 给定：
+
+q
+(
+s
+)
+q(s)
+以及 velocity / acceleration / torque 等约束，计算最快的：
+
+s
+(
+t
+)
+.
+s(t).
+它用 reachability analysis，在离散路径位置递归求 reachable / controllable sets，通过小规模 LP 求 time-optimal path parameterization。
+
+这就是你 D0 timing data 的基础来源。
+
+它很擅长什么
+给定 
+P
+P，回答：
+
+在机器人自身动力学约束下，这条路径怎么走比较快？
+
+所以：
+
+P
+→
+z
+T
+O
+P
+P
+R
+A
+P→z 
+TOPPRA
+​
+ 
+非常适合作为一个 kinematic timing anchor。
+
+它不解决什么
+标准 TOPP-RA 并不知道：
+
+2.7 s 时有一个障碍横穿某个位置。
+
+所以它解决的是：
+
+v
+max
+⁡
+,
+a
+max
+⁡
+,
+τ
+max
+⁡
+,
+…
+v 
+max
+​
+ ,a 
+max
+​
+ ,τ 
+max
+​
+ ,…
+而不是：
+
+d
+(
+q
+(
+s
+)
+,
+W
+(
+t
+(
+s
+)
+)
+)
+>
+0.
+d(q(s),W(t(s)))>0.
+因此你现在用：
+
+TOPP-RA
+  ↓
+global slowdown
+local slowdown
+near wait
+  ↓
+TimingDiffusion
+得到的主要仍是：
+
+p
+(
+z
+∣
+P
+)
+ 的 generic kinematic prior
+p(z∣P) 的 generic kinematic prior
+​
+ 
+而不是动态世界中的 optimal timing prior。
+
+你的代码复核也明确确认了：当前 TimingDenoiser 看 
+P
+P、noisy timing 和 diffusion step，没有 dynamic world 或 corridor context。
+
+对你的启发
+这是：
+
+timing feasibility prior
+timing feasibility prior
+​
+ 
+的直接来源，而不是 dynamic decision 的来源。
+
+三、SIPP：Corridor 最重要的直接思想来源
+2. SIPP — Safe Interval Path Planning
+SIPP 的洞察特别漂亮：
+
+如果直接增加 time dimension：
+
+(
+x
+,
+t
+)
+(x,t)
+搜索空间会非常大。
+
+但对于固定 spatial state 
+x
+x，安全的时间通常不是无数零散 timestep，而是几个 interval：
+
+I
+(
+x
+)
+=
+[
+a
+1
+,
+b
+1
+]
+∪
+[
+a
+2
+,
+b
+2
+]
+∪
+⋯
+I(x)=[a 
+1
+​
+ ,b 
+1
+​
+ ]∪[a 
+2
+​
+ ,b 
+2
+​
+ ]∪⋯
+于是搜索 state 变成：
+
+(
+x
+,
+I
+k
+)
+.
+(x,I 
+k
+​
+ ).
+原论文证明，这样仍可获得与显式 time-dimensional planning 相应的 completeness / optimality，同时大幅减少状态数。
+
+这与你未来 corridor：
+
+I
+i
+=
+⋃
+k
+[
+a
+i
+k
+,
+b
+i
+k
+]
+I 
+i
+​
+ = 
+k
+⋃
+​
+ [a 
+ik
+​
+ ,b 
+ik
+​
+ ]
+高度一致。
+
+区别只是你的 spatial state 不是二维 grid vertex，而是：
+
+s
+i
+s 
+i
+​
+ 
+即某条 manipulator path 上的 phase。
+
+所以可以很准确地说：
+
+Our phase-time corridor is inspired by the safe-interval abstraction of SIPP, but applies it along a continuous manipulator path and couples it with a low-dimensional timing parameterization.
+
+Kinodynamic SIPP 又提醒了你一个很重要的问题
+原始 SIPP 默认 agent 可以立即停止。
+
+2023 Kinodynamic SIPP 指出：
+
+如果有 acceleration/deceleration constraint，原始 SIPP 甚至可能不 complete。
+
+于是它显式考虑速度以及 deceleration/reachability，重新得到 complete/optimal planner。
+
+这对你的 corridor 非常重要。
+
+因为你不能只看：
+
+(
+s
+i
+,
+I
+k
+)
+(s 
+i
+​
+ ,I 
+k
+​
+ )
+还应该至少考虑：
+
+(
+s
+i
+,
+I
+k
+,
+v
+s
+)
+(s 
+i
+​
+ ,I 
+k
+​
+ ,v 
+s
+​
+ )
+或等价的 timing reachability。
+
+你的 MD 已经正确意识到这件事，因此没有直接声称继承 SIPP 的 completeness。
+
+与你的区别
+SIPP：
+
+graph search over safe intervals
+graph search over safe intervals
+​
+ 
+你的 corridor：
+
+safe interval extraction
++
+branch selection
++
+continuous latent optimization
+safe interval extraction+branch selection+continuous latent optimization
+​
+ 
+所以你没有 SIPP 那样的理论 completeness guarantee，但更容易和 diffusion/B-spline manipulator planner结合。
+
+四、完整 state-time / configuration-time 搜索
+3. Hsu et al. 2002 — Randomized Kinodynamic Motion Planning with Moving Obstacles
+这是“不要 decomposition，直接把 time 塞进状态”的典型路线。
+
+它直接在：
+
+state
+×
+time
+state×time
+采样，通过随机 control input 和 dynamics integration 连接 admissible states；动态障碍轨迹假定已知。
+
+优点很明显：
+
+space/time/dynamics 一起处理；
+不会遇到“先选错 
+P
+P，timing 救不回来”的结构问题。
+但代价也明显：
+
+dim
+⁡
+(
+x
+,
+t
+)
+dim(x,t)
+很大，而且每个 query 都需要重新构建 roadmap。
+
+对于 7-DoF manipulator 再加入：
+
+q
+,
+q
+˙
+,
+t
+q, 
+q
+˙
+​
+ ,t
+或者更高阶状态，维数涨得很快。
+
+五、ST-RRT*：最重要的 classical full space-time baseline
+4. Grothe et al. 2022 — ST-RRT*
+ST-RRT* 是目前你非常适合拿来作为概念上的 full space-time baseline的一篇。
+
+它显式在 space-time 中规划：
+
+dynamic obstacles；
+velocity constraints；
+unknown arrival time；
+并给出：
+
+probabilistic completeness；
+shortest-arrival-time asymptotic optimality；
+而且实验包括 7-DoF robotic arm。
+
+它解决的东西比你强在哪里
+它可以直接搜索：
+
+(
+q
+,
+t
+)
+.
+(q,t).
+因此不存在：
+
+“空间 prior 先给的 P 能不能通过 retiming 修好？”
+
+这个假设。
+
+如果存在完全不同的 space-time path，它理论上有机会探索到。
+
+你的优势在哪里
+ST-RRT* 每个 query 都是搜索。
+
+你的想法是：
+
+learn previous solved trajectories
+→
+p
+θ
+(
+P
+)
+→
+start close to useful spatial modes
+.
+learn previous solved trajectories→p 
+θ
+​
+ (P)→start close to useful spatial modes.
+即用 learnt prior 替代大量 blind exploration。
+
+并且你把 time 压缩为：
+
+z
+∈
+R
+6
+,
+z∈R 
+6
+ ,
+而不是直接在 full state-time 中搜索。
+
+代价
+你必须付出明显更强的 assumption：
+
+useful dynamic solutions are representable by sampled 
+P
++
+ low-dimensional retiming
+useful dynamic solutions are representable by sampled P+ low-dimensional retiming
+​
+ 
+同时你没有：
+
+probabilistic completeness；
+arrival-time asymptotic optimality。
+这应该主动承认。
+
+六、2026 B-spline CP-RRT：我认为是你现在最值得认真对比的 classical 近邻
+最近有一篇非常接近的问题：
+
+Tree-based motion planning via uniform B-splines for robotic manipulators with obstacle avoidance and derivative constraints in known dynamic environments。
+
+它研究的就是：
+
+robotic manipulator；
+known moving obstacles；
+velocity / derivative bounds；
+time-parameterized trajectory；
+B-spline。
+它把：
+
+boundary；
+derivative constraints；
+collision constraints
+转换到 B-spline control-point sequence，然后在 control-point space 中构建：
+
+CP-RRT；
+CP-BiRRT；
+CP-BiRRT*。
+并讨论 probabilistic completeness/convergence properties。
+
+这篇论文甚至明确提出：
+
+在动态环境里，几何路径和 timing 完全 decouple 往往是不够的，因为 collision feasibility 本身依赖时间。
+
+这和你最大的差别
+它是：
+
+jointly search a time-parameterized B-spline trajectory
+jointly search a time-parameterized B-spline trajectory
+​
+ 
+你是：
+
+P
+∼
+p
+θ
+(
+P
+∣
+x
+)
+P∼p 
+θ
+​
+ (P∣x)
+​
+ 
+然后：
+
+z
+∼
+p
+ϕ
+(
+z
+∣
+P
+)
+z∼p 
+ϕ
+​
+ (z∣P)
+最后：
+
+(
+P
+,
+z
+)
+→
+dynamic guidance
+(
+P
+′
+,
+z
+′
+)
+.
+(P,z) 
+dynamic guidance
+​
+ (P 
+′
+ ,z 
+′
+ ).
+也就是说：
+
+CP-RRT 系列	你的 Space-Time
+tree search	learned proposal
+integrated time-parameterized spline	geometry/timing factorization
+deterministic known obstacle future	predicted world + replanning
+derivative constraints encoded in control points	derivative computed through 
+t
+(
+s
+)
+t(s)
+theoretical planning guarantees	无 completeness guarantee
+no learned prior	learned multimodal spatial/timing prior
+这篇非常值得放 related work。
+
+七、Optimization：不做全局搜索，而是快速修改 trajectory
+5. ITOMP — Incremental Trajectory Optimization
+ITOMP 是经典 dynamic manipulator trajectory optimization。
+
+它：
+
+stochastic trajectory optimization；
+dynamic collision；
+smoothness；
+dynamics constraints；
+不要求提前知道完整 obstacle trajectory；
+用 conservative short-term obstacle bound；
+planning 和 execution 交错进行。
+实验包括 7-DoF PR2 arm。
+
+强项
+在线性特别强。
+
+环境变了：
+
+τ
+o
+l
+d
+→
+τ
+n
+e
+w
+.
+τ 
+old
+​
+ →τ 
+new
+​
+ .
+不必重新做完整 global search。
+
+缺点
+它终究是 optimization。
+
+如果：
+
+      obstacle
+   ┌────────────┐
+
+route A ↑
+route B ↓
+两种 topology 隔得很远，一个 initial trajectory 很难靠 local gradient 从 A 跳到 B。
+
+所以你可以把 diffusion prior 的意义讲成：
+
+ITOMP-style optimization solves local adaptation; diffusion supplies multiple global/multimodal initial hypotheses.
+
+八、GPMP2 / iGPMP2：连续轨迹 + 快速增量重规划
+GPMP2 将 trajectory 当 Gaussian Process，用 factor graph / probabilistic inference 解决 motion planning。
+
+iGPMP2 在场景变化时，只增量更新受影响的 graph factors，而不是重新完整求解；论文展示了 manipulator 上快速 replanning。
+
+它的思想和你 runtime replan 的关系是：
+
+reuse previous solution + update changed constraints
+reuse previous solution + update changed constraints
+​
+ 
+但还是 local optimization 范式。
+
+没有一个生成式：
+
+p
+(
+τ
+∣
+x
+)
+p(τ∣x)
+去表达多个 trajectory topology。
+
+九、JIST：和你“多模态先验 + refinement”思想非常接近
+JIST 2021 专门指出：
+
+sampling：global exploration 好，高维慢；
+trajectory optimization：高维好，但容易 local minima。
+所以把 sampling 和 optimization interleave 在 graph 中，用 sampling 找新的 solution branch，用 optimization refine。研究的是 highly dynamic, long-horizon online planning。
+
+这个思想与你非常接近：
+
+JIST
+random/global sampling
++
+local optimization
+random/global sampling+local optimization
+你
+learned multimodal sampling
++
+gradient guidance
+.
+learned multimodal sampling+gradient guidance.
+所以可以说你的 MPD 部分受到更广义的：
+
+global proposal + local refinement
+
+混合规划思想影响。
+
+区别在于你的 global proposals 不是随机 tree/graph，而是 learned diffusion distribution。
+
+十、RAMP：另一种非常强的在线动态 manipulator 解法
+RAMP 2023：
+
+MPPI global-ish trajectory generator
++
+asynchronous local vector-field controller
+.
+MPPI global-ish trajectory generator+asynchronous local vector-field controller.
+它使用 configuration-space SDF 来做 collision cost 和 reactive control，在 manipulation 中可响应静态和动态障碍，报告最高约 30× 的 planning speed advantage。
+
+与你的区别很本质
+RAMP 更接近：
+
+fast reactive replanning/controller
+fast reactive replanning/controller
+​
+ 
+你的目标更接近：
+
+predictive trajectory proposal
++
+explicit physical timing
+predictive trajectory proposal+explicit physical timing
+​
+ 
+比如障碍 4 秒后才到 crossing point：
+
+你的 Space-Time 试图直接计划：
+
+pass-before
+pass-before
+还是：
+
+pass-after
+.
+pass-after.
+RAMP 的核心卖点则更偏向执行过程中高频 react。
+
+十一、Partial Motion Planning / Inevitable Collision States
+Petti & Fraichard 2005 提醒了动态规划里另一个常被忽略的问题：
+
+环境变化速度本身规定了 planner 的 computational deadline。
+
+如果根本来不及规划完整到 goal 的 trajectory，就返回目前最佳 partial motion，同时利用 Inevitable Collision States 思想避免进入无法逃离碰撞的状态。
+
+这不是你算法的直接来源，但对于 runtime future work 很重要：
+
+你的 planner 目前主要问：
+
+找到的 trajectory 安全吗？
+找到的 trajectory 安全吗？
+更完整的 online dynamic planner还应该问：
+
+如果下一轮 replan 失败，现在这段 motion 是否仍可安全停止？
+如果下一轮 replan 失败，现在这段 motion 是否仍可安全停止？
+这是一个明显的未来安全层。
+
+十二、STAP：和你 future corridor 最接近的 manipulator/HRC 工作之一
+这一篇我会重点放。
+
+STAP: Spatio-Temporal Avoidance of Predicted Occupancy in Human-Robot Collaboration，2023。
+
+它不是把预测到的 human pose 简单冻结成 static obstacle，而是建立：
+
+spatio-temporal human occupancy map
+spatio-temporal human occupancy map
+每个 Cartesian point 保存一组：
+
+avoidance intervals
+.
+avoidance intervals.
+然后用修改后的 RRT* 搜索，同时把 ISO/TS 15066 SSM 造成的 slowdown 纳入预计执行时间，目标是最小 expected duration。
+
+这与 corridor 的相似程度非常高：
+
+STAP
+(
+x
+,
+y
+,
+z
+)
+→
+{
+occupied temporal intervals
+}
+(x,y,z)→{occupied temporal intervals}
+你的 corridor
+对于当前 manipulator path 
+P
+P：
+
+s
+→
+{
+safe temporal intervals
+}
+s→{safe temporal intervals}
+或者：
+
+F
+P
+=
+{
+(
+s
+,
+t
+)
+:
+D
+P
+(
+s
+,
+t
+)
+≥
+0
+}
+.
+F 
+P
+​
+ ={(s,t):D 
+P
+​
+ (s,t)≥0}.
+你的 risk field 还是全机器人 collision spheres 到 predicted obstacles 的距离，而不只是 EE point。
+
+真正不同之处
+STAP：
+
+spatio-temporal occupancy
+→
+RRT* search
+spatio-temporal occupancy→RRT* search
+你计划：
+
+phase-time safe intervals
+→
+before/after branch
+→
+6-D differentiable timing refinement
+.
+phase-time safe intervals→before/after branch→6-D differentiable timing refinement.
+所以 corridor 不能说是“第一次提出 safe temporal intervals”。
+
+更准确：
+
+The corridor adapts safe-interval / predicted-occupancy concepts into a path-conditioned differentiable timing representation for a learned manipulator planner.
+
+这句话很稳。
+
+十三、Learning-based 第一条线：MPNet
+MPNet 把：
+
+point cloud environment；
+start；
+goal
+输入 neural planner，直接学习 path proposal，还可以和 classical planner hybridize 恢复 worst-case guarantees。
+
+这是学习式 planner 很重要的一步：
+
+environment-conditioned neural planning
+environment-conditioned neural planning
+​
+ 
+它比你当前 Spatial MPD 强的一点
+MPNet 的 environment 显式输入网络。
+
+你当前 Warehouse spatial model 没有显式当前 scene geometry，它更多通过训练轨迹分布隐式学 Warehouse structure；当前 timing model甚至连 dynamic world 都不输入。
+
+但 MPNet 解决的主要仍是 spatial path
+它不是显式：
+
+q
+(
+s
+)
++
+t
+(
+s
+)
+q(s)+t(s)
+dynamic manipulator planner。
+
+十四、MπNets：Reactive 不等于真正的 predictive space-time planning
+MπNets 从单个 depth observation 输入生成 smooth collision-free motion，训练规模超过 300 万 planning problems、50 万 environments，并强调在 dynamic scenes 里的 reactivity。
+
+它代表的是：
+
+o
+t
+→
+a
+t
+/
+q
+t
++
+1
+o 
+t
+​
+ →a 
+t
+​
+ /q 
+t+1
+​
+ 
+closed-loop reactive policy。
+
+优势
+不需要你这样明确预测：
+
+W
+(
+t
++
+Δ
+)
+.
+W(t+Δ).
+sensor update 后直接反应。
+
+与你的核心不同
+你是：
+
+W
+(
+t
+:
+t
++
+H
+)
+→
+predict future interaction
+→
+q
+(
+s
+)
+,
+t
+(
+s
+)
+.
+W(t:t+H)→predict future interaction→q(s),t(s).
+也就是 proactive。
+
+MπNets更像：
+
+obstacle 移动了 → 下一帧我改 motion。
+
+这种 reactive policy 对 unpredictable obstacles 很有吸引力，但没有显式表示：
+
+pass-before / pass-after
+pass-before / pass-after
+这样的 temporal topology。
+
+十五、2023 Neural Motion Planning in Dynamic Environments：非常值得拿来支持你的 context 结论
+这篇工作用 imitation learning 学 dynamic planner。
+
+它最重要的结论不是网络结构，而是：
+
+expert 和 learned policy 必须考虑所有障碍未来的 movement。
+
+它专门比较了仅不断 replanning 的 conventional approach，并发现考虑 obstacle future 的 learned policy可以获得更高 success、更少 travel distance 和更低计算时间。
+
+这其实直接支持你现在对 TimingDiffusion 的诊断：
+
+当前：
+
+p
+(
+z
+∣
+P
+)
+p(z∣P)
+没有：
+
+W
+.
+W.
+所以它不可能知道当前 world 应该 early 还是 late。
+
+你的 MD 给出的数学表达：
+
+p
+(
+z
+∣
+P
+)
+=
+∫
+p
+(
+z
+∣
+P
+,
+W
+)
+p
+(
+W
+∣
+P
+)
+d
+W
+.
+p(z∣P)=∫p(z∣P,W)p(W∣P)dW.
+
+这篇论文是很好的外部 related-work 支撑。
+
+十六、DRP 2025：当前非常强的 reactive learned manipulator 路线
+Deep Reactive Policy：
+
+raw point-cloud input；
+transformer policy；
+预训练在约 1000 万 expert trajectories；
+动态避障时增加 DCP-RMP local reactive goal proposal；
+sim + real dynamic obstacles。 
+它和你的差别很值得强调：
+
+DRP
+核心目标：
+
+fast closed-loop reaction under partial observation
+fast closed-loop reaction under partial observation
+​
+ 
+你的 Space-Time
+核心目标：
+
+explicit predictive space-time reasoning
+explicit predictive space-time reasoning
+​
+ 
+DRP 不需要高精度 long-horizon obstacle prediction，这是优势。
+
+但因此它也没有显式输出：
+
+t
+(
+s
+)
+t(s)
+或者：
+
+temporal modes
+.
+temporal modes.
+所以它适合作为：
+
+Reactive learning alternative
+
+而不是你的 direct algorithmic predecessor。
+
+十七、MPD：你的直接生成式基础
+MPD 学：
+
+p
+θ
+(
+P
+∣
+x
+)
+p 
+θ
+​
+ (P∣x)
+这样的 multimodal trajectory prior，然后在 denoising 过程中加入 cost gradients。
+
+而且用 B-spline 降低 trajectory parameter dimension。
+
+这给你三个直接基础：
+
+diffusion multimodality；
+inference-time cost guidance；
+low-dimensional spline trajectory representation。
+但原 MPD 的核心实验还是空间 motion planning。
+
+所以你真正增加的是：
+
+physical clock
+physical clock
+​
+ 
+让 collision 从：
+
+d
+(
+q
+(
+s
+)
+,
+O
+)
+d(q(s),O)
+变成：
+
+d
+(
+q
+(
+s
+)
+,
+O
+(
+t
+(
+s
+)
+)
+)
+.
+d(q(s),O(t(s))).
+十八、STRiDE：解决 MPD spatial prior 的泛化和几何问题，不是 timing 问题
+STRiDE 2025 指出现有 diffusion planners 常常：
+
+lightweight；
+缺环境 encoder；
+对单一环境过拟合；
+execution-time changes 大时仅靠 guidance adaptation 会失败。
+它改成 state-space Riemannian diffusion 和 equivariant prior，以减少 guidance burden。
+
+这篇与你很相关，因为它其实指出了和你类似的问题：
+
+prior 不知道足够 context 时，不能永远依赖 guidance 救回来。
+
+但是 STRiDE 的解决方向是：
+
+better geometric/state-space prior
+better geometric/state-space prior
+​
+ 
+你的 future F-C1 是：
+
+better temporal context
+better temporal context
+​
+ 
+即：
+
+p
+(
+z
+∣
+P
+)
+→
+p
+(
+z
+∣
+P
+,
+C
+,
+W
+)
+.
+p(z∣P)→p(z∣P,C,W).
+两者关注点不同。
+
+十九、AMPD：与你当前 F3 “后期 guidance”非常接近，但不是 space-time
+AMPD 2026 的核心观点是：
+
+每一个 reverse diffusion step 都加 guidance 很浪费，尤其 high-noise stage 的 clean estimate 很不可靠。
+
+因此它提出 time-adaptive guidance，把 gradient computation集中到更有信息的 denoising stage。
+
+这与你 F3：
+
+high noise pure diffusion
+→
+low noise guidance
+high noise pure diffusion→low noise guidance
+在思想上非常接近。
+
+因此可以说：
+
+AMPD provides independent evidence for the usefulness of concentrating physical guidance in lower-noise denoising stages.
+
+但不能说你的 70/30 schedule 来源于 AMPD，除非你实际开发时确实参考过它。
+
+而且 AMPD 本身主要解决：
+
+guidance efficiency
+guidance efficiency
+​
+ 
+不是：
+
+dynamic physical timing
+.
+dynamic physical timing
+​
+ .
+二十、GPD：和你低维 spline latent 的思想非常相近
+GPD 2025 不在 dense waypoint space diffusion，而是在 Bernstein polynomial coefficient space diffusion。
+
+作者的理由是：
+
+参数少；
+cost guidance 更有效；
+inference 更快；
+还能利用多个生成轨迹做 stitching。 
+这与你：
+
+P
+=
+B-spline coefficients
+P=B-spline coefficients
+以及：
+
+z
+=
+6-D timing coefficients
+z=6-D timing coefficients
+非常接近。
+
+共同哲学：
+
+don’t diffuse over every trajectory sample; diffuse over a compact trajectory parameterization
+don’t diffuse over every trajectory sample; diffuse over a compact trajectory parameterization
+​
+ 
+区别是 GPD 主要解决空间 motion planning，不是 dynamic time law。
+
+二十一、RobotDiffuse：environment-conditioned diffusion，但不要把它过度当成 spacetime
+RobotDiffuse 把：
+
+point-cloud encoder；
+physical constraints；
+transformer；
+融合进 diffusion manipulator planner，并使用很大的 obstacle-avoidance dataset。
+
+论文使用“complex dynamic environments”这样的表述，但其公开摘要并没有清楚建立你这种：
+
+W
+(
+t
+)
+→
+t
+(
+s
+)
+W(t)→t(s)
+的 predictive dynamic-world timing formulation。
+
+所以它适合作为：
+
+environment-aware diffusion manipulator planner
+
+对比，但不适合直接说它已经解决“moving obstacle timing problem”。
+
+二十二、CoBL-Diffusion：确实是 diffusion + dynamic safety guidance
+CoBL-Diffusion 2024 很重要，因为它明确就是：
+
+diffusion
++
+dynamic environment
++
+inference guidance
+.
+diffusion+dynamic environment+inference guidance.
+它使用 Control Barrier Functions 和 Control Lyapunov Functions，在 denoising 中修正 control sequence，使其满足 safety/stability constraints。实验主要是 synthetic agent 和 pedestrian navigation。
+
+和你最像的地方
+learned generative prior
++
+physical safety guidance during denoising
+learned generative prior+physical safety guidance during denoising
+​
+ 
+最大区别
+CoBL-Diffusion 是对：
+
+u
+0
+:
+H
+u 
+0:H
+​
+ 
+或 time-indexed trajectory/control sequence进行生成。
+
+你明确 factorize：
+
+P
+ = geometry
+P = geometry
+​
+ 
+和：
+
+z
+ = timing
+.
+z = timing
+​
+ .
+所以你可以独立问：
+
+同一个 spatial path 到底 early 还是 late？
+
+而不是把所有空间+时间行为隐式混进完整 trajectory sequence。
+
+同时你的目标是 7-DoF manipulator，而 CoBL 的公开实验重点是 dynamic navigation。
+
+二十三、G2DP 2026：和 corridor/dense space-time guidance 非常值得对比
+这是自动驾驶领域，不是 manipulator，但思想上非常近。
+
+G2DP 认为普通 diffusion guidance只做 sparse geometric queries 不够，于是构造：
+
+differentiable spatio-temporal cost volume
+differentiable spatio-temporal cost volume
+​
+ 
+融合 future probabilistic occupancy 和 route progress，然后把 dense gradient直接注入 denoising。
+
+这和你的：
+
+D
+P
+(
+s
+,
+t
+)
+D 
+P
+​
+ (s,t)
+非常像。
+
+G2DP
+(
+x
+,
+y
+,
+t
+)
+→
+dense cost grid
+.
+(x,y,t)→dense cost grid.
+你的 corridor
+由于 spatial path 已经给定：
+
+(
+s
+,
+t
+)
+→
+D
+P
+(
+s
+,
+t
+)
+(s,t)→D 
+P
+​
+ (s,t)
+把 spatial dimension压缩到 path phase。
+
+进一步再从 risk field 提：
+
+I
+i
+=
+⋃
+k
+[
+a
+i
+k
+,
+b
+i
+k
+]
+.
+I 
+i
+​
+ = 
+k
+⋃
+​
+ [a 
+ik
+​
+ ,b 
+ik
+​
+ ].
+所以你比 dense grid 多了一步：
+
+continuous risk field
+→
+disconnected temporal modes
+continuous risk field→disconnected temporal modes
+​
+ 
+这就是 before/after branch。
+
+它很适合作为跨领域 closest conceptual analogue，但不能说它直接启发了你的设计，除非开发顺序确实如此。
+
+二十四、Flow Motion Policy：生成器升级，但不是动态 timing 解决方案
+Flow Motion Policy 2026 用 conditional Flow Matching 做 manipulator motion planning，通过 stochastic generative distribution 保留多模态，并利用 best-of-
+N
+N sampling。
+
+它解决：
+
+fast multimodal learned path generation
+fast multimodal learned path generation
+​
+ 
+而不是：
+
+dynamic moving-obstacle timing
+.
+dynamic moving-obstacle timing
+​
+ .
+因此你文档把 Flow Matching 放后面是对的：
+
+它可能降低：
+
+N
+F
+E
+NFE
+但不会自动解决：
+
+p
+(
+z
+∣
+P
+)
+p(z∣P)
+缺少 
+W
+W 的问题。
+
+二十五、SafeFlowMPC：2026 年非常值得注意的 learned + optimization hybrid
+SafeFlowMPC 把：
+
+Flow Matching policy
++
+online MPC optimization
+Flow Matching policy+online MPC optimization
+结合起来。
+
+它明确针对 learning flexibility 和 optimization safety 之间的 trade-off，并在 7-DoF KUKA 上做 real-world 实验，包括 dynamic human-object handover。
+
+这与未来你的整体方向很像：
+
+SafeFlowMPC
+learned policy
+→
+MPC safety correction
+.
+learned policy→MPC safety correction.
+你的 Space-Time
+learned spatial/timing proposal
+→
+space-time guidance
+→
+replan
+.
+learned spatial/timing proposal→space-time guidance→replan.
+但你的重点更加：
+
+global trajectory geometry + explicit timing modes
+global trajectory geometry + explicit timing modes
+​
+ 
+SafeFlowMPC 更接近：
+
+closed-loop predictive safe control
+closed-loop predictive safe control
+​
+ 
+所以它会是很好的 future-work comparison，而不是一模一样的 competitor。
+
+二十六、把所有最相关工作放到一张完整表里
+方法	核心 representation / solution	Dynamic handling	强项	对你而言的主要缺口
+PVD 1986	path + velocity profile	沿固定 path 避 moving obstacle	首次明确 geometry/timing decomposition	path 错了 timing 救不了 
+Adjacent-PVD 1998	multiple adjacent paths + timing	path 间可切换	缓解 fixed-path failure	面向低维 car-like robot，非 learned manipulator 
+TOPP-RA	fixed path + optimal 
+s
+(
+t
+)
+s(t)	不显式处理 moving-obstacle absolute time	高效 v/a/dynamics retiming	不是 dynamic obstacle planner 
+SIPP	configuration + safe interval	explicit temporal intervals	保留 temporal topology，理论保证强	graph/discrete state，原版无 acceleration 
+Kinodynamic SIPP	state + interval + dynamics	acceleration/deceleration aware	修复 original SIPP completeness	不面向高维 spline manipulator latent 
+Kinodynamic PRM 2002	state × time + control integration	known moving trajectories	space/time/dynamics统一	高维、query-specific sampling cost大 
+ST-RRT*	configuration × time	known dynamic obstacles	completeness + arrival-time asymptotic optimality	blind search，不利用 learnt prior 
+ITOMP	trajectory optimization	short-term conservative dynamic bound	online/high-DOF/replanning	local minima / initialization sensitivity 
+GPMP2/iGPMP2	continuous GP trajectory + factor graph	incremental factor update	extremely efficient reoptimization	optimization-based, global modes有限 
+JIST	sampling graph + optimization	online long-horizon	global exploration + local refinement	proposals仍需在线 sampling 
+RAMP	MPPI + reactive vector field	rapid reaction to moving obstacle	real-time reactive manipulation	更 reactive，缺显式 temporal-mode reasoning 
+STAP	predicted occupancy + avoidance intervals + RRT*	future human occupancy	proactive HRC + temporal intervals	HRC-specific sampling planner，非 learned timing 
+B-spline CP-RRT 2026	integrated time-param B-spline	known dynamic obstacle	manipulator + derivative constraints + theory	deterministic search、无 learned prior 
+MPNet	point-cloud-conditioned neural path	mainly environment geometry	explicit env context + fast planning	无显式 physical time 
+MπNets	reactive neural motion policy	repeated sensory feedback	very fast closed-loop response	reactive rather than predictive timing 
+Neural Dynamic MP 2023	expert imitation + future obstacle motion	future motion as input	learned proactive behavior	expert/data dependent，单 policy 表达较隐式 
+DRP 2025	point-cloud policy + reactive module	partially observed moving obstacles	sim-to-real reactive manipulation	explicit long-horizon timing topology不是目标 
+MPD	diffusion B-spline prior + cost guidance	mainly spatial constraint adaptation	multimodality + gradient guidance	原版无显式 physical-time variable 
+STRiDE	Riemannian/state-space diffusion	stronger spatial generalization	better prior geometry / guidance	不是 dedicated dynamic timing planner 
+AMPD	MPD + adaptive low-noise guidance	constraints via guidance	减少无效 high-noise guidance	重点是效率而非 space-time 
+GPD	polynomial coefficient diffusion	inference cost guidance	compact parametric latent	没有 explicit dynamic timing 
+RobotDiffuse	point cloud + diffusion + physical constraints	environment-aware planning	high-dimensional manipulator generation	公开 formulation 不等同 
+q
+(
+s
+)
+,
+t
+(
+s
+)
+q(s),t(s) dynamic timing 
+CoBL-Diffusion	diffusion + CBF/CLF	dynamic multi-agent obstacle	dynamic safety directly进 denoising	navigation focus；space/time不分解 
+G2DP	diffusion + dense spatiotemporal cost volume	future occupancy	dense predictive guidance	autonomous driving，非 manipulator；无显式 timing latent 
+Flow Motion Policy	Flow Matching path distribution	not central dynamic timing	multimodal fast generator	physical-time problem仍未解决 
+SafeFlowMPC	Flow Matching + MPC	predictive safe online correction	learned flexibility + optimization safety	更接近 control/MPC；没有你的 phase-time branch abstraction 
+你的当前 Space-Time	spatial B-spline 
+P
+P + 6-D timing 
+z
+z + F3 guidance	predicted 
+W
+(
+t
+)
+W(t), repeated replan	learned multimodal geometry + compact retiming + physical cost	timing prior仍为 (p(z
+你的 future corridor	
+D
+P
+(
+s
+,
+t
+)
+→
+D 
+P
+​
+ (s,t)→ safe intervals → branch → latent refinement	predicted world + execution offset	显式 before/after temporal topology	corridor 构建/预测质量依赖；仍受 sampled 
+P
+P 限制
+二十七、所以你的方法究竟分别“受到谁启发”
+如果按思想组件而不是按论文年代，我会这样归因。
+
+① Space / Timing 分离
+最直接：
+
+Path-Velocity Decomposition
+Path-Velocity Decomposition
+​
+ 
+以及现代 fixed-path retiming：
+
+TOPP-RA
+.
+TOPP-RA
+​
+ .
+但你的区别是：
+
+deterministic optimizer
+→
+learned stochastic timing prior
+.
+deterministic optimizer→learned stochastic timing prior.
+② 多个 temporal mode / corridor
+最直接：
+
+SIPP
+SIPP
+​
+ 
+以及更贴 manipulator / prediction 的：
+
+STAP
+.
+STAP
+​
+ .
+它们告诉你：
+
+时间上的 free set 不应该简单压成一个 scalar collision penalty，而应保留 disconnected intervals。
+
+你的区别在于：
+
+graph search
+→
+continuous latent guidance
+.
+graph search→continuous latent guidance.
+③ Full space-time 思想和 baseline
+最直接：
+
+state-time kinodynamic planning
+state-time kinodynamic planning
+​
+ 
+以及：
+
+ST-RRT*
+.
+ST-RRT*
+​
+ .
+它们告诉你真正完整的问题其实是：
+
+(
+q
+,
+t
+)
+.
+(q,t).
+你的选择则是不直接搜索这个完整空间，而是假设：
+
+q
+(
+s
+)
++
+t
+(
+s
+)
+q(s)+t(s)
+的低维 factorization 足以覆盖大量有效解。
+
+④ Global proposal + local correction
+传统来源：
+
+JIST / sampling + optimization hybrids
+JIST / sampling + optimization hybrids
+​
+ 
+生成式来源：
+
+MPD
+.
+MPD
+​
+ .
+你把 random proposal 换成：
+
+learned multimodal proposal
+.
+learned multimodal proposal.
+⑤ Low-noise guidance
+与你当前 F3 非常对应：
+
+AMPD
+AMPD
+​
+ 
+但最好说：
+
+conceptually aligned with
+
+而不是“derived from”，除非你确实按那篇改的。
+
+⑥ Dynamic gradient guidance
+closest learning analogues：
+
+CoBL-Diffusion
+CoBL-Diffusion
+​
+ 
+以及跨自动驾驶：
+
+G2DP
+.
+G2DP
+​
+ .
+共同点：
+
+generative trajectory
++
+dynamic safety energy
+.
+generative trajectory+dynamic safety energy.
+而你的新东西是进一步把 temporal variable 独立抽出来。
+
+二十八、你的方法真正可以强调的不同，不应该是“有 dynamic cost”
+因为这件事太多人做过了。
+
+也不应该强调：
+
+“首次将 time 加到 motion planning。”
+
+当然也不成立。
+
+甚至：
+
+“首次利用 predicted obstacle trajectory。”
+
+STAP、ST-RRT* 等都已经做了。
+
+真正值得强调的组合是：
+
+1. Learned geometry prior 与 explicit time law 分开
+不是直接生成：
+
+q
+(
+t
+1
+)
+,
+…
+,
+q
+(
+t
+N
+)
+.
+q(t 
+1
+​
+ ),…,q(t 
+N
+​
+ ).
+而是：
+
+q
+(
+s
+)
+=
+B
+P
+(
+s
+)
+P
+q(s)=B 
+P
+​
+ (s)P
+​
+ 
+和：
+
+t
+(
+s
+)
+=
+T
+z
+(
+s
+)
+t(s)=T 
+z
+​
+ (s)
+​
+ 
+分别建模。
+
+因此同一个：
+
+P
+P
+可以对应多种：
+
+z
+.
+z.
+这让“几何 mode”和“timing mode”可以分别分析。
+
+2. 两边都是低维 generative prior
+空间：
+
+p
+θ
+(
+P
+∣
+x
+)
+p 
+θ
+​
+ (P∣x)
+时间：
+
+p
+ϕ
+(
+z
+∣
+P
+)
+.
+p 
+ϕ
+​
+ (z∣P).
+然后不是让 learned model 负责全部安全性，而是：
+
+prior proposes, cost corrects
+.
+prior proposes, cost corrects
+​
+ .
+这是 MPD 思想在 physical-time dimension 的自然扩展。
+
+3. Factorized 但不是完全 two-stage
+经典 PVD：
+
+path planning
+    ↓
+freeze P
+    ↓
+velocity planning
+你的 F3：
+
+space prior
+     ↓
+timing prior
+     ↓
+low-noise
+P ←→ z
+cross-guidance
+所以更接近：
+
+p
+(
+P
+,
+z
+)
+=
+p
+(
+P
+)
+p
+(
+z
+∣
+P
+)
+p(P,z)=p(P)p(z∣P)
+的 factorized model + alternating inference。
+
+这和 1986 PVD 有很关键的区别。
+
+二十九、但必须诚实说：当前版本最大的 literature-level 弱点就是 Timing prior 没看 World
+当前代码：
+
+p
+θ
+(
+P
+∣
+x
+)
+p 
+θ
+​
+ (P∣x)
+和：
+
+p
+ϕ
+(
+z
+∣
+P
+)
+.
+p 
+ϕ
+​
+ (z∣P).
+TimingDenoiser 不输入：
+
+W
+.
+W.
+
+因此假设：
+
+P
+=
+P
+0
+P=P 
+0
+​
+ 
+但：
+
+W
+A
+:
+要求 before
+W 
+A
+​
+ :要求 before
+W
+B
+:
+要求 after
+,
+W 
+B
+​
+ :要求 after,
+那么 learned timing proposal 本身没有依据判断：
+
+z
+A
+≠
+z
+B
+.
+z 
+A
+​
+ 
+
+=z 
+B
+​
+ .
+所以你当前 F3 的研究命题其实可以表述得非常准确：
+
+Can a world-agnostic kinematic timing prior provide useful proposals that can be adapted to a specific dynamic world through late-stage space-time cost guidance?
+
+这完全是一个成立的问题。
+
+但它不能被表述成：
+
+learned model 已经学会 dynamic avoidance。
+
+三十、Corridor 正好是第一阶段最合理的修复，不用马上重训模型
+当前 continuous cost问的是：
+
+How bad is this 
+t
+(
+s
+)
+?
+How bad is this t(s)?
+​
+ 
+而 corridor问：
+
+Which timing modes are feasible?
+Which timing modes are feasible?
+​
+ 
+这是 SIPP/STAP 这条传统 literature 给你的重要补充。
+
+所以：
+
+MPD prior
+   ↓
+generic P,z
+   ↓
+phase-time risk field
+   ↓
+safe intervals
+   ↓
+before / after branch
+   ↓
+guided z refinement
+这是一条非常有理论来历的路线。
+
+三十一、然后 F-C1 才是 learning literature 告诉你的第二步
+传统 safe-interval planner知道：
+
+W
+W
+所以能主动选择 early / late。
+
+而你当前 TimingDiffusion不知道。
+
+因此下一步：
+
+p
+(
+z
+∣
+P
+)
+p(z∣P)
+升级成：
+
+p
+(
+z
+∣
+P
+,
+C
+(
+P
+,
+W
+,
+Δ
+)
+,
+b
+,
+m
+)
+p(z∣P,C(P,W,Δ),b,m)
+​
+ 
+就很自然。
+
+你自己的设计也是这样：保持 spatial prior 不动，新增 corridor/event encoder，通过小型 FiLM/residual 接入 timing model。
+
+这时你就从：
+
+prior + scene-specific optimization
+
+走向：
+
+scene-conditioned prior + scene-specific optimization。
+
+而 Neural motion planning in dynamic environments、DRP、SafeFlowMPC 等工作都从不同角度支持一个共同结论：
+
+当前环境/未来运动如果对最优动作有决定作用，就需要进入 learned policy / prior，或者留给一个足够强的显式 online optimizer。
+
+三十二、我会怎么把 related work 压到 PPT
+正文不要塞上面那 25 篇。
+
+正文只放 6 个代表节点：
+
+1986  Path-Velocity Decomposition
+      geometry / timing decomposition
+                ↓
+2011  SIPP
+      temporal safe intervals
+                ↓
+2018  TOPP-RA
+      efficient constrained retiming
+                ↓
+2022  ST-RRT*
+      full space-time global search
+                ↓
+2023  STAP
+      predicted occupancy + temporal intervals
+                ↓
+2025  MPD
+      learned multimodal spline prior + cost guidance
+                ↓
+        YOUR SPACE-TIME MPD
+旁边再放近年 learned branch：
+
+CoBL-Diffusion ─┐
+AMPD ───────────┼→ generative + guidance
+G2DP ───────────┘
+
+DRP / MπNets ─────→ reactive learned planning
+SafeFlowMPC ───────→ learned policy + online optimization
+然后一句话收束：
+
+Classical space-time planners explicitly reason about time but repeatedly search/optimize each query; recent learned planners provide fast trajectory priors or reactive policies, but often do not expose physical timing as an independent planning variable. We retain a learned multimodal spatial prior, introduce a compact timing prior, and adapt both using predictive space-time guidance.
+
+三十三、如果要把你当前工作的“假设”和各类方法放一起，最清楚的是这个框架
+路线	为了可计算做的主要假设
+PVD	一条 geometric path 能通过 timing 修复
+TOPP-RA	geometric path 已知且固定
+SIPP	world timing可表示为有限 safe intervals；原版可瞬停
+ST-RRT*	obstacle future 已知；接受 full space-time search cost
+ITOMP	局部 trajectory optimization 能跟上环境变化
+STAP	human future occupancy 可预测
+Reactive policy	当前 observation + frequent feedback 足以处理未来
+Learned dynamic planner	training data 覆盖 future-world → action relation
+你的当前方法	spatial prior能给有用路径；6-D timing足够；预测 
+W
+(
+t
+)
+W(t) 有效；late guidance能把 generic timing 修成 scene-specific timing
+future corridor	phase-time risk field能可靠提取有限 temporal branches
+future F-C1	D1 数据足以学出 
+C
+/
+W
+→
+C/W→ early/late relation
+这最后三行，其实就是你最应该放在答辩里主动承认的 scope。
+
+最终我会把 Space-Time 的研究定位压成一句
+如果要写在 PPT contribution 页，我会采用类似：
+
+We study a factorized generative formulation for dynamic manipulator planning: a learned B-spline prior proposes multimodal spatial paths, a low-dimensional timing prior proposes dynamically plausible retimings, and differentiable space-time costs adapt both to predicted moving obstacles. Inspired by path–velocity decomposition and safe-interval planning, the next step explicitly extracts phase-time corridors to preserve disconnected before/after timing modes.

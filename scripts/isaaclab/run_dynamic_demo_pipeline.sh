@@ -19,8 +19,17 @@ FACTORIZED_METHOD="f1"
 FACTORIZED_METHOD_EXPLICIT=false
 FACTORIZED_TIMING_CHECKPOINT=""
 FACTORIZED_ADAPT_SPATIAL_BASIS=false
+FACTORIZED_OPTIMIZATION_ARGS=()
 CORRIDOR_A=false
 CORRIDOR_A_WEIGHT="0.1"
+CORRIDOR_A_BACKEND="serial"
+CORRIDOR_A_CHUNK_SIZE="8"
+CORRIDOR_A_DP_INIT=0
+CORRIDOR_A_K_BEST="0"
+CORRIDOR_A_BRANCH_FALLBACK=0
+CORRIDOR_A_DENSE_BRANCH_BUDGET=64
+CORRIDOR_A_SELECTIVE_K=0
+CORRIDOR_A_EARLY_STOP=0
 OUTPUT_DIR=""
 RUN_DURATION_S=35
 PLAN_RATE_HZ=1.0
@@ -61,8 +70,17 @@ usage() {
     "  --factorized-method M   Factorized method: f1, f2, or f3 (default: f1)" \
     "  --factorized-timing-checkpoint P  Learned c or tau_r checkpoint" \
     "  --factorized-adapt-spatial-basis  Explicitly adapt 29-point timing conditioning to the runtime basis" \
+    "  --[no-]timing-grad-only / --[no-]fixed-path-cache / --[no-]path-encoding-cache" \
     "  --corridor-a            Enable time corridor cost (phase5_joint or factorized f1 only)" \
     "  --corridor-a-weight W   Corridor interval cost weight (default: 0.1)" \
+    "  --corridor-a-backend B serial, batch_exact, batch_time_table, batch_event_intervals (default: serial)" \
+    "  --corridor-a-chunk-size N Candidate chunk size for batch backends (default: 8)" \
+    "  --corridor-a-dp-init Fit DP arrival times as optional initialization" \
+    "  --corridor-a-k-best N Distinct window branch budget: 0, 4 or 8 (default: 0)" \
+    "  --corridor-a-branch-fallback Validate lower-cost branches first, then alternatives" \
+    "  --corridor-a-dense-branch-budget N Max additional branch DenseChecks (default: 64)" \
+    "  --corridor-a-selective-k Expand K only for repairable timing conflicts" \
+    "  --corridor-a-early-stop Stop stable C1 rows only after an exact DenseCheck" \
     "  --output-dir PATH       Artifact directory (default: timestamped log)" \
     "  --duration-sec N        ROS recording duration (default: 35)" \
     "  --plan-rate-hz HZ       Replan rate (default: 1.0)" \
@@ -102,8 +120,17 @@ while (($#)); do
     --factorized-method) FACTORIZED_METHOD="$2"; FACTORIZED_METHOD_EXPLICIT=true; shift 2 ;;
     --factorized-timing-checkpoint) FACTORIZED_TIMING_CHECKPOINT="$2"; shift 2 ;;
     --factorized-adapt-spatial-basis) FACTORIZED_ADAPT_SPATIAL_BASIS=true; shift ;;
+    --timing-grad-only|--no-timing-grad-only|--fixed-path-cache|--no-fixed-path-cache|--path-encoding-cache|--no-path-encoding-cache) FACTORIZED_OPTIMIZATION_ARGS+=("$1"); shift ;;
     --corridor-a) CORRIDOR_A=true; shift ;;
     --corridor-a-weight) CORRIDOR_A_WEIGHT="$2"; shift 2 ;;
+    --corridor-a-backend) CORRIDOR_A_BACKEND="$2"; shift 2 ;;
+    --corridor-a-chunk-size) CORRIDOR_A_CHUNK_SIZE="$2"; shift 2 ;;
+    --corridor-a-dp-init) CORRIDOR_A_DP_INIT=1; shift ;;
+    --corridor-a-k-best) CORRIDOR_A_K_BEST="$2"; shift 2 ;;
+    --corridor-a-branch-fallback) CORRIDOR_A_BRANCH_FALLBACK=1; shift ;;
+    --corridor-a-dense-branch-budget) CORRIDOR_A_DENSE_BRANCH_BUDGET="$2"; shift 2 ;;
+    --corridor-a-selective-k) CORRIDOR_A_SELECTIVE_K=1; shift ;;
+    --corridor-a-early-stop) CORRIDOR_A_EARLY_STOP=1; shift ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --duration-sec) RUN_DURATION_S="$2"; shift 2 ;;
     --plan-rate-hz) PLAN_RATE_HZ="$2"; shift 2 ;;
@@ -307,7 +334,13 @@ case "$PHASE" in
     HEALTH_TIMEOUT_S=10
     SERVER_EXTRA_ARGS+=(--timing-mode "$TIMING_MODE")
     if [[ "$CORRIDOR_A" == true ]]; then
-      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT")
+      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT" --corridor-a-backend "$CORRIDOR_A_BACKEND" --corridor-a-chunk-size "$CORRIDOR_A_CHUNK_SIZE")
+      if [[ "$CORRIDOR_A_DP_INIT" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-dp-init); fi
+      if [[ "$CORRIDOR_A_K_BEST" != "0" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-k-best "$CORRIDOR_A_K_BEST"); fi
+      if [[ "$CORRIDOR_A_BRANCH_FALLBACK" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-branch-fallback); fi
+      SERVER_EXTRA_ARGS+=(--corridor-a-dense-branch-budget "$CORRIDOR_A_DENSE_BRANCH_BUDGET")
+      if [[ "$CORRIDOR_A_SELECTIVE_K" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-selective-k); fi
+      if [[ "$CORRIDOR_A_EARLY_STOP" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-early-stop); fi
     fi
     SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")
     if [[ "$PHASE5_MPD_GUIDANCE" == "off" ]]; then
@@ -325,8 +358,15 @@ case "$PHASE" in
     TIMING_LABEL="$FACTORIZED_METHOD"
     HEALTH_TIMEOUT_S=10
     SERVER_EXTRA_ARGS+=(--method "$FACTORIZED_METHOD")
+    SERVER_EXTRA_ARGS+=("${FACTORIZED_OPTIMIZATION_ARGS[@]}")
     if [[ "$CORRIDOR_A" == true ]]; then
-      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT")
+      SERVER_EXTRA_ARGS+=(--corridor-a --corridor-a-weight "$CORRIDOR_A_WEIGHT" --corridor-a-backend "$CORRIDOR_A_BACKEND" --corridor-a-chunk-size "$CORRIDOR_A_CHUNK_SIZE")
+      if [[ "$CORRIDOR_A_DP_INIT" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-dp-init); fi
+      if [[ "$CORRIDOR_A_K_BEST" != "0" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-k-best "$CORRIDOR_A_K_BEST"); fi
+      if [[ "$CORRIDOR_A_BRANCH_FALLBACK" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-branch-fallback); fi
+      SERVER_EXTRA_ARGS+=(--corridor-a-dense-branch-budget "$CORRIDOR_A_DENSE_BRANCH_BUDGET")
+      if [[ "$CORRIDOR_A_SELECTIVE_K" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-selective-k); fi
+      if [[ "$CORRIDOR_A_EARLY_STOP" == "1" ]]; then SERVER_EXTRA_ARGS+=(--corridor-a-early-stop); fi
     fi
     SERVER_EXTRA_ARGS+=(--timing-checkpoint "$FACTORIZED_TIMING_CHECKPOINT")
     SERVER_EXTRA_ARGS+=(--spatial-dynamic-max-grad-norm "$PHASE5_SPATIAL_DYNAMIC_MAX_GRAD_NORM")

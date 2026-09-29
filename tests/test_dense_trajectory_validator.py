@@ -49,6 +49,33 @@ class FakeTask:
 
 
 class DenseTrajectoryValidatorTest(unittest.TestCase):
+    def test_static_only_clearance_does_not_classify_dynamic_collision_as_invariant(self):
+        class CompositeField:
+            dynamic_world = object()
+            static_field = FakeEnvironmentField()
+            collision_margins = FakeEnvironmentField.collision_margins
+
+            @staticmethod
+            def object_signed_distances(positions, trajectory_times=None):
+                return torch.abs(trajectory_times - 1.0)[..., None, None]
+
+        class CompositeTask(FakeTask):
+            @staticmethod
+            def get_collision_objects_field():
+                return CompositeField()
+
+        validator = DenseTrajectoryValidator(CompositeTask())
+        positions = torch.zeros((1, 3, 1, 2), dtype=torch.float64)
+        times = torch.tensor([[0.0, 1.0, 2.0]], dtype=torch.float64)
+        dynamic_clearance = validator._environment_clearance(
+            positions, trajectory_times=times,
+        )
+        static_clearance = validator._environment_clearance(
+            positions, static_only=True,
+        )
+        self.assertTrue(bool((dynamic_clearance[0, 1] <= 0).item()))
+        self.assertTrue(bool((static_clearance > 0).all().item()))
+
     def test_candidate_specific_times_are_used_by_full_environment_check(self):
         class CandidateTimeField:
             dynamic_world = object()

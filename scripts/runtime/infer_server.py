@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
 import socket
 import socketserver
@@ -151,7 +154,41 @@ class ResidentPlannerService:
         self._latest_request_seq = request_seq
         self.set_state("PLANNING")
         started = time.perf_counter()
+        request_hash = hashlib.sha256(
+            json.dumps(raw_request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        world_snapshot = getattr(self, "_latest_world_snapshot", None)
+        world_hash = (
+            hashlib.sha256(json.dumps(world_snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if isinstance(world_snapshot, dict) else None
+        )
+
+        def record_response(response: dict[str, Any], planner_status: str | None) -> dict[str, Any]:
+            # Persist after the deadline decision, so diagnostic I/O cannot
+            # convert an accepted trajectory into a stale response.
+            diagnostic = {
+                "schema": "mpd_planner_request_outcome_v1",
+                "request_sha256": request_hash,
+                "world_sha256": world_hash,
+                "planner_result_status": planner_status,
+                "online_acceptance_status": response["status"],
+                "online_rejection_reason": response.get("reason"),
+                "server_round_trip_sec": time.perf_counter() - started,
+                "deadline_unix_ns": deadline_unix_ns,
+                "request_seq": request_seq,
+                "world_version": world_version,
+                "request_captured": (output_dir / "request.json").is_file(),
+            }
+            try:
+                _atomic_write_json(output_dir / "response.json", diagnostic)
+            except OSError:
+                pass
+            return response
         try:
+            if os.environ.get("MPD_CAPTURE_PLANNER_REQUESTS") == "1":
+                _atomic_write_json(output_dir / "request.json", raw_request)
+                if isinstance(world_snapshot, dict):
+                    _atomic_write_json(output_dir / "world.json", world_snapshot)
             artifacts = self._engine.plan(raw_request)
             engine_done = time.perf_counter()
             scene_payload = getattr(self._engine, "scene_payload", None)
@@ -168,15 +205,15 @@ class ResidentPlannerService:
             result_done = time.perf_counter()
             finished_unix_ns = time.time_ns()
             if deadline_unix_ns is not None and finished_unix_ns >= deadline_unix_ns:
-                return {
+                return record_response({
                     "schema_version": PROTOCOL_SCHEMA_VERSION,
                     "status": "STALE",
                     "reason": "deadline_expired_after_planning",
                     "request_seq": request_seq,
                     "world_version": world_version,
                     "result_path": result_path.as_posix(),
-                }
-            return {
+                }, artifacts.result_payload.get("status"))
+            return record_response({
                 "schema_version": PROTOCOL_SCHEMA_VERSION,
                 "status": "OK",
                 "request_seq": request_seq,
@@ -199,7 +236,7 @@ class ResidentPlannerService:
                         "compression": "zlib" if self.trajectory_compression else "none",
                     },
                 ),
-            }
+            }, artifacts.result_payload.get("status"))
         except RuntimeContractError as error:
             trajectory_path.unlink(missing_ok=True)
             failure = {
@@ -211,24 +248,24 @@ class ResidentPlannerService:
                 "created_unix_time": time.time(),
             }
             _atomic_write_json(result_path, failure)
-            return {
+            return record_response({
                 "schema_version": PROTOCOL_SCHEMA_VERSION,
                 "status": "PLAN_FAILED",
                 "request_seq": request_seq,
                 "world_version": world_version,
                 "result_path": result_path.as_posix(),
                 "error": failure["error"],
-            }
+            }, failure["status"])
         except Exception as error:
             trajectory_path.unlink(missing_ok=True)
             self.set_state("FAULT")
-            return {
+            return record_response({
                 "schema_version": PROTOCOL_SCHEMA_VERSION,
                 "status": "FAULT",
                 "request_seq": request_seq,
                 "world_version": world_version,
                 "error": {"type": type(error).__name__, "message": str(error)},
-            }
+            }, None)
         finally:
             if self.state == "PLANNING":
                 self.set_state("READY")

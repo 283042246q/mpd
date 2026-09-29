@@ -40,6 +40,14 @@ def _build_parser():
     parser.add_argument("--corridor-a-clearance-m", type=float, default=0.0)
     parser.add_argument("--corridor-a-steps", type=int, default=20)
     parser.add_argument("--corridor-a-learning-rate", type=float, default=0.04)
+    parser.add_argument("--corridor-a-backend", choices=("serial", "batch_exact", "batch_time_table", "batch_event_intervals"), default="serial")
+    parser.add_argument("--corridor-a-chunk-size", type=int, default=8)
+    parser.add_argument("--corridor-a-dp-init", action="store_true")
+    parser.add_argument("--corridor-a-k-best", type=int, choices=(0, 4, 8), default=0)
+    parser.add_argument("--corridor-a-branch-fallback", action="store_true")
+    parser.add_argument("--corridor-a-dense-branch-budget", type=int, default=64)
+    parser.add_argument("--corridor-a-selective-k", action="store_true")
+    parser.add_argument("--corridor-a-early-stop", action="store_true")
     parser.add_argument("--no-static-spatial-pruning", dest="static_spatial_pruning", action="store_false", default=True)
     parser.set_defaults(timing_mode="phase5_joint", timing_control_points=8, timing_degree=3,
         timing_learning_rate=.08, u_min=.05, dynamic_space_time_pruning=False)
@@ -59,6 +67,10 @@ def _build_parser():
     parser.add_argument("--eta", type=float, default=0.)
     parser.add_argument("--alternating-rounds", type=int, default=1)
     parser.add_argument("--timing-steps-per-space-step", type=int, choices=(1, 2), default=1)
+    for name in ("timing-grad-only", "fixed-path-cache", "path-encoding-cache"):
+        parser.add_argument("--" + name, dest=name.replace("-", "_"), action="store_true")
+        parser.add_argument("--no-" + name, dest=name.replace("-", "_"), action="store_false")
+        parser.set_defaults(**{name.replace("-", "_"): None})
     return parser
 
 
@@ -68,6 +80,9 @@ def main(argv=None):
             "space_lr", "timing_lr", "refinement_steps", "weak_dynamic_scale", "eta",
             "alternating_rounds", "timing_steps_per_space_step")
     settings = {key: getattr(args, key) for key in keys}
+    for key in ("timing_grad_only", "fixed_path_cache", "path_encoding_cache"):
+        if getattr(args, key) is not None:
+            settings[key] = getattr(args, key)
     def factory(**kwargs):
         return FactorizedMpdRuntimeEngine(**kwargs, timing_checkpoint=args.timing_checkpoint,
                                          factorized_settings=settings, adapt_spatial_basis=args.adapt_spatial_basis)

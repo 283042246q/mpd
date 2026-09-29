@@ -408,6 +408,29 @@ def test_candidate_time_gradient_matches_central_difference():
     assert gradient.item() == pytest.approx(-0.6)
 
 
+def test_prevalidated_candidate_times_preserve_exact_distance_and_time_gradient():
+    world = FixedCapacityDynamicWorld(
+        1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS
+    )
+    world.update(_world([_sphere(linear_velocity=[0.5, 0.0, 0.0])]))
+    world.set_plan_start(1_000_000_000, world_version=1)
+    points = torch.tensor(
+        [[[[1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]], [[1.0, 0.0, 0.0]]]],
+        **TENSOR_ARGS,
+    )
+    times = torch.tensor([[0.0, 0.6, 1.2]], **TENSOR_ARGS, requires_grad=True)
+
+    strict = world.minimum_signed_distance(points, trajectory_times=times)
+    trusted = world.minimum_signed_distance(
+        points, trajectory_times=times, validate_times=False
+    )
+
+    torch.testing.assert_close(trusted, strict)
+    strict_gradient = torch.autograd.grad(strict.sum(), times, retain_graph=True)[0]
+    trusted_gradient = torch.autograd.grad(trusted.sum(), times)[0]
+    torch.testing.assert_close(trusted_gradient, strict_gradient)
+
+
 def test_candidate_specific_times_fail_closed_on_invalid_contract():
     world = FixedCapacityDynamicWorld(
         1, trajectory_duration_s=2.0, tensor_args=TENSOR_ARGS

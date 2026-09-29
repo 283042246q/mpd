@@ -155,11 +155,14 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         timing_control_points = self.space_time_guide.timing_control_points
         dense_cfg = self.planner.dense_validation_config
 
-        def evaluate_and_validate(parameters):
+        def evaluate_and_validate(parameters, candidate_indices=None, *, return_state=False):
             with torch.no_grad():
-                _, breakdown, evaluation = self.space_time_guide.evaluate_control_points(
-                    normalized, parameters
+                selected_paths = (normalized if candidate_indices is None
+                                  else normalized.index_select(0, candidate_indices))
+                evaluated = self.space_time_guide.evaluate_control_points(
+                    selected_paths, parameters, return_state=return_state,
                 )
+                _, breakdown, evaluation = evaluated[:3]
                 if int(dense_cfg["runtime_points"]) != int(evaluation.q.shape[1]):
                     raise ValueError(
                         "Phase-5 full DenseCheck resolution must match the timing spline grid"
@@ -177,15 +180,33 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                     check_joint_velocity=dense_cfg["check_joint_velocity"],
                     check_joint_acceleration=dense_cfg["check_joint_acceleration"],
                 )
-            return breakdown, evaluation, checked
+            return (breakdown, evaluation, checked, evaluated[3]) if return_state else (
+                breakdown, evaluation, checked
+            )
+
+        def validate_candidate_rows(indices, parameters):
+            _, trial_timing, trial_dense = evaluate_and_validate(parameters, indices)
+            trial_finite = (
+                torch.isfinite(trial_timing.q).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(trial_timing.dq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(trial_timing.ddq).flatten(start_dim=1).all(dim=-1)
+                & torch.isfinite(trial_timing.time_from_start).all(dim=-1)
+            )
+            return (trial_dense.trajectory_valid_mask & trial_finite
+                    & (trial_timing.duration >= self.space_time_settings.duration_min)
+                    & (trial_timing.duration <= self.space_time_settings.duration_max))
 
         original_parameters = timing_control_points
         original_dense = None
         original_timing = None
         dense_batches = 0
+        branch_catalog = {}
+        fallback = None
+        invariant_bad = None
+        early_dense_calls = 0
         self._corridor_a_stats = {"enabled": False}
         if self.space_time_settings.corridor_a_enabled:
-            from mpd.inference.time_corridor import refine_time_corridor
+            from mpd.inference.time_corridor import refine_time_corridor, refine_time_corridor_batch
 
             factorized = hasattr(self.space_time_guide, "codec")
             if factorized and self.factorized_settings.method != "f1":
@@ -193,15 +214,56 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             if not factorized and self.space_time_settings.mode != "phase5_joint":
                 raise ValueError("Corridor A is supported only by phase5_joint")
             validation_started = time.perf_counter()
-            _, original_timing, original_dense = evaluate_and_validate(original_parameters)
+            _, original_timing, original_dense, original_state = evaluate_and_validate(
+                original_parameters, return_state=True,
+            )
+            check_static_invariant = (
+                self.space_time_settings.corridor_a_selective_k
+                or (self.space_time_settings.corridor_a_branch_fallback
+                    and self.space_time_settings.corridor_a_k_best > 0)
+            )
+            static_collision = (
+                self.planner.dense_validator._environment_clearance(
+                    original_state.collision_sphere_positions, static_only=True,
+                ) <= 0
+                if check_static_invariant and dense_cfg["check_environment"]
+                else torch.zeros_like(original_dense.environment_collision_mask)
+            )
+            if static_collision.shape != original_dense.environment_collision_mask.shape:
+                raise ValueError("static-only clearance does not match original DenseCheck")
+            invariant_bad = (
+                static_collision.any(dim=-1)
+                | original_dense.self_collision_mask.any(dim=-1)
+                | original_dense.joint_position_violation_mask
+            )
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
             final_validation_s = time.perf_counter() - validation_started
             dense_batches += 1
             started = time.perf_counter()
-            timing_control_points, self._corridor_a_stats = refine_time_corridor(
-                self.space_time_guide, normalized, original_parameters, factorized=factorized
-            )
+            refine = (refine_time_corridor_batch if self.space_time_settings.corridor_a_backend != "serial"
+                      else refine_time_corridor)
+
+            def validate_early_rows(indices, parameters):
+                nonlocal early_dense_calls
+                early_dense_calls += 1
+                return validate_candidate_rows(indices, parameters)
+
+            if self.space_time_settings.corridor_a_backend == "serial":
+                timing_control_points, self._corridor_a_stats = refine(
+                    self.space_time_guide, normalized, original_parameters, factorized=factorized
+                )
+            else:
+                timing_control_points, self._corridor_a_stats, branch_catalog = refine(
+                    self.space_time_guide, normalized, original_parameters,
+                    factorized=factorized, return_branches=True,
+                    eligible_candidate_mask=~invariant_bad,
+                    k_expand_mask=(original_dense.joint_velocity_violation_mask
+                                   | original_dense.joint_acceleration_violation_mask),
+                    validate_branch_rows=(validate_early_rows
+                                          if self.space_time_settings.corridor_a_early_stop else None),
+                )
+            dense_batches += early_dense_calls
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
             self._corridor_a_stats["elapsed_s"] = time.perf_counter() - started
@@ -245,6 +307,40 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                 & (timing.duration >= self.space_time_settings.duration_min)
                 & (timing.duration <= self.space_time_settings.duration_max)
             )
+            if branch_catalog and self.space_time_settings.corridor_a_branch_fallback:
+                from mpd.inference.time_corridor import validate_alternative_branches
+
+                validation_started = time.perf_counter()
+                timing_control_points, alternative_stats = validate_alternative_branches(
+                    branch_catalog, timing_control_points, refined_valid,
+                    validate_candidate_rows,
+                    budget=self.space_time_settings.corridor_a_dense_branch_budget,
+                    ineligible=invariant_bad,
+                )
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize(self.device)
+                final_validation_s += time.perf_counter() - validation_started
+                dense_batches += alternative_stats["alternative_dense_batches"]
+                self._corridor_a_stats.update(alternative_stats)
+                if alternative_stats["alternate_branch_rescued_candidates"]:
+                    self.space_time_guide.timing_control_points = timing_control_points
+                    validation_started = time.perf_counter()
+                    cost_breakdown, timing, dense = evaluate_and_validate(timing_control_points)
+                    if self.device.type == "cuda":
+                        torch.cuda.synchronize(self.device)
+                    final_validation_s += time.perf_counter() - validation_started
+                    dense_batches += 1
+                    refined_finite = (
+                        torch.isfinite(timing.q).flatten(start_dim=1).all(dim=-1)
+                        & torch.isfinite(timing.dq).flatten(start_dim=1).all(dim=-1)
+                        & torch.isfinite(timing.ddq).flatten(start_dim=1).all(dim=-1)
+                        & torch.isfinite(timing.time_from_start).all(dim=-1)
+                    )
+                    refined_valid = (
+                        dense.trajectory_valid_mask & refined_finite
+                        & (timing.duration >= self.space_time_settings.duration_min)
+                        & (timing.duration <= self.space_time_settings.duration_max)
+                    )
             fallback = original_valid & ~refined_valid
             if fallback.any():
                 timing_control_points = torch.where(
@@ -260,13 +356,31 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
                 dense_batches += 1
             else:
                 self._corridor_a_stats["dense_fallbacks"] = 0
+            validated_signatures = set()
+            refined_valid_host = refined_valid.detach().cpu().tolist()
+            fallback_host = fallback.detach().cpu().tolist()
+            for candidate, options in branch_catalog.items():
+                if (refined_valid_host[candidate]
+                        and not fallback_host[candidate]
+                        and options and -1 not in options[0]["window_signature"]):
+                    validated_signatures.add((candidate, options[0]["window_signature"]))
+            self._corridor_a_stats["validated_unique_window_sequences"] = max(
+                self._corridor_a_stats.get("validated_unique_window_sequences", 0),
+                len(validated_signatures),
+            )
+            self._corridor_a_stats.setdefault("alternate_branch_rescued_candidates", 0)
             self._corridor_a_stats["dense_batches"] = dense_batches
+            self._corridor_a_stats["early_dense_batches"] = early_dense_calls
             self._corridor_a_stats["final_validation_s"] = float(final_validation_s)
             self._corridor_a_stats["profiled_total_s"] = float(
                 self._corridor_a_stats.get("grid_build_s", 0.0)
                 + self._corridor_a_stats.get("branch_selection_s", 0.0)
+                + self._corridor_a_stats.get("dp_initialization_s", 0.0)
+                + self._corridor_a_stats.get("distance_table_build_s", 0.0)
+                + self._corridor_a_stats.get("exact_rerank_s", 0.0)
                 + self._corridor_a_stats.get("refinement_forward_s", 0.0)
                 + self._corridor_a_stats.get("refinement_backward_s", 0.0)
+                + self._corridor_a_stats.get("early_dense_validation_s", 0.0)
                 + final_validation_s
             )
 

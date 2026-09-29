@@ -41,3 +41,12 @@ def test_cli_failure_has_explicit_json_and_nonzero_exit(tmp_path, monkeypatch):
     summary = json.loads((output / "summary.json").read_text())
     assert summary["status"] == "inference_error"
     assert "NaN/Inf" in summary["error"]["message"]
+
+
+def test_cli_optimization_overrides_are_independent():
+    parser = infer_factorized._build_parser()
+    args = parser.parse_args(["--request", "r.json", "--output-dir", "out",
+                              "--timing-checkpoint", "t.pt", "--no-timing-grad-only",
+                              "--fixed-path-cache", "--no-path-encoding-cache"])
+    assert (args.timing_grad_only, args.fixed_path_cache, args.path_encoding_cache) == (
+        False, True, False)

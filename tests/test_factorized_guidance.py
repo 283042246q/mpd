@@ -18,7 +18,8 @@ def problem(representation):
         target_mean=[0.] * 6, target_std=[1.] * 6), num_phase_points=65,
         duration_min=1., duration_max=4., velocity_limits=[20.], acceleration_limits=[100.]).to(**TENSOR_ARGS)
     guide = FactorizedCostGuide(_SpatialGuide(), task, _Dataset(), _DynamicField(world), settings,
-        TENSOR_ARGS, codec=codec, factorized_settings=FactorizedSettings())
+        TENSOR_ARGS, codec=codec, factorized_settings=FactorizedSettings(
+            timing_grad_only=False, fixed_path_cache=False, path_encoding_cache=False))
     p = torch.zeros(2, 7, 1, **TENSOR_ARGS)
     z = torch.full((2, 6), 1.8 if representation == "c" else 0., **TENSOR_ARGS)
     return guide, p, z
@@ -64,3 +65,27 @@ def test_nonzero_boundary_rejected_instead_of_silently_changing_request():
     guide.planning_task.parametric_trajectory.q_vel_start = p.new_tensor([.1])
     with pytest.raises(ValueError, match="zero endpoint"):
         guide.condition(p)
+
+
+@pytest.mark.parametrize("representation", ["c", "tau_r"])
+def test_timing_only_gradient_and_fixed_path_cache_match_original(representation):
+    guide, p, z = problem(representation)
+    baseline_gradient = guide.gradients(p, z, active="timing")[1]
+    baseline_p, baseline_z = guide.refine(p, z, active="timing")
+    guide.factorized_settings = FactorizedSettings(timing_grad_only=True)
+    torch.testing.assert_close(guide.gradients(p, z, active="timing")[1], baseline_gradient)
+    p_only, z_only = guide.refine(p, z, active="timing")
+    torch.testing.assert_close(p_only, baseline_p)
+    torch.testing.assert_close(z_only, baseline_z)
+    guide.prepare_fixed_path(p)
+    try:
+        torch.testing.assert_close(guide.gradients(p, z, active="timing")[1], baseline_gradient)
+        p_cached, z_cached = guide.refine(p, z, active="timing")
+        torch.testing.assert_close(p_cached, baseline_p)
+        torch.testing.assert_close(z_cached, baseline_z)
+        # A changed path must not reuse the block's old spatial data.
+        other = p + .1
+        assert guide._cached_path(other) is None
+    finally:
+        guide.clear_fixed_path()
+    assert guide._cached_path(p) is None

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import numpy as np
 
@@ -56,7 +57,8 @@ def _service(tmp_path: Path):
     return service
 
 
-def test_world_update_and_matching_plan_contract(tmp_path):
+def test_world_update_and_matching_plan_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("MPD_CAPTURE_PLANNER_REQUESTS", "1")
     service = _service(tmp_path)
     update = service.dispatch(
         {
@@ -83,6 +85,10 @@ def test_world_update_and_matching_plan_contract(tmp_path):
         "schema_version": 1,
         "compression": "zlib",
     }
+    request_dir = Path(response["result_path"]).parent
+    assert json.loads((request_dir / "world.json").read_text()) == {"world_version": 7}
+    assert json.loads((request_dir / "request.json").read_text())["_trajectory_start_unix_ns"] == 2_000_000_000
+    assert len(json.loads((request_dir / "response.json").read_text())["world_sha256"]) == 64
 
 
 def test_plan_rejects_world_version_that_is_not_loaded(tmp_path):

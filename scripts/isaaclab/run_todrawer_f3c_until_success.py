@@ -131,21 +131,29 @@ class ModeTimingProfile:
 
 
 MODE_TIMING_PROFILES = {
-    "phase4": ModeTimingProfile(1.43, 3.04, 12.70, 1.10, 1.40),
-    "phase4_aligned": ModeTimingProfile(1.65, 3.04, 12.70, 1.20, 1.50),
-    "joint": ModeTimingProfile(1.60, 4.02, 12.80, 1.65, 1.95),
-    "f1_c": ModeTimingProfile(2.25, 3.97, 8.80, 1.40, 1.70),
-    "f2_c": ModeTimingProfile(3.07, 3.98, 8.90, 1.50, 1.80),
-    "f3_c": ModeTimingProfile(1.94, 3.97, 8.90, 1.60, 1.90),
-    "f1_tau_r": ModeTimingProfile(2.23, 4.05, 10.20, 1.70, 2.00),
-    "f2_tau_r": ModeTimingProfile(3.06, 4.07, 10.80, 1.80, 2.10),
-    "f3_tau_r": ModeTimingProfile(1.94, 4.13, 11.00, 1.90, 2.20),
-    # Recalibrated on the same frozen Corridor-A scene batch on 2026-09-28.
-    # Corridor modes keep their own online-latency profile: mapping them back
-    # to the parent mode would schedule the crossing before they start moving.
-    "joint_corridor_a": ModeTimingProfile(12.67, 16.50, 24.00, 7.50, 11.00),
-    "f1_c_corridor_a": ModeTimingProfile(8.24, 11.70, 15.00, 3.50, 6.50),
-    "f1_tau_r_corridor_a": ModeTimingProfile(10.12, 13.70, 18.25, 5.00, 8.00),
+    # 2026-09-29: median of the five completed hard-scene first planner results
+    # in logs/todrawer-median-source, including unsuccessful planner results.
+    # The source and calibration rule are recorded in
+    # docs/TODRAWER_FIRST_PLAN_MEDIAN_CALIBRATION_20260929.md.
+    "phase4": ModeTimingProfile(1.462, 3.072, 12.732, 1.132, 1.432),
+    "phase4_aligned": ModeTimingProfile(1.958, 3.348, 13.008, 1.508, 1.808),
+    "joint": ModeTimingProfile(1.828, 4.248, 13.028, 1.878, 2.178),
+    "scalar_duration": ModeTimingProfile(1.809, 4.229, 13.009, 1.859, 2.159),
+    "timing_only": ModeTimingProfile(1.782, 4.202, 12.982, 1.832, 2.132),
+    "f1_c": ModeTimingProfile(2.319, 4.039, 8.869, 1.469, 1.769),
+    "f2_c": ModeTimingProfile(3.088, 3.998, 8.918, 1.518, 1.818),
+    "f3_c": ModeTimingProfile(2.259, 4.289, 9.219, 1.919, 2.219),
+    # Generic f1/f2/f3 keep independent profiles; this source run used c checkpoints.
+    "f1": ModeTimingProfile(2.304, 4.024, 8.854, 1.454, 1.754),
+    "f2": ModeTimingProfile(3.123, 4.033, 8.953, 1.553, 1.853),
+    "f3": ModeTimingProfile(2.190, 4.220, 9.150, 1.850, 2.150),
+    "f1_tau_r": ModeTimingProfile(2.233, 4.053, 10.203, 1.703, 2.003),
+    "f2_tau_r": ModeTimingProfile(2.970, 3.980, 10.710, 1.710, 2.010),
+    "f3_tau_r": ModeTimingProfile(2.197, 4.387, 11.257, 2.157, 2.457),
+    # Corridor modes use the newly calibrated non-Corridor profile as parent.
+    "joint_corridor_a": ModeTimingProfile(2.351, 4.771, 13.551, 2.401, 2.701),
+    "f1_c_corridor_a": ModeTimingProfile(2.614, 4.334, 9.164, 1.764, 2.064),
+    "f1_tau_r_corridor_a": ModeTimingProfile(2.610, 4.430, 10.580, 2.080, 2.380),
 }
 MINIMUM_CROSSING_AFTER_FIRST_PLAN_S = 1.25
 # Backward-compatible name for external imports; crossing alignment now uses

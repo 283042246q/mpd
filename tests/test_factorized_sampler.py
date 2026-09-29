@@ -1,8 +1,19 @@
 import pytest
 import torch
+from dataclasses import replace
 
 from mpd.inference.factorized_sampler import FactorizedSampler, FactorizedSettings, ddim_update, forward_noise, schedule
 from mpd.timing_training.model import TimingDiffusion, TimingDenoiser
+
+
+def test_measured_default_optimizations_remain_overridable():
+    assert [(FactorizedSettings(method=method).timing_grad_only,
+             FactorizedSettings(method=method).fixed_path_cache,
+             FactorizedSettings(method=method).path_encoding_cache)
+            for method in ("f1", "f2", "f3")] == [
+                (True, True, True), (True, True, True), (True, True, True)]
+    assert FactorizedSettings(method="f1", timing_grad_only=False,
+                              fixed_path_cache=False, path_encoding_cache=False).timing_grad_only is False
 
 
 class Space:
@@ -32,7 +43,9 @@ def sampler(method="f1", **kwargs):
         hidden_dim=8, time_embedding_dim=8, num_residual_blocks=1), num_diffusion_steps=20)
     guide = Guide()
     return FactorizedSampler(Space(model.alphas_cumprod), model, guide,
-        FactorizedSettings(method=method, space_steps=5, timing_steps=10, **kwargs))
+        FactorizedSettings(method=method, space_steps=5, timing_steps=10,
+                           timing_grad_only=False, fixed_path_cache=False,
+                           path_encoding_cache=False, **kwargs))
 
 
 def test_ddim_oracle_partial_noise_roundtrip():
@@ -107,3 +120,39 @@ def test_f3_alternates_unique_low_steps_and_conditions_on_updated_clean_path(rat
     assert not torch.equal(s.guide.conditions[-1], s.guide.conditions[0])
     for r in low:
         assert r["timestep"] <= 5
+
+
+@pytest.mark.parametrize("method,expected_calls", [("f1", 1), ("f2", 2), ("f3", 3)])
+def test_path_encoding_cache_is_block_scoped_and_keeps_sample(method, expected_calls):
+    s = sampler(method, refinement_steps=0)
+    encoder = s.timing_model.denoiser.path_encoder
+    original_forward = encoder.forward
+    calls = []
+    def counted(path):
+        calls.append(path.data_ptr())
+        return original_forward(path)
+    encoder.forward = counted
+    torch.manual_seed(17)
+    baseline = s.sample((2, 8, 2), {}, {}, device="cpu")
+    assert len(calls) > expected_calls
+    calls.clear()
+    s.settings = replace(s.settings, path_encoding_cache=True)
+    torch.manual_seed(17)
+    cached = s.sample((2, 8, 2), {}, {}, device="cpu")
+    for actual, expected in zip(cached, baseline):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert len(calls) == expected_calls
+
+
+@pytest.mark.parametrize("method,expected_blocks", [("f1", 1), ("f2", 2), ("f3", 2)])
+def test_fixed_path_cache_uses_guided_timing_blocks_only(method, expected_blocks):
+    s = sampler(method, refinement_steps=0)
+    prepared = []
+    cleared = []
+    s.guide.prepare_fixed_path = lambda p: prepared.append(p.clone())
+    s.guide.clear_fixed_path = lambda: cleared.append(True)
+    s.settings = replace(s.settings, fixed_path_cache=True, timing_grad_only=True)
+    s.sample((2, 8, 2), {}, {}, device="cpu")
+    assert len(prepared) == len(cleared) == expected_blocks
+    if method == "f3":
+        assert not torch.equal(prepared[0], prepared[1])
