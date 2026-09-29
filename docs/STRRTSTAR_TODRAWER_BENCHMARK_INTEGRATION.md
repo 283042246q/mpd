@@ -1,6 +1,21 @@
 # 将 ST-RRT* 接入 ToDrawer 随机动态世界 benchmark
 
-本文是实施说明，**当前仓库尚未包含 ST-RRT* benchmark 后端**。目标是在同一批 ToDrawer 场景中比较 MPD 与 OMPL ST-RRT*，复用 ROS fake hardware 执行、动态世界观测、轨迹拼接与安全检查、manifest 记录和 IsaacLab 回放。
+本文记录已完成的接入及复现实验步骤。目标是在同一批 ToDrawer 场景中比较 MPD 与 OMPL ST-RRT*，复用 ROS fake hardware 执行、动态世界观测、轨迹拼接与安全检查、manifest 记录和 IsaacLab 回放。
+
+## 当前实现与提交
+
+接入位于两个独立的 `codex/strrt-benchmark` 分支，未改动原有 `mpd_dynamic_planner_adapter` ROS 包及其接口。
+
+| 步骤 | 仓库 | 提交 | 内容 |
+| --- | --- | --- | --- |
+| 规划 worker | `MotionPlanningDiffusion/mpd` | `10d35b4` | ST-RRT*、碰撞模型、动态 IPC |
+| ROS 新包 | `physical_ai_runtime` | `534b5e8` | `strrt_planner_adapter`、独立 artifact 解码、launch/config |
+| 内核验证优化 | `MotionPlanningDiffusion/mpd` | `aff6cb9` | 批量边检查、目标/终端保持复核 |
+| ROS 退出处理 | `physical_ai_runtime` | `a368c5e` | 中断时清理节点 |
+| 计时拆分 | `MotionPlanningDiffusion/mpd` | `44984b3` | 分开记录 IK、预检、OMPL 求解、后处理 |
+| 同框架 benchmark | `MotionPlanningDiffusion/mpd` | `c2f51e2` | pipeline 分支、配对场景、指标与报告 |
+
+ST-RRT* 仅支持 `absolute_world_time`；现有默认 modes 未加入 `strrt`。同一 benchmark run 为 worker 固定一次 OMPL 随机种子（worker seed + 1），请求内的 seed 仍记录在产物中，但 OMPL 不允许在同一个进程中途重新设全局种子。`cost_mpd_weight` 在 ST-RRT* ROS config 为 0；复用节点的部分日志和 manifest 时序字段仍含 `MPD` 名称，表示共享执行管线，并非调用 MPD 模型。
 
 ## 1. 先固定比较边界
 
@@ -114,7 +129,7 @@ ROS backend 把它转换成 `TrajectoryPlanResult`，将碰撞球数组放入 `d
 4. **ROS 小试**：先 `plan_only:=true` 核对版本、deadline 和 latest-world guard，再用 `safe_control` 场景执行。确认 manifest、JTC handoff、guard 与刹车均有记录。
 5. **配对 benchmark**：新输出目录、一个环境/类别和一个 repeat 做 smoke test；检查两 mode 的场景 JSON 内容与 planner seed，运行后检查 `runs.csv` 和 `report.md`。最后再扩大样本，并任选一组加 `--render` 检查 IsaacLab 回放。
 
-接入完成后的示例命令（**当前代码尚不支持 `strrt`，完成上述改动后使用**）：
+接入完成后的示例命令：
 
 ```bash
 cd /home/eric/Projects/MotionPlanningDiffusion/mpd
@@ -130,3 +145,9 @@ cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 ```
 
 实际比较报告至少列出：完成/manifest 数、目标到达率、`valid_dynamic_success`、brake、guard 拒绝、最终轨迹最小 clearance、首轮规划完成时间、求解及总延迟、关节路径长度与执行时长；同时保留原始失败原因和场景/seed，以便复查。
+
+## 本机验收记录与限制
+
+已验证编译版 OMPL 能导入 `STRRTstar`；固定关节目标得到严格递增、首点导数连续的轨迹。构造移动球体时，边两端有效而中途碰撞，批量边检测返回无效。worker 的一次成功请求返回 `OK`，不可达目标返回 `PLAN_FAILED`，健康状态仍为 `READY`。新 ROS 包通过 `pixi run build --packages-up-to strrt_planner_adapter` 构建并能导入。
+
+使用 `safe_control` 的 `scenario-005`、35 秒、同一 seed、`--skip-render` 做了 1 对 1 smoke test。两个 mode 使用的场景文件 SHA256 相同；两次 pipeline 都完成并产生 manifest、`runs.csv` 与 `report.md`，均到达目标且无刹车、无命令间隙。ST-RRT* 有求解和后处理失败请求，按现有 deadline 规则拒绝；`valid_dynamic_success` 在此单例中两个 mode 都是 false。这个单例只证明接线、记录与评测可用，不代表两算法统计性能。IsaacLab 视频回放及更多场景尚未验收。
