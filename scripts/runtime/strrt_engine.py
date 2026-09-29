@@ -32,8 +32,8 @@ class StrrtEngine:
         solve_budget_s: float = 2.0,
         edge_dt_s: float = 0.02,
         max_joint_step_rad: float = 0.04,
-        planner_range: float = 0.35,
-        worker_seed: int = 0,
+        planner_range: float = 1.5,
+        worker_seed: int = 1,
         state_callback=None,
     ) -> None:
         import torch
@@ -48,8 +48,11 @@ class StrrtEngine:
         if min(self.max_duration_s, self.solve_budget_s, self.edge_dt_s,
                self.max_joint_step_rad, self.planner_range) <= 0.0:
             raise ValueError("ST-RRT* settings must be positive")
+        if not 0 <= int(worker_seed) < 2**32 - 1:
+            raise ValueError("worker_seed must be in [0, 2**32 - 1)")
+        self.worker_seed = int(worker_seed)
         from ompl import util as ou
-        ou.RNG.setSeed(int(worker_seed))
+        ou.RNG.setSeed(self.worker_seed + 1)
         notify = state_callback or (lambda _state: None)
         notify("LOADING")
         self.robot = RobotPanda(tensor_args={"device": torch.device("cpu"), "dtype": torch.float32})
@@ -62,6 +65,8 @@ class StrrtEngine:
         return {
             "planner": "strrtstar",
             "instance_id": self.instance_id,
+            "worker_seed": self.worker_seed,
+            "ompl_seed": self.worker_seed + 1,
             "world_version": self.dynamic_world.world_version,
             "collision_sphere_count": len(self.dynamic_world.radii),
             "static_obstacle_count": len(self.dynamic_world.static),
@@ -73,8 +78,9 @@ class StrrtEngine:
     def _ik_goals(self, pose: tuple[float, ...]) -> list[np.ndarray]:
         import torch
 
-        if pose in self._goal_cache:
-            return self._goal_cache[pose]
+        key = tuple(round(value, 5) for value in pose)
+        if key in self._goal_cache:
+            return self._goal_cache[key]
         if len(pose) != 7 or not np.isfinite(pose).all():
             raise RequestValidationError("Cartesian target must be a finite xyzw pose")
         target_rotation = Rotation.from_quat(pose[3:])
@@ -111,7 +117,7 @@ class StrrtEngine:
                 break
         if not goals:
             raise NoValidTrajectoryError("Cartesian goal has no collision-free IK solution")
-        self._goal_cache[pose] = goals
+        self._goal_cache[key] = goals
         return goals
 
     @staticmethod
@@ -146,7 +152,7 @@ class StrrtEngine:
             def checkMotion(self, first, second):
                 t0, t1 = space.getStateTime(first), space.getStateTime(second)
                 delta_t = t1 - t0
-                if delta_t <= 0.0 or not si.isValid(second):
+                if delta_t <= 0.0:
                     return False
                 a = np.asarray([first[0][i] for i in range(7)], dtype=np.float64)
                 b = np.asarray([second[0][i] for i in range(7)], dtype=np.float64)
@@ -154,14 +160,13 @@ class StrrtEngine:
                     return False
                 count = max(2, math.ceil(delta_t / edge_dt),
                             math.ceil(float(np.max(np.abs(b - a))) / max_step))
-                probe = ob.State(space)
-                for index in range(1, count):
-                    space.interpolate(first, second, index / count, probe())
-                    if not si.isValid(probe()):
-                        return False
-                return True
+                fractions = np.linspace(1.0 / count, 1.0, count)
+                samples = a[None] + fractions[:, None] * (b - a)[None]
+                times = start_unix_s + t0 + fractions * delta_t
+                return self_world.samples_valid(samples, times)
 
         self_limits = self.dynamic_world.dq_max
+        self_world = self.dynamic_world
         edge_dt = self.edge_dt_s
         max_step = self.max_joint_step_rad
         checker = ob.StateValidityCheckerFn(valid)
@@ -174,13 +179,15 @@ class StrrtEngine:
             start()[0][index] = float(value)
         start()[1].position = 0.0
         problem.addStartState(start)
+        goal_states = ob.GoalStates(si)
+        goal_states.setThreshold(0.05)
         for goal_q in goals:
             goal = ob.State(space)
             for index, value in enumerate(goal_q):
                 goal()[0][index] = float(value)
             goal()[1].position = 0.0
-            problem.setGoalState(goal, 0.05)
-            break  # GoalState has one target; rank the cached IK goals by start distance below.
+            goal_states.addState(goal)
+        problem.setGoal(goal_states)
         planner = og.STRRTstar(si)
         planner.setRange(self.planner_range)
         planner.setProblemDefinition(problem)
@@ -218,10 +225,10 @@ class StrrtEngine:
                     continue
                 count = max(2, math.ceil(elapsed / self.edge_dt_s),
                             math.ceil(float(np.max(np.abs(delta))) / self.max_joint_step_rad))
-                if all(self.dynamic_world.is_valid(
-                    path_q[source] + delta * (step / count),
-                    start_unix_s + path_t[source] + elapsed * (step / count),
-                ) for step in range(1, count + 1)):
+                fractions = np.linspace(1.0 / count, 1.0, count)
+                samples = path_q[source][None] + fractions[:, None] * delta[None]
+                times = start_unix_s + path_t[source] + elapsed * fractions
+                if self.dynamic_world.samples_valid(samples, times):
                     destination = candidate
                     break
             kept.append(destination)
@@ -260,8 +267,7 @@ class StrrtEngine:
                     or np.any(q > self.dynamic_world.q_max + 1e-6)):
                 continue
             spheres = self.dynamic_world.spheres_many(q)
-            if all(self.dynamic_world.centers_valid(centers, start_unix_s + float(t_i))
-                   for centers, t_i in zip(spheres, times)):
+            if self.dynamic_world.centers_many_valid(spheres, start_unix_s + times):
                 return times, q, dq, ddq, spheres, scale
         raise NoValidTrajectoryError("postprocess_invalid: no safe smooth time scaling")
 
@@ -299,6 +305,24 @@ class StrrtEngine:
         solve_s = time.perf_counter() - started
         times, q, dq, ddq, spheres, scale = self._trajectory(
             path_q, path_t, dq_start, ddq_start, start_unix_s, duration_limit)
+        if request["goal_type"] == "joint":
+            if float(np.max(np.abs(q[-1] - request["q_pos_goal"]))) > 0.05:
+                raise NoValidTrajectoryError("final joint goal is outside tolerance")
+        else:
+            import torch
+            with torch.no_grad():
+                transform = self.robot.get_EE_pose(torch.as_tensor(q[-1][None], dtype=torch.float32))[0]
+            transform = transform.detach().cpu().numpy()
+            pose = request["ee_pose_goal"]
+            position_error = np.linalg.norm(transform[:3, 3] - pose[:3])
+            rotation_error = (Rotation.from_matrix(transform[:3, :3]).inv()
+                              * Rotation.from_quat(pose[3:])).magnitude()
+            if position_error > 0.015 or rotation_error > math.radians(3.0):
+                raise NoValidTrajectoryError("final Cartesian goal is outside tolerance")
+        hold_times = start_unix_s + np.arange(times[-1], duration_limit + 1e-8, self.edge_dt_s)
+        if len(hold_times) and not self.dynamic_world.centers_many_valid(
+            np.broadcast_to(spheres[-1], (len(hold_times), *spheres[-1].shape)), hold_times):
+            raise NoValidTrajectoryError("terminal hold collides within the prediction horizon")
         total_s = time.perf_counter() - started
         arrays = {
             "joint_names": np.asarray(request["joint_names"], dtype=np.str_),
@@ -320,6 +344,7 @@ class StrrtEngine:
             "timing": {"solve_s": solve_s, "postprocess_s": total_s - solve_s,
                        "total_s": total_s, "inference_total_sec": total_s},
             "trajectory": {"duration_s": float(times[-1]), "time_scale": scale,
-                           "waypoint_count": len(path_t), "sample_count": len(times)},
+                           "waypoint_count": len(path_t), "sample_count": len(times),
+                           "terminal_hold_checked_until_s": duration_limit},
         }
         return PlanArtifacts(result_payload=result, trajectory_arrays=arrays)

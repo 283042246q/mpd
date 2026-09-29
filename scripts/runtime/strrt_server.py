@@ -35,8 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--solve-budget-s", type=float, default=1.5)
     parser.add_argument("--edge-dt-s", type=float, default=0.02)
     parser.add_argument("--max-joint-step-rad", type=float, default=0.04)
-    parser.add_argument("--planner-range", type=float, default=0.35)
-    parser.add_argument("--worker-seed", type=int, default=0)
+    parser.add_argument("--planner-range", type=float, default=1.5)
+    parser.add_argument("--worker-seed", type=int, default=1)
     args = parser.parse_args(argv)
 
     def create_engine(state_callback):

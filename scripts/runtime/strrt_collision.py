@@ -167,3 +167,43 @@ class StrrtCollisionWorld:
             if np.any(_sdf(local, shape) - extra <= self.radii):
                 return False
         return True
+
+    def samples_valid(self, q: np.ndarray, times_s: np.ndarray) -> bool:
+        q = np.asarray(q, dtype=np.float64)
+        times_s = np.asarray(times_s, dtype=np.float64)
+        world = self.snapshot
+        if (world is None or q.ndim != 2 or q.shape[1] != 7 or times_s.shape != (len(q),)
+                or not np.isfinite(q).all() or not np.isfinite(times_s).all()
+                or np.any(q < self.q_min) or np.any(q > self.q_max)):
+            return False
+        return self.centers_many_valid(self.spheres_many(q), times_s)
+
+    def centers_many_valid(self, centers: np.ndarray, times_s: np.ndarray) -> bool:
+        world = self.snapshot
+        times_s = np.asarray(times_s, dtype=np.float64)
+        if (world is None or not np.isfinite(times_s).all()
+                or np.any(times_s < world["stamp_s"] - 1e-6)
+                or np.any(times_s > world["valid_until_s"] + 1e-6)):
+            return False
+        if np.any(np.linalg.norm(centers[:, self.self_a] - centers[:, self.self_b], axis=-1)
+                  <= self.radii[self.self_a] + self.radii[self.self_b]):
+            return False
+        for shape, position, rotation in self.static:
+            local = (centers - position) @ rotation
+            if np.any(_sdf(local, shape) <= self.radii[None, :]):
+                return False
+        dt = times_s - world["stamp_s"]
+        for shape, position, rotation, velocity, covariance, inflation in world["objects"]:
+            local = (centers - (position[None, None, :] + dt[:, None, None] * velocity)) @ rotation
+            if inflation["mode"] == "linear":
+                extra = float(inflation["base_m"]) + float(inflation["horizon_rate_m_s"]) * dt
+            else:
+                pp, pv, vp, vv = covariance[:3, :3], covariance[:3, 3:], covariance[3:, :3], covariance[3:, 3:]
+                predicted = (pp[None] + dt[:, None, None] * (pv + vp)
+                             + dt[:, None, None]**2 * vv
+                             + np.eye(3)[None] * self.process_variance * dt[:, None, None]**3 / 3.0)
+                extra = float(inflation["base_m"]) + self.covariance_sigma * np.sqrt(
+                    np.maximum(0.0, np.linalg.eigvalsh(predicted)[:, -1]))
+            if np.any(_sdf(local, shape) <= self.radii[None, :] + extra[:, None]):
+                return False
+        return True
