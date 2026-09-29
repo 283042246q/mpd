@@ -138,6 +138,10 @@ MODE_TIMING_PROFILES = {
     "phase4": ModeTimingProfile(1.462, 3.072, 12.732, 1.132, 1.432),
     "phase4_aligned": ModeTimingProfile(1.958, 3.348, 13.008, 1.508, 1.808),
     "joint": ModeTimingProfile(1.828, 4.248, 13.028, 1.878, 2.178),
+    # todrawer-strrt-benchmark: equal-run inference means are 1.527025 s for
+    # ST-RRT* and 0.659811 s for joint. Shift the joint timing window by their
+    # 0.867214 s difference; keep the observed hard-scene first-result median.
+    "strrt": ModeTimingProfile(2.396, 5.115, 13.895, 2.745, 3.045),
     "scalar_duration": ModeTimingProfile(1.809, 4.229, 13.009, 1.859, 2.159),
     "timing_only": ModeTimingProfile(1.782, 4.202, 12.982, 1.832, 2.132),
     "f1_c": ModeTimingProfile(2.319, 4.039, 8.869, 1.469, 1.769),

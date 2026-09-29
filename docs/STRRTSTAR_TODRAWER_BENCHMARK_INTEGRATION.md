@@ -15,7 +15,7 @@
 | 计时拆分 | `MotionPlanningDiffusion/mpd` | `44984b3` | 分开记录 IK、预检、OMPL 求解、后处理 |
 | 同框架 benchmark | `MotionPlanningDiffusion/mpd` | `c2f51e2` | pipeline 分支、配对场景、指标与报告 |
 
-ST-RRT* 仅支持 `absolute_world_time`；现有默认 modes 未加入 `strrt`。同一 benchmark run 为 worker 固定一次 OMPL 随机种子（worker seed + 1），请求内的 seed 仍记录在产物中，但 OMPL 不允许在同一个进程中途重新设全局种子。`cost_mpd_weight` 在 ST-RRT* ROS config 为 0；复用节点的部分日志和 manifest 时序字段仍含 `MPD` 名称，表示共享执行管线，并非调用 MPD 模型。
+ST-RRT* 支持 `absolute_world_time` 和 `motion_aligned`；现有默认 modes 未加入 `strrt`。同一 benchmark run 为 worker 固定一次 OMPL 随机种子（worker seed + 1），请求内的 seed 仍记录在产物中，但 OMPL 不允许在同一个进程中途重新设全局种子。`cost_mpd_weight` 在 ST-RRT* ROS config 为 0；复用节点的部分日志和 manifest 时序字段仍含 `MPD` 名称，表示共享执行管线，并非调用 MPD 模型。
 
 ## 1. 先固定比较边界
 
@@ -119,7 +119,7 @@ ROS backend 把它转换成 `TrajectoryPlanResult`，将碰撞球数组放入 `d
 5. 保持 `valid_dynamic_success` 的既有定义（到达、穿越前运动、无 brake），另外记录最终轨迹的碰撞/clearance 检查结果。此指标本身不代表“无碰撞”。
 6. 增加新输出目录；`materialize_suite()` 会核对 `suite.json` 的 mode 列表，不允许向旧实验目录直接追加新 mode。
 
-首轮只比较 `joint` 与 `strrt`，使用 `absolute_world_time`。这样同一 `scenario_id`/repeat 才能按相同障碍物时间表成对比较。若以后需要 `motion_aligned`，先为 `strrt` 加 `MODE_TIMING_PROFILES` 并用独立先导实验校准，随后重新生成整批 suite。
+初次接线只比较 `joint` 与 `strrt`，使用 `absolute_world_time`，让同一 `scenario_id`/repeat 共享障碍物时间表。后续已按下文的实测推理均值补齐 ST-RRT* 时间画像；`motion_aligned` 会为两个 mode 分别平移 crossing，须使用新的输出目录重新生成整批 suite。
 
 ## 7. 分阶段验收
 
@@ -151,3 +151,59 @@ cd /home/eric/Projects/MotionPlanningDiffusion/mpd
 已验证编译版 OMPL 能导入 `STRRTstar`；固定关节目标得到严格递增、首点导数连续的轨迹。构造移动球体时，边两端有效而中途碰撞，批量边检测返回无效。worker 的一次成功请求返回 `OK`，不可达目标返回 `PLAN_FAILED`，健康状态仍为 `READY`。新 ROS 包通过 `pixi run build --packages-up-to strrt_planner_adapter` 构建并能导入。
 
 使用 `safe_control` 的 `scenario-005`、35 秒、同一 seed、`--skip-render` 做了 1 对 1 smoke test。两个 mode 使用的场景文件 SHA256 相同；两次 pipeline 都完成并产生 manifest、`runs.csv` 与 `report.md`，均到达目标且无刹车、无命令间隙。ST-RRT* 有求解和后处理失败请求，按现有 deadline 规则拒绝；`valid_dynamic_success` 在此单例中两个 mode 都是 false。这个单例只证明接线、记录与评测可用，不代表两算法统计性能。IsaacLab 视频回放及更多场景尚未验收。
+
+## 后续：按推理均值校准 ST-RRT* 的 motion_aligned crossing
+
+数据源：`scripts/isaaclab/logs/todrawer-strrt-benchmark/report/runs.csv`，SHA-256 为
+`f8f4792f85d68269fef7773b1dec9b249a2b03526e16849954f801bca6dc694d`。
+suite seed `20260928`、`absolute_world_time`、每类 1 个环境、每 mode 1 次，
+共 10 对运行。报告的 `inference_total_mean_s` 是**每个运行成功请求**的推理均值；
+对 10 个运行再等权平均，ST-RRT* 为 `1.527025 s`，joint 为 `0.659811 s`。
+两者差值 `0.867214 s`。
+
+沿用已有 mode 时间画像的相对偏移规则：以 joint 的 crossing shift 区间
+`1.878–2.178 s` 为基准，给 ST-RRT* 整体加上推理均值差，得到
+`2.745–3.045 s`（写入配置时保留毫秒）。同一冻结场景的两个 mode 使用同一
+`timing_fraction`，因此本轮 ST-RRT* 的 crossing 比 joint 晚约 `0.867 s`：
+`crossing_time_s = 原始 anchor 时间 + 本 mode 的 shift`。这个值是场景时间，
+不是规划器已知的未来障碍物轨迹。
+本命令不传 `--calibrate-crossing-from-report`；该可选参数仍按首次 result
+中位数重新校准所选 mode，会覆盖这份按推理均值差固定的画像。
+
+用 seed `20260928`、每类 1 个环境离线生成的**最早预定 crossing** 如下
+（多物体场景的后续 crossing 仍以各自场景 JSON 为准）：
+
+| 场景 | 类型 | joint s | ST-RRT* s |
+|---|---|---:|---:|
+| scenario-000 | single_crossing | 7.365 | 8.232 |
+| scenario-001 | staggered_multi | 6.596 | 7.463 |
+| scenario-002 | simultaneous_multi | 6.751 | 7.618 |
+| scenario-003 | fast_crossing | 7.167 | 8.034 |
+| scenario-004 | inflated_dense | 6.543 | 7.410 |
+| scenario-005 | safe_control | 7.394 | 8.261 |
+| scenario-006 | accelerating_crossing | 6.289 | 7.156 |
+| scenario-007 | curved_crossing | 6.757 | 7.624 |
+| scenario-008 | uncertain_motion | 7.225 | 8.092 |
+| scenario-009 | mixed_motion_multi | 6.610 | 7.477 |
+
+时间画像中的 ST-RRT* 首次 result 时间另取五类 hard 场景的实测中位数
+`2.396 s`，它包括失败 result；画像中明显运动估计 `5.115 s` 和预计目标时间
+`13.895 s` 仍按上述相对偏移规则从 joint 推得，**不是实测值**。旧绝对时间运行的
+ST-RRT* 首次明显运动均值约为 `9.245 s`；因此推理均值对齐不保证机械臂会在
+crossing 前运动，运行后仍须看 `first_motion_before_crossing` 和
+`valid_dynamic_success`。`absolute_world_time` 的场景时间不受此画像修改。
+
+用新目录运行完整配对实验：
+
+```bash
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+/home/eric/anaconda3/envs/mpd-splines-public/bin/python \
+  scripts/isaaclab/benchmark_todrawer_random.py \
+  --output-dir scripts/isaaclab/logs/todrawer-strrt-motion-aligned \
+  --modes joint strrt \
+  --timing-protocol motion_aligned \
+  --suite-seed 20260928 \
+  --environment-count-per-category 1 \
+  --planner-repeats 1 \
+  --duration-sec 35
+```

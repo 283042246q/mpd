@@ -235,7 +235,7 @@ def validate_scenario(
         _require(all(4.0 <= time <= 6.5 for time in times), f"{scenario_id}: crossing outside primary window")
     if mode_profile is not None:
         alignment_basis = mode_profile.get("alignment_basis")
-        if alignment_basis == "first_plan_completed_any_status":
+        if alignment_basis in {"first_plan_completed_any_status", "inference_mean_delta_vs_joint"}:
             alignment_reference = float(mode_profile["first_plan_completed_s"])
             minimum_delay = float(mode_profile["minimum_crossing_after_first_plan_s"])
             alignment_label = "first completed plan"

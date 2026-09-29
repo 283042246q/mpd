@@ -348,6 +348,24 @@ def _shared_object_geometry(scenario):
     ]
 
 
+def test_strrt_motion_aligned_uses_inference_calibrated_crossing():
+    suite = generate_benchmark_suite(
+        1, 20260928, timing_protocol="motion_aligned", modes=["joint", "strrt"],
+    )
+
+    assert len(suite["scenarios"]) == len(CATEGORIES)
+    validate_suite(suite)
+    for environment in suite["scenarios"]:
+        joint = materialize_scenario_for_mode(environment, "joint")
+        strrt = materialize_scenario_for_mode(environment, "strrt")
+        assert _shared_object_geometry(strrt) == _shared_object_geometry(joint)
+        assert strrt["mode_timing_profile"]["alignment_basis"] == "inference_mean_delta_vs_joint"
+        for strrt_object, joint_object in zip(strrt["objects"], joint["objects"]):
+            assert strrt_object["crossing_time_s"] - joint_object["crossing_time_s"] == pytest.approx(
+                0.867, abs=0.001,
+            )
+
+
 def test_paired_benchmark_suite_rejects_invalid_environments_and_shares_geometry():
     modes = ["phase4", "joint", "f3_c", "f3_tau_r"]
     suite = generate_benchmark_suite(
@@ -776,6 +794,7 @@ def test_extract_metrics_and_report_from_synthetic_completed_run(tmp_path):
     assert "ToDrawer 随机动态重规划基准报告" in report
     assert "场景类型与难度" in report
     assert "joint" in report
+    assert "最早预定 crossing mean s" in report
     assert "时长、路径与推理耗时" in report
     assert "仅到达目标运行的路径与执行时长" in report
     assert "完整配对结果" in report

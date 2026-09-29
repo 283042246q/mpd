@@ -845,7 +845,10 @@ def _mode_timing_shift(
     metadata = {
         "mode": mode,
         "profile_mode": profile_mode,
-        "alignment_basis": "first_plan_completed_any_status",
+        "alignment_basis": (
+            "inference_mean_delta_vs_joint" if profile_mode == "strrt"
+            else "first_plan_completed_any_status"
+        ),
         "first_plan_completed_s": profile.first_plan_completed_s,
         "significant_motion_threshold_rad": 0.01,
         "significant_motion_start_s": profile.significant_motion_start_s,
@@ -1994,8 +1997,9 @@ def write_reports(
             ),
             "scenario_feasibility": suite.get("generation_policy", {}).get("feasibility_scope"),
             "timing_protocol_comparison": (
-                "motion_aligned compares crossing difficulty relative to each mode's measured "
-                "first completed planner result, regardless of status; absolute_world_time "
+                "motion_aligned shifts crossings using calibrated per-mode timing profiles; "
+                "the STRRT profile uses its inference mean difference versus joint, while "
+                "other profiles use first completed planner results; absolute_world_time "
                 "preserves the real online penalty of slower modes"
             ),
         },
@@ -2039,8 +2043,8 @@ def write_reports(
                 "",
                 "## 时间协议分开汇总",
                 "",
-                "`motion_aligned` 比较第一次 planner result 结束后的相对 crossing 难度，"
-                "不要求该 result 成功；"
+                "`motion_aligned` 按各模式的时间画像平移 crossing；ST-RRT* 画像按相对 joint 的推理均值差校准，"
+                "其他模式按首次完成的 planner result 校准；"
                 "`absolute_world_time` 保留慢模式在真实在线系统中的启动延迟代价。",
             ]
         )
@@ -2101,12 +2105,13 @@ def write_reports(
     lines.extend([
         "", "## 首轮时序与动态成功", "",
         "本表事件时间都以场景世界时钟起点为零点。first result 包含失败结果；first command 才表示执行开始。",
-        "", "| 模式 | 首次提交 mean s | 首个 result mean s | 首次运动 mean s | 首次命令 mean s | 首次 handoff mean s | 穿越前运动 runs | valid_dynamic_success runs | deadline 后拒绝次数 | worker 往返 mean s |",
+        "", "| 模式 | 最早预定 crossing mean s | 首次提交 mean s | 首个 result mean s | 首次运动 mean s | 首次命令 mean s | 首次 handoff mean s | 穿越前运动 runs | valid_dynamic_success runs | deadline 后拒绝次数 | worker 往返 mean s |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for mode, data in by_mode.items():
         lines.append(
-            f"| {mode} | {_fmt(data['first_planning_submit_from_world_s']['mean'])} | "
+            f"| {mode} | {_fmt(data['scheduled_crossing_time_min_s']['mean'])} | "
+            f"{_fmt(data['first_planning_submit_from_world_s']['mean'])} | "
             f"{_fmt(data['first_plan_completed_from_world_s']['mean'])} | "
             f"{_fmt(data['first_significant_motion_from_world_s']['mean'])} | "
             f"{_fmt(data['first_command_start_from_world_s']['mean'])} | "
@@ -2932,8 +2937,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     args.modes = list(dict.fromkeys(args.modes))
-    if "strrt" in args.modes and args.timing_protocol != "absolute_world_time" and not args.report_only:
-        parser.error("strrt currently requires --timing-protocol absolute_world_time")
     if min(args.strrt_solve_budget_s, args.strrt_range, args.strrt_edge_dt_s) <= 0:
         parser.error("ST-RRT* settings must be positive")
     if args.dry_run:
