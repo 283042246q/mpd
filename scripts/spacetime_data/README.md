@@ -133,3 +133,12 @@ recorded in `manifest.yaml`.
 
 The independent `P -> timing` training commands and network contract are in
 [`scripts/train/TIMING_DIFFUSION.md`](../train/TIMING_DIFFUSION.md).
+
+## Dynamic Warehouse spacetime teacher
+
+The independent [Warehouse batch spacetime generator](WAREHOUSE_SPACETIME.md)
+adds frozen moving obstacles, genuine OMPL ST-RRT* process batching, and a
+native Torch multi-query spacetime forest. It rechecks decoded spatial/timing
+splines against static, self and dynamic collisions and saves full world
+predictions. Its `warehouse_spacetime_joint_v1` schema is separate from the
+kinematic retiming converter above; existing interfaces are unchanged.

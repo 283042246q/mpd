@@ -1,6 +1,6 @@
 # JointDual 空间与时间共同网络：实施方案
 
-日期：2026-10-08。状态：设计与实施计划，本文没有实现新的模型、数据生成器或运行入口。
+日期：2026-10-08。状态：JointDual 网络实施计划；网络与 trainer 尚未实现。2026-10-09 已新增独立的 warehouse 动态数据生成、GPU 时空 forest 和 OMPL ST-RRT* batch 后端，使用说明见 [Warehouse spacetime 生成器](../scripts/spacetime_data/WAREHOUSE_SPACETIME.md)。
 
 2026-10-09 补充：核对了仓库已有的 Torch/CUDA multi-query RRT 和 Marvin 数据流水线，增加本地 GPU spacetime 扩展路线及其与 OMPL/pRRTC 的比较，见 7.4 节。已有基础比单纯的 GPU 碰撞批处理完整，不能忽略。
 
