@@ -2,6 +2,8 @@
 
 日期：2026-10-08。状态：设计与实施计划，本文没有实现新的模型、数据生成器或运行入口。
 
+2026-10-09 补充：核对了仓库已有的 Torch/CUDA multi-query RRT 和 Marvin 数据流水线，增加本地 GPU spacetime 扩展路线及其与 OMPL/pRRTC 的比较，见 7.4 节。已有基础比单纯的 GPU 碰撞批处理完整，不能忽略。
+
 适用范围：单臂 Panda/FR3 的 Space-Time MPD。JointDual 指空间分支与时间分支共同去噪，不指双臂。保持现有 MPD、factorized、ST-RRT* benchmark 和 ROS 接口兼容；新增训练与离线数据功能应放在独立模块。
 
 本文将既有设计收敛到可实施的选择，补齐条件、标签、teacher、数据验收、batch 与实验口径。基础设计见 [JointDual / TimeCorridor / Flow Matching 设计](SINGLE_ARM_SPACETIME_TIMECORRIDOR_JOINTDUAL_FLOWMATCHING_DESIGN.md)，历史数据计划见 [Timing 训练与数据工程](Space-Time%20MPD%20Timing%20训练与数据工程实施方案.md)。若命名冲突，以本文的 `JD-KIN`、`JD-WORLD` 为准，避免旧文档中 J1 同时指同步采样和动态条件阶段。
@@ -19,7 +21,7 @@
 | retime + nearwait 是否够 | 足以做运动学预训练和动态 teacher 的 proposal，不足以单独学会动态绕行 | 当前生成过程不看动态世界，随机 nearwait 也不等于避障等待 |
 | ST-RRT* 是否接入方便 | 本地算法和 benchmark 已接通；离线 teacher 适配难度中等 | 还缺通用未来世界、原始解导出、统一样条拟合与复检 |
 | ST-pRRTC 是否优先 | 作为后续 teacher 加速候选，不作为当前里程碑依赖 | 已确认论文，但本次未确认可运行官方动态代码；静态 pRRTC 不能直接替代 |
-| batch 怎么做 | GPU 批量 retime/筛选/拟合/复检 + CPU 多进程 ST-RRT* | 当前 OMPL 不是多世界 GPU batch planner；先优化合格样本吞吐 |
+| batch 怎么做 | 保留 OMPL 参照，同时优先复用本地 Torch multi-query RRT 做 GPU spacetime 原型 | 当前 OMPL 不是 GPU batch planner，但仓库已具备 GPU 树操作与任务流水线；无需先从外部 pRRTC 开始 |
 
 **建议路线：数据 codec 小试 → JD-KIN 冒烟 → world-conditioned factorized 对照 → JD-WORLD → 可选 corridor → 可选 ST-pRRTC。** 数据集以同一任务、同一动态世界下的多条空间路径和多种安全时序为核心。
 
@@ -35,6 +37,7 @@
 | [timing 训练说明](../scripts/train/TIMING_DIFFUSION.md) | 固定 clean path 编码器、timing MLP、`c` / `tau_r` checkpoint | noisy path 训练适配；`--env` 不是动态世界 context |
 | [ST-RRT* engine](../scripts/runtime/strrt_engine.py)、[collision](../scripts/runtime/strrt_collision.py) | OMPL 时空搜索、同机器人球模型、静态/动态碰撞采样、后处理、benchmark 计时 | 任意预测轨迹 evaluator、原生 GPU 多世界 batch、标准 `P,z` teacher 数据 |
 | [time corridor](../mpd/inference/time_corridor.py) | 固定路径 phase-time 占据、窗口搜索、batch exact 和 timing refinement | 无路径条件下的通用 corridor；空间与时间联合学习网络 |
+| [GPU RRT](../scripts/generate_data/gpu_batch_rrt.py)、[Marvin GPU backend](../scripts/generate_data/marvin_gpu_planning_backend.py) | Torch 批量采样、最近邻、扩展、插入与连接；多独立 query 的树、GPU 碰撞和批量审计 | 动态世界/时间方向、任意多世界碰撞、ST-RRT* 的到达时间优化逻辑 |
 
 特别注意：当前 retime 生成器没有建立碰撞世界，`static_clearance_min` 可以是 NaN。`accepted=True` 的已有样本主要意味着通过该生成器的运动学/时长验收，**不等于完整的静态、自碰撞和动态安全样本**。进入动态训练前需要补这些检查。
 
@@ -264,6 +267,8 @@ C_P=\{(s,t):d(q(s;P),W(t_{\mathrm{exec}}+t))>m\}.
 
 同 task/W 不只保存最短一条。按空间距离、event order、等待特征和时长分桶去重，保留少量高质量解；重复 seed 产生的几乎同轨迹不能算新增模式。
 
+**GPU 扩展路线：** 在仓库已有 `GpuMultiQueryRRTConnect` 上增加时空节点和动态检查，产生与路线 B 相同契约的原始 q-t 解。首版按 `(task, world, seed, goal, arrival_time)` 展开独立 query，随后再考虑共享前向树与目标时间森林。该实现应命名为独立的 GPU ST-RRT-Connect teacher，未复现优化逻辑前不能标成 ST-RRT*。具体改造见 7.4 节。
+
 ST-RRT* 的最早到达目标本身会偏向快解。需要多 seed、不同求解预算及显式的到达时间区间任务来补充安全慢解；“求解时间更多”不自动等于多模态标签。相关参数只有在本地绑定确实支持时才使用，不在计划中假定未知 API。
 
 ### 6.4 小试与扩量
@@ -323,9 +328,64 @@ ST-RRT* 针对已知动态障碍轨迹进行时空搜索并优化到达时间；
 | 现有 retime/nearwait | 运动学 proposal；加 world 验收后可补 | 不会主动改 P | 最低，但需动态筛选 | GPU 张量化，优先 |
 | fixed-path 优化 / corridor | 可以，多窗口受 codec 限制 | 不会主动改 P | 已有模块，可离线适配 | 同 P 多初值、多 P 分块 |
 | OMPL ST-RRT* | 可以，原始时间需保留 | 可以 | 算法已有，离线与 codec 适配中等 | CPU 进程池 + GPU 后处理 |
+| 本地 Torch RRT 的 spacetime 扩展 | 需新增时间采样/等待/到达时刻 | 可以，待实现验证 | GPU multi-query 树与流水线已有，建议先原型 | 原生 query × edge × collision-state batch |
 | ST-pRRTC | 目标是时空搜索 | 可以，仍须统一 codec 复检 | 动态实现未确认，当前无法称为方便接入 | GPU 搜索并行；多 query 能力待核实 |
 
 建议采用混合数据，记录每个来源。既比较固定数据上的模型，又比较各 teacher 每秒产出的最终合格且去重样本；不要把 planner 原始 success/sec 当训练数据吞吐。
+
+### 7.4 仓库已有 GPU RRT 能推广到 spacetime 吗？
+
+#### 已并行到哪里
+
+[gpu_batch_rrt.py](../scripts/generate_data/gpu_batch_rrt.py) 有两级实现：
+
+- `GpuBatchRRTConnect`：一条 query 内同时采样和扩展多条候选边，分块 `torch.cdist` 最近邻，批量 steer、边插值和碰撞检查。单 query 的 parent 数组仍在 CPU。
+- `GpuMultiQueryRRTConnect` / `_BatchedTree`：树状态、parent、count 放在 GPU，形状为 `[query,node,dof]`；按 `[query,edge,dof]` 查询最近邻、扩展、插入并连接两树。已完成 query 的碰撞采样会被 mask/compact；不只是多个 CPU planner。
+
+生产数据入口还具备跨 shard active window、任务分桶、持久 CUDA actor、批量 shortcut/raw/spline Torch audit、独立 CPU endpoint/PyBullet actor、partial spool 与 telemetry，见 [Marvin GPU planner 比较](MARVIN_WAREHOUSE_GPU_PLANNER_COMPARISON.md)。当前配置的 query 上限为 dual/left/right=12/16/16，edges/query=24；任务窗口为 80。参数扫描报告中的 endpoint actor 数等参数属于当时运行配置，不等于当前 YAML 默认值。
+
+但它还不是完整 GPU 常驻 kernel：Python 控制每轮迭代，存在 `.item()` / CPU 计数同步和逐 query RNG/path trace；最近邻是分块 brute force；已完成 query 的 NN/采样不全被移出 dense batch。`plan_batch` 内没有新 query 动态补位，补位发生在外围流水线的 batch 调度。并且当前碰撞接口只有 `collision_fn(q)`，Marvin backend 使用共享静态场景，不携带每个 query 的动态 world。
+
+#### 需要新增的算法，而非只增加一维
+
+1. **状态/元数据：** 单独保存节点 t、query 的 world_id、t_exec、horizon 和 goal/root time，机器人 FK 仍只吃 q。
+2. **定向最近邻与扩展：** 在 `t_b>t_a` 且直线插值满足 `t_b-t_a >= max_j |q_bj-q_aj|/dq_max_j` 的集合中选 parent；反向树按相反增长方向处理。不能直接对拼接后的 q/t 做无量纲欧氏 cdist，随后仅检查终点。
+3. **时间采样：** 根据起点/目标的运动时间下界筛选目标时间与状态时间；高拒绝率时增加条件采样，而不是靠大 batch 淹没无效点。
+4. **时空边：** 同一插值 alpha 同时插值 q 和 t，采样数同时受关节步长与时间步长限制。纯等待 `Δq=0,Δt>0` 仍需沿时间采样，不能按零空间长度直接接受。反向 prefix 与最终正向轨迹分别验证。
+5. **碰撞契约：** 改为独立新接口 `collision(q,t,query_id)`。现有 `_edge_prefix_batch` 已生成 query_index，可在 compact 后保留并传给 world evaluator；每个采样点匹配自己的预测和时间原点。
+6. **目标/等待：** 首版固定多个 arrival-time proposal，将其展开为独立 query；验证后加入慢速/等待 proposal，再做共享前向树/目标时间森林，最后才做 recycling。
+7. **后处理：** 现有几何 shortcut 必须改成保留端点时刻并检查完整时空边。Marvin 的弧长重采样会去掉重复 q，不可直接用于动态等待；样条拟合也必须保留 t 并查动态世界。
+8. **调度与输出：** 新任务 key 要包含 world 和解槽位。现有 Marvin 每 task 只采纳一条的策略不能原样用于多模式 JointDual 数据；原有按模式分桶/有界队列/spool 思路可以复用，Marvin/Pika 专用代码不硬迁移。
+
+先实现固定 Panda、固定 drawer、确定性 forecast、rest-to-rest 的独立 teacher backend。所有新功能 opt-in，不修改旧 Marvin planner 或在线 ROS 接口。
+
+#### ST-RRT-Connect 与完整 ST-RRT* 的工作量不同
+
+目前 Torch planner 找到首个连接后返回，没有 ST-RRT* 的目标时间优化机制。本地 OMPL `STRRTstar.h/.cpp` 还包含 conditional sampling、goal-tree rewiring、start/goal pruning 和到达时间界更新。移植这些并保持语义需额外设计 GPU 数据结构，不能由“batch RRT 已有”推导成“GPU ST-RRT* 已有”。
+
+可以借用 [ST-pRRTC 的共享前向树、目标时间森林和 root recycling](https://arxiv.org/html/2609.30533v1)，构建实用 teacher；变更后的实现不继承原论文理论保证。训练数据需要多模式时，也不应只保留最早到达根。
+
+#### 工作量比较
+
+以下为工程量级估计，不是工期承诺；假定一名熟悉仓库的开发者，固定 Panda/drawer、已知未来、速度约束时空边。包含该路线专项回归与 profiling，不含各路线共用的完整 P/z codec 工程、网络训练、ROS 接入及多机器人扩展。
+
+| 路线 | 粗估投入 | 复用与新增 | 适用目标 |
+| --- | --- | --- | --- |
+| 现有 OMPL ST-RRT* 外层任务并行 | 1–3 人日 | 复用 solver，增加任务/seed/world 隔离、原始 q-t 导出 | 最快获得参照数据，主要提高总吞吐 |
+| 本地 Torch RRT → 固定到达时间 spacetime 原型 | 3–5 人日 | 复用 GPU 树与 query batch，新增定向时间边与动态碰撞 | 先验证搜索质量和吞吐是否有价值 |
+| 本地 Torch → 可用 GPU spacetime teacher | 累计约 8–15 人日 | 加多到达时刻/等待、多 world、动态 shortcut、数据管线和验收 | 当前建议优先的 GPU 路线 |
+| 基于外部 pRRTC → 可用 spacetime teacher | 约 15–30 人日 | 新增相同的时间算法，另需 CUDA 环境/模型对齐、binding、query 状态隔离和数据接口 | 有明确 kernel 性能瓶颈后的优化路线 |
+| 本地 Torch → 保持完整 ST-RRT* 优化语义 | 约 15–30+ 人日 | 除时空搜索外，移植 rewiring/pruning/conditional sampling 等 | 确实需要 ST-RRT* 算法等价性时另立任务 |
+
+Panda 已有上游支持会降低 pRRTC 的机器人接入成本；若换 Marvin/Pika，几何与 codegen 工作还会增加。若只测单 query、球障碍的小 demo，两条 GPU 路线都能更早跑通，但不能据此认为数据 teacher 已经可用。
+
+#### 效果预期与实测边界
+
+归档的 Marvin 静态实验提供方向性证据：早期固定端点 30 对的 RRT 均值由 2.052 s 降到 0.599 s，约 3.43x；同一早期方案完整生成却由 15.82 s/条退化到 28.05 s/条。后续跨 shard 100 条参数扫描为约 3.45–3.60 s/条，但没有同配置 CPU 配对，不能把它除以前述 CPU 数字宣称严格加速比。以上来源见 [已有测试报告](MARVIN_WAREHOUSE_GPU_PLANNER_COMPARISON.md)。
+
+这些是 Marvin 静态实验，不能当作 Panda 动态规划性能。对于 spacetime，Torch 路线在多 query、较大边碰撞 batch、足够任务供给时有提高吞吐的条件；窄窗口的时间采样拒绝、长等待的采样量、树增长的 NN 成本及 codec 拒绝都可能吃掉收益。Panda 球数更少也可能使 kernel launch/sync 比重上升。
+
+外部 pRRTC 的融合 CUDA kernel 有减少 launch/同步开销的潜力，但动态改造后的单 query 延迟与多 world 吞吐都需实测。它不自动改善路径质量，也不能保证消除 timing codec 的瓶颈。优先用 Torch 原型验证相同 task/world 的 raw success、首次解时间、到达时间、动态复检率、P/z 接受率和最终 unique samples/sec，再决定是否下沉 CUDA。
 
 ## 8. Teacher 到训练样本的统一流水线
 
@@ -479,11 +539,14 @@ mean 按各分支有效元素计算，不把 7×H_free 的空间 sum 与 6 维 t
 | --- | --- | --- |
 | 一条路径的多时间/多碰撞点 | FK、SDF、timing decode 张量化 | 不是多个独立 planner query |
 | 多条任务的离线数据生成 | CPU process pool，GPU 集中后处理 | OMPL worker 并行不等于 GPU 树搜索 |
+| 本地 Torch multi-query 树搜索 | 多 query × 多候选边 × 多边采样点 | 已有静态实现；spacetime 的方向/时间/world 契约仍待增加 |
 | 单个 GPU planner 内部扩展 | ST-pRRTC/pRRTC 的并行设计 | 单 query kernel batch 不自动是多 world batch |
 
 ### 11.2 推荐流水线
 
 CPU 负责加载、teacher 搜索与 manifest；GPU 服务集中运行空间 FK、时序变体、动态距离、fit/refinement。队列有界，使用固定 static geometry cache，按 world/shape/horizon 分桶，物体和预测点用 mask。
+
+上述 CPU 搜索方案保留作 OMPL 基线。GPU teacher 原型优先使用 7.4 节的本地 Torch 树，复用持久 GPU actor/跨 task 流水线结构，不必先集成外部 pRRTC。新 spacetime backend 与旧 Marvin backend 独立，按实际 profiling 决定搜索与后处理是否共用同一 GPU actor。
 
 当前 TOPPRA、SciPy 空间/时间拟合和 NumPy normalized timing 并非全部可直接在 GPU batch 运行。第一版先让 CPU worker 并行这部分，GPU 批量做 FK/碰撞筛选；随后将固定 basis 的 least-squares、timing decode 与物理检查迁到 torch，并以现有 CPU decoder 为数值对照。不要为了声称“全 batch”先改写全部求解器。
 
@@ -556,6 +619,7 @@ ST-pRRTC 若引入，既报告 kernel/search-only，也报告含 scene upload、
 | 7 | 独立离线 evaluator、数据量/交互/corridor 消融与 profile | 固定 world 的配对结果、mode/难度分桶、多 seed、同预算比较；决定是否引入 corridor | `feat(joint): evaluate world conditioning and coupling ablations` |
 | 8 | 经离线验收后的新 benchmark mode/config；复用现有运行协议，不改变默认接口 | 原模式回归；joint goal 与 pose goal；absolute/motion_aligned；完整 report 字段和 frozen calibration | `feat(benchmark): add opt-in JointDual planner mode` |
 | 可选 9 | 确认 ST-pRRTC 动态实现后，在独立 teacher backend 中接入 | 同 world/model 验收、codec 后吞吐、多 query 能力与端到端成本 | `feat(joint-data): add optional ST-pRRTC teacher backend` |
+| GPU teacher 支线，步骤 1–2 后可开展 | 独立 Torch spacetime planner/world adapter，复用已有 multi-query 树思路；固定 arrival proposal → 多时刻/等待 → forest/recycling | 与 OMPL 冻结世界配对；时间定向、等待、多 world compact 索引、动态 shortcut；检查最终合格吞吐 | `feat(joint-data): add opt-in torch spacetime teacher` |
 
 测试集中在真正风险：时间原点、mask/goal 泄漏、拟合后动态安全、batch 等价、split 隔离、旧模式兼容。文档变更本身只需链接与格式检查；不为文件名或常量写镜像测试。
 
