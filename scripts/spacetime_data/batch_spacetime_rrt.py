@@ -149,7 +149,7 @@ class TorchSpaceTimeForest:
         root_time[:, :self.roots].masked_fill_(root_collision, torch.inf)
         eligible &= ~self.collision_fn(starts_q, torch.zeros(batch, device=device), ids)
         upper = horizons + 0.001
-        results = [SpaceTimeResult(statistics={"backend": "torch-spacetime-forest", "checked_states": 0,
+        results = [SpaceTimeResult(statistics={"backend": "torch-spacetime-forest",
                                              "root_recycles": 0, "improvements": 0}) for _ in range(batch)]
         reference = None if reference_paths is None else torch.as_tensor(reference_paths, device=device, dtype=dtype)
         if reference is not None and (reference.ndim != 3 or reference.shape[0] != batch or reference.shape[-1] != dof):
