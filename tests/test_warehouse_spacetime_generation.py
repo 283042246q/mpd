@@ -97,3 +97,77 @@ def test_second_writer_is_rejected_before_loading_models(tmp_path):
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(RuntimeError, match="another writer"):
             generation.main(["--output-root", str(tmp_path), "--device", "cpu"])
+
+
+def test_streaming_dataset_recovers_committed_prefix_and_restores_each_world(tmp_path, monkeypatch):
+    from multiprocessing.pool import ThreadPool
+    from scripts.spacetime_data import ompl_strrt_batch
+
+    class RecordingWarehouse(FakeWarehouse):
+        def set_worlds(self, worlds):
+            self.worlds = worlds
+
+    class AsyncPlanner:
+        def __init__(self, *args, **kwargs):
+            self.pool = ThreadPool(2)
+
+        def submit(self, job):
+            def solve():
+                path = np.c_[np.linspace(job["q_start"], job["q_goal"], 8), np.linspace(0, 5, 8)]
+                return SpaceTimeResult([path], {"backend": "fixture", "wall_s": 0.01})
+            return self.pool.apply_async(solve)
+
+        def close(self):
+            self.pool.close()
+            self.pool.join()
+
+        terminate = close
+
+    source = tmp_path / "source.hdf5"
+    path = np.zeros((32, 7))
+    path[:, 0] = np.linspace(-0.5, 0.5, 32)
+    with h5py.File(source, "w") as file:
+        file["sol_path"] = np.stack([path, path[::-1]])
+        file["task_id"] = [10, 10]
+    output = tmp_path / "stream"
+    monkeypatch.setattr(generation, "WarehouseCollision", RecordingWarehouse)
+    monkeypatch.setattr(ompl_strrt_batch, "OmplSTRRTBatch", AsyncPlanner)
+    original_validate, original_write = generation.validate_result, generation.write_shard
+    validated = []
+
+    def validate(args, collision, query, job, result):
+        assert query == 0 and collision.worlds == [job["forecast"]]
+        validated.append(job["attempt_id"])
+        return original_validate(args, collision, query, job, result)
+
+    def interrupted_write(output, shard_index, *args):
+        if shard_index == 1:
+            raise RuntimeError("interrupted before atomic commit")
+        return original_write(output, shard_index, *args)
+
+    monkeypatch.setattr(generation, "validate_result", validate)
+    monkeypatch.setattr(generation, "write_shard", interrupted_write)
+    command = ["--source", str(source), "--output-root", str(output), "--device", "cpu",
+               "--backend", "ompl-strrtstar", "--num-trajectories", "5", "--cpu-workers", "2",
+               "--query-batch-size", "2", "--ompl-queue-size", "4", "--obstacles", "1",
+               "--nominal-duration", "4"]
+    with pytest.raises(RuntimeError, match="interrupted"):
+        generation.main(command)
+    shard = next((output / "shards").glob("*.hdf5"))
+    committed = shard.read_bytes()
+    with h5py.File(shard) as file:
+        assert file.attrs["attempt_start"] == 0 and file.attrs["attempt_stop"] == 2
+        assert list(file["samples"]) == ["000000000", "000000001"]
+    monkeypatch.setattr(generation, "write_shard", original_write)
+    validated.clear()
+    assert generation.main(command + ["--resume"]) == 0
+    assert shard.read_bytes() == committed
+    assert sorted(validated) == [2, 3, 4]
+    report = json.loads((output / "report.json").read_text())
+    assert report["accepted"] == report["attempts"] == 5
+    stats = report["session_pipeline_statistics"]
+    assert stats["submitted"] == stats["completed"] == stats["accepted"] == 3
+    assert stats["queue_capacity"] == 4
+    assert generation.read_progress(output, report["config_hash"])[0:2] == (5, 5)
+    assert generation.main(command + ["--resume"]) == 0
+    assert json.loads((output / "report.json").read_text())["session_pipeline_statistics"] == stats

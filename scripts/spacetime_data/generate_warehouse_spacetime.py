@@ -71,6 +71,10 @@ def parse_args(argv=None):
     parser.add_argument("--max-iterations", type=int, default=512)
     parser.add_argument("--solve-seconds", type=float, default=5.)
     parser.add_argument("--cpu-workers", type=int, default=4)
+    parser.add_argument("--ompl-scheduling", choices=("streaming", "batch"), default="streaming",
+                        help="OMPL only: continuous valid-query queue, or legacy batch barrier")
+    parser.add_argument("--ompl-queue-size", type=int, default=0,
+                        help="OMPL streaming in-flight cap; 0 means max(query-batch-size, 2 * cpu-workers)")
     parser.add_argument("--seed", type=int, default=20261009)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--source-group-size", type=int, default=2,
@@ -98,6 +102,8 @@ def parse_args(argv=None):
             parser.error(name + " must be positive")
     if args.start_index < 0 or args.max_attempts < 0 or args.seed < 0:
         parser.error("indices, seed and max-attempts must be non-negative")
+    if args.ompl_queue_size < 0:
+        parser.error("ompl-queue-size must be non-negative")
     if not 2 < args.nominal_duration <= args.horizon or not 0 < args.velocity_scale <= 1:
         parser.error("require 2 < nominal-duration <= horizon and 0 < velocity-scale <= 1")
     if min(args.solve_seconds, args.forecast_dt, args.edge_dt, args.joint_step,
@@ -120,7 +126,7 @@ def run_identity(args, robot):
                   static_environment="EnvWarehouse", goal_type="joint", oracle_forecast=True,
                   terminal_hold="none; task ends at decoded trajectory duration",
                   software={name: sha256_file(REPOSITORY / "scripts/spacetime_data" / name) for name in
-                            ("warehouse_world.py", "batch_spacetime_rrt.py", "ompl_strrt_batch.py", "warehouse_trajectory_fit.py",
+                            ("warehouse_world.py", "batch_spacetime_rrt.py", "ompl_strrt_batch.py", "streaming_spacetime.py", "warehouse_trajectory_fit.py",
                              "generate_warehouse_spacetime.py")},
                   static_geometry_hashes={name: sha256_file(REPOSITORY / "mpd/torch_robotics/torch_robotics/environments" / name)
                                           for name in ("env_warehouse.py", "env_table_shelf.py", "primitives.py")})
@@ -190,7 +196,8 @@ def write_shard(output, shard_index, attempt_start, attempt_stop, records, failu
     return destination
 
 
-def publish_index(output, config_hash, accepted, attempts, failures, entries, elapsed, requested):
+def publish_index(output, config_hash, accepted, attempts, failures, entries, elapsed, requested,
+                  pipeline_statistics=None):
     splits = {"train": [], "validation": [], "test": []}
     durations = [entry["duration_s"] for entry in entries]
     mode_counts = Counter(mode for entry in entries for mode in entry["modes"])
@@ -199,7 +206,7 @@ def publish_index(output, config_hash, accepted, attempts, failures, entries, el
         split = "train" if bucket < 80 else ("validation" if bucket < 90 else "test")
         splits[split].append(entry)
     atomic_json(output / "index.json", {"schema": SCHEMA, "config_hash": config_hash, "splits": splits})
-    atomic_json(output / "report.json", {"schema": SCHEMA, "config_hash": config_hash,
+    report = {"schema": SCHEMA, "config_hash": config_hash,
                 "accepted": accepted, "attempts": attempts, "requested": requested,
                 "complete": accepted >= requested, "failure_counts": dict(failures),
                 "session_wall_s": elapsed, "split_counts": {k: len(v) for k, v in splits.items()},
@@ -207,7 +214,152 @@ def publish_index(output, config_hash, accepted, attempts, failures, entries, el
                 "tau_r_valid_samples": sum(entry["tau_r_valid"] for entry in entries),
                 "duration_s": {"min": min(durations), "mean": float(np.mean(durations)), "max": max(durations)} if durations else None,
                 "positive_definition": "fitted c codec; joint limits, v/a, static/self/dynamic and interaction checks passed",
-                "safety_scope": "sampled sphere/primitive collision with margin; not continuous collision certification"})
+                "safety_scope": "sampled sphere/primitive collision with margin; not continuous collision certification"}
+    if pipeline_statistics is not None:
+        report["session_pipeline_statistics"] = pipeline_statistics
+    atomic_json(output / "report.json", report)
+
+
+def prepare_job(args, source, collision, current):
+    """Prepare one candidate; a rejected candidate consumes an attempt, not a queue slot."""
+    paths = source["sol_path"]
+    row = (args.start_index + current * args.source_group_size) % len(paths)
+    reference = np.asarray(paths[row], dtype=float)
+    if collision.static_collision(reference).any().item():
+        return None, "source_static_self_or_limits"
+    seed = int(np.random.SeedSequence([args.seed, current]).generate_state(1)[0])
+    rng = np.random.default_rng(seed)
+    anchor_indices = np.linspace(0, len(reference) - 1, min(64, len(reference))).astype(int)
+    centers = collision.centers(reference[anchor_indices]).cpu().numpy()
+    offset = current % len(args.motion_modes)
+    modes = args.motion_modes[offset:] + args.motion_modes[:offset]
+    forecast = None
+    for _ in range(12):
+        try:
+            candidate = make_forecast(centers, args.nominal_duration, args.horizon, rng,
+                                      object_count=args.obstacles, modes=modes, forecast_dt=args.forecast_dt)
+        except ValueError:
+            continue
+        collision.set_worlds([candidate])
+        if not collision(reference[:1], [0.], [0]).item():
+            forecast = candidate
+            break
+    if forecast is None:
+        return None, "world_anchor_or_initial_collision"
+    return {"attempt_id": current, "source_row": row, "source_task_id": int(source["task_id"][row]),
+            "family_id": row // args.source_group_size, "seed": seed,
+            "q_start": reference[0], "q_goal": reference[-1],
+            "reference": reference, "forecast": forecast}, None
+
+
+def validate_result(args, collision, query, job, result):
+    """Same raw and fitted acceptance gates for both scheduling modes/backends."""
+    fitted, reason = None, "teacher_no_solution"
+    fit_started = time.perf_counter()
+    fine_paths = []
+    for raw in result.paths:
+        delta_t = np.diff(raw[:, -1])
+        velocity = collision.robot.dq_max.cpu().numpy() * args.velocity_scale
+        if (not np.isfinite(raw).all() or np.any(delta_t <= 0)
+            or abs(raw[0, -1]) > 1e-6
+            or not np.allclose(raw[0, :7], job["q_start"], atol=1e-6)
+            or not np.allclose(raw[-1, :7], job["q_goal"], atol=1e-6)
+            or np.any(np.abs(np.diff(raw[:, :7], axis=0)) > delta_t[:, None] * velocity + 1e-5)):
+            reason = "raw_time_boundary_or_velocity"
+            continue
+        tensor = torch.as_tensor(raw, **collision.tensor_args)
+        enabled = torch.ones((1, len(raw) - 1), dtype=torch.bool, device=tensor.device)
+        invalid, _ = edge_collision_mask(
+            tensor[:-1][None], tensor[1:][None],
+            torch.full_like(enabled, query, dtype=torch.long), collision,
+            joint_step=args.joint_step / 2, time_step=args.edge_dt / 2)
+        if bool(invalid.any().item()):
+            reason = "raw_dense_collision"
+            continue
+        fine_paths.append(raw)
+    result.statistics["raw_dense_rejected"] = len(result.paths) - len(fine_paths)
+    result.paths = fine_paths
+    for raw_index, raw in enumerate(result.paths):
+        fitted, reason = fit_teacher(raw, collision, query, job["forecast"],
+                                     spatial_rmse_max=args.spatial_rmse_max,
+                                     timing_rmse_max=args.timing_rmse_max,
+                                     require_tau_r=args.require_tau_r)
+        if fitted is not None:
+            job["fitted_solution_index"] = raw_index
+            break
+    job["fit_wall_s"] = time.perf_counter() - fit_started
+    return (None, str(reason)) if fitted is None else ((job, result, fitted), None)
+
+
+def generate_ompl_stream(args, source, collision, backend, config_hash,
+                         accepted, attempt, failures, entries, started):
+    from scripts.spacetime_data.streaming_spacetime import StreamingSpaceTime
+    import math
+
+    def validate(job, result):
+        # The preparation step also changes the parent world. Restore the exact
+        # forecast belonging to this result before any collision/fit checks.
+        collision.set_worlds([job["forecast"]])
+        return validate_result(args, collision, 0, job, result)
+
+    capacity = args.ompl_queue_size or max(args.query_batch_size, 2 * args.cpu_workers)
+    stream = StreamingSpaceTime(
+        lambda current: prepare_job(args, source, collision, current), backend.submit, validate,
+        start_attempt=attempt, max_attempts=args.max_attempts or args.num_trajectories * 20,
+        target=args.num_trajectories - accepted, capacity=capacity,
+        timeout=60 + math.ceil(capacity / args.cpu_workers) * args.solve_seconds)
+    stats = stream.statistics
+    stats.update(scheduling="streaming", worker_count=args.cpu_workers, shard_write_wall_s=0.)
+    output = args.output_root
+    shard_index = len(list((output / "shards").glob("*.hdf5")))
+    session_shards, begin = 0, attempt
+    records, shard_failures = [], Counter()
+
+    def publish():
+        elapsed = time.perf_counter() - started
+        # Sum of all completed queries, including rejected ones; this is an
+        # estimate including callback/setup time, not OS-measured CPU occupancy.
+        stats["planner_worker_utilization_estimate"] = stats["planner_wall_s_total"] / max(
+            elapsed * args.cpu_workers, 1e-9)
+        stats["planner_mean_wall_s"] = stats["planner_wall_s_total"] / max(stats["completed"], 1)
+        stats["accepted_trajectories_per_minute"] = stats["accepted"] * 60 / max(elapsed, 1e-9)
+        publish_index(output, config_hash, accepted, attempt, failures, entries,
+                      elapsed, args.num_trajectories, stats)
+
+    def commit():
+        nonlocal accepted, shard_index, session_shards, begin, records, shard_failures
+        write_started = time.perf_counter()
+        destination = write_shard(output, shard_index, begin, attempt, records, shard_failures, config_hash)
+        stats["shard_write_wall_s"] += time.perf_counter() - write_started
+        accepted += len(records)
+        failures.update(shard_failures)
+        entries.extend({"file": str(destination.relative_to(output)), "group": "samples/%09d" % job["attempt_id"],
+                        "family_id": job["family_id"], "attempt_id": job["attempt_id"],
+                        "duration_s": fitted["quality"]["duration"], "modes": job["forecast"].modes,
+                        "tau_r_valid": fitted["tau_r_valid"]} for job, _, fitted in records)
+        shard_index += 1
+        session_shards += 1
+        if session_shards % args.checkpoint_batches == 0:
+            publish()
+        print(json.dumps({"accepted": accepted, "attempts": attempt, "batch_accepted": len(records),
+                          "batch_failures": dict(shard_failures), "wall_s": round(time.perf_counter() - started, 2),
+                          "submitted": stats["submitted"], "completed": stats["completed"]}), flush=True)
+        begin, records, shard_failures = attempt, [], Counter()
+
+    for outcome in stream:
+        if outcome.attempt_id != attempt:
+            raise RuntimeError("non-contiguous streaming outcome")
+        attempt += 1
+        if outcome.record is None:
+            shard_failures[outcome.reason] += 1
+        else:
+            records.append(outcome.record)
+        if attempt - begin >= args.query_batch_size:
+            commit()
+    if attempt > begin:
+        commit()
+    publish()
+    return 0 if accepted >= args.num_trajectories else 2
 
 
 def _generate(args):
@@ -241,7 +393,11 @@ def _generate(args):
     if accepted >= args.num_trajectories:
         # A shard may have committed immediately before an interrupted index
         # update. Rebuild the derived index even if no more planning is needed.
-        publish_index(output, config_hash, accepted, attempt, failures, entries, 0., args.num_trajectories)
+        previous = json.loads((output / "report.json").read_text()) if (output / "report.json").exists() else {}
+        unchanged = previous.get("accepted") == accepted and previous.get("attempts") == attempt
+        publish_index(output, config_hash, accepted, attempt, failures, entries,
+                      previous.get("session_wall_s", 0.) if unchanged else 0., args.num_trajectories,
+                      previous.get("session_pipeline_statistics") if unchanged else None)
         print("Already complete: %d trajectories" % accepted, flush=True)
         return 0
     collision = WarehouseCollision(args.device, margin=args.margin, chunk_size=args.collision_chunk)
@@ -259,6 +415,9 @@ def _generate(args):
             paths = source["sol_path"]
             if paths.ndim != 3 or paths.shape[-1] != 7 or paths.shape[0] < 1 or paths.shape[1] < 3:
                 raise ValueError("source sol_path must be nonempty [N,waypoints>=3,7]")
+            if backend is not None and args.ompl_scheduling == "streaming":
+                return generate_ompl_stream(args, source, collision, backend, config_hash,
+                                            accepted, attempt, failures, entries, started)
             while accepted < args.num_trajectories and attempt < max_attempts:
                 begin = attempt
                 count = min(args.query_batch_size, args.num_trajectories - accepted, max_attempts - attempt)
@@ -266,35 +425,11 @@ def _generate(args):
                 for _ in range(count):
                     current = attempt
                     attempt += 1
-                    row = (args.start_index + current * args.source_group_size) % len(paths)
-                    reference = np.asarray(paths[row], dtype=float)
-                    if collision.static_collision(reference).any().item():
-                        batch_failures["source_static_self_or_limits"] += 1
-                        continue
-                    seed = int(np.random.SeedSequence([args.seed, current]).generate_state(1)[0])
-                    rng = np.random.default_rng(seed)
-                    anchor_indices = np.linspace(0, len(reference) - 1, min(64, len(reference))).astype(int)
-                    centers = collision.centers(reference[anchor_indices]).cpu().numpy()
-                    forecast = None
-                    offset = current % len(args.motion_modes)
-                    modes = args.motion_modes[offset:] + args.motion_modes[:offset]
-                    for _ in range(12):
-                        try:
-                            candidate = make_forecast(centers, args.nominal_duration, args.horizon, rng,
-                                                      object_count=args.obstacles, modes=modes, forecast_dt=args.forecast_dt)
-                        except ValueError:
-                            continue
-                        collision.set_worlds([candidate])
-                        if not collision(reference[:1], [0.], [0]).item():
-                            forecast = candidate
-                            break
-                    if forecast is None:
-                        batch_failures["world_anchor_or_initial_collision"] += 1
-                        continue
-                    jobs.append({"attempt_id": current, "source_row": row, "source_task_id": int(source["task_id"][row]),
-                                 "family_id": row // args.source_group_size, "seed": seed,
-                                 "q_start": reference[0], "q_goal": reference[-1],
-                                 "reference": reference, "forecast": forecast})
+                    job, reason = prepare_job(args, source, collision, current)
+                    if job is None:
+                        batch_failures[reason] += 1
+                    else:
+                        jobs.append(job)
                 records = []
                 if jobs:
                     collision.set_worlds([job["forecast"] for job in jobs])
@@ -313,45 +448,11 @@ def _generate(args):
                     else:
                         results = backend.plan_batch(jobs)
                     for query, (job, result) in enumerate(zip(jobs, results)):
-                        fitted, reason = None, "teacher_no_solution"
-                        fit_started = time.perf_counter()
-                        fine_paths = []
-                        for raw in result.paths:
-                            delta_t = np.diff(raw[:, -1])
-                            velocity = collision.robot.dq_max.cpu().numpy() * args.velocity_scale
-                            if (not np.isfinite(raw).all() or np.any(delta_t <= 0)
-                                or abs(raw[0, -1]) > 1e-6
-                                or not np.allclose(raw[0, :7], job["q_start"], atol=1e-6)
-                                or not np.allclose(raw[-1, :7], job["q_goal"], atol=1e-6)
-                                or np.any(np.abs(np.diff(raw[:, :7], axis=0)) > delta_t[:, None] * velocity + 1e-5)):
-                                reason = "raw_time_boundary_or_velocity"
-                                continue
-                            # Independent raw edge audit at finer resolution.
-                            tensor = torch.as_tensor(raw, **collision.tensor_args)
-                            enabled = torch.ones((1, len(raw) - 1), dtype=torch.bool, device=tensor.device)
-                            invalid, _ = edge_collision_mask(
-                                tensor[:-1][None], tensor[1:][None],
-                                torch.full_like(enabled, query, dtype=torch.long), collision,
-                                joint_step=args.joint_step / 2, time_step=args.edge_dt / 2)
-                            if bool(invalid.any().item()):
-                                reason = "raw_dense_collision"
-                                continue
-                            fine_paths.append(raw)
-                        result.statistics["raw_dense_rejected"] = len(result.paths) - len(fine_paths)
-                        result.paths = fine_paths
-                        for raw_index, raw in enumerate(result.paths):
-                            fitted, reason = fit_teacher(raw, collision, query, job["forecast"],
-                                                         spatial_rmse_max=args.spatial_rmse_max,
-                                                         timing_rmse_max=args.timing_rmse_max,
-                                                         require_tau_r=args.require_tau_r)
-                            if fitted is not None:
-                                job["fitted_solution_index"] = raw_index
-                                break
-                        job["fit_wall_s"] = time.perf_counter() - fit_started
-                        if fitted is None:
-                            batch_failures[str(reason)] += 1
+                        record, reason = validate_result(args, collision, query, job, result)
+                        if record is None:
+                            batch_failures[reason] += 1
                         else:
-                            records.append((job, result, fitted))
+                            records.append(record)
                 destination = write_shard(output, shard_index, begin, attempt, records, batch_failures, config_hash)
                 shard_index += 1
                 session_batches += 1

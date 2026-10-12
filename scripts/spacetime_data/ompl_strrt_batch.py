@@ -139,6 +139,10 @@ class OmplSTRRTBatch:
         # A crashed native worker must not leave Pool.map waiting forever.
         return self.pool.map_async(_solve, jobs, chunksize=1).get(timeout=60 + len(jobs) * self.solve_seconds)
 
+    def submit(self, job):
+        """Submit one query without a batch barrier; caller bounds queue depth."""
+        return self.pool.apply_async(_solve, (job,))
+
     def close(self):
         self.pool.close()
         self.pool.join()
