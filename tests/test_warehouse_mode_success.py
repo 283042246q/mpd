@@ -1,4 +1,7 @@
 from pathlib import Path
+import json
+import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -41,19 +44,20 @@ def test_partial_or_inconsistent_reports_cannot_be_published_as_complete():
 
 def test_target_exceeds_attempt_budget_to_prevent_success_dependent_stopping():
     args = SimpleNamespace(device="cuda:0", source="source.hdf5", attempts=100, query_batch_size=8,
-                           solve_seconds=5., seed=7, start_index=0)
+                           solve_seconds=5., seed=7, start_index=0, max_world_attempts=3)
     command = command_for_case(args, "helix", 5, "output")
     def value(key):
         return command[command.index(key) + 1]
     assert value("--num-trajectories") == "101"
     assert value("--max-attempts") == "100"
     assert value("--motion-modes") == "helix" and value("--obstacles") == "5"
+    assert value("--max-world-attempts") == "3"
     assert "--require-tau-r" in command
 
 
 def test_summarization_rejects_wrong_seed_or_different_source_and_software():
     args = SimpleNamespace(device="cuda:0", source=Path("source.hdf5"), query_batch_size=8,
-                           solve_seconds=5., seed=7, start_index=0)
+                           solve_seconds=5., seed=7, start_index=0, max_world_attempts=12)
     config = dict(backend="torch-forest", device=args.device, source=str(args.source.resolve()),
                   seed=7, start_index=0, source_group_size=2, query_batch_size=8, solve_seconds=5.,
                   torch_batch_policy="fill", require_tau_r=True, edges_per_query=16, goal_roots=4,
@@ -66,3 +70,26 @@ def test_summarization_rejects_wrong_seed_or_different_source_and_software():
         verify_case_config(dict(config, seed=8), args, "linear", 3)
     with pytest.raises(ValueError, match="changed between cases"):
         verify_case_config(dict(other, software={"generator": "changed"}), args, "orbit", 5, common)
+    with pytest.raises(ValueError, match="benchmark parameters"):
+        verify_case_config(dict(config, max_world_attempts=3), args, "linear", 3)
+
+
+def test_bash_entrypoint_forwards_start_and_world_retry_limits(tmp_path):
+    recorder = tmp_path / "record_arguments.py"
+    recorder.write_text("#!/usr/bin/env python3\nimport json,os,sys\n"
+                        "with open(os.environ['MODE_BENCHMARK_ARGV_FILE'], 'w') as f: json.dump(sys.argv[1:], f)\n")
+    recorder.chmod(0o755)
+    destination = tmp_path / "argv.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/spacetime_data/run_warehouse_mode_success.sh"
+    env = dict(os.environ, PYTHON_BIN=str(recorder), MODE_BENCHMARK_ARGV_FILE=str(destination),
+               START_INDEX="200", MAX_WORLD_ATTEMPTS="3", ATTEMPTS_PER_CASE="17",
+               OUTPUT_ROOT=str(tmp_path / "output with spaces"))
+    subprocess.run(["bash", str(script), "--summarize-only"], cwd=str(tmp_path), env=env, check=True)
+    command = json.loads(destination.read_text())
+    def value(key):
+        return command[command.index(key) + 1]
+    assert value("--start-index") == "200"
+    assert value("--max-world-attempts") == "3"
+    assert value("--attempts") == "17"
+    assert value("--output-root") == str(tmp_path / "output with spaces")
+    assert "--summarize-only" in command

@@ -89,6 +89,30 @@ def test_invalid_generation_arguments_are_rejected():
         generation.parse_args(["--output-root", "/tmp/unused", "--query-batch-size", "0"])
     with pytest.raises(SystemExit):
         generation.parse_args(["--output-root", "/tmp/unused", "--velocity-scale", "2"])
+    with pytest.raises(SystemExit):
+        generation.parse_args(["--output-root", "/tmp/unused", "--max-world-attempts", "0"])
+
+
+def test_configured_world_sampling_limit_is_applied_per_attempt(tmp_path, monkeypatch):
+    source = tmp_path / "source.hdf5"
+    path = np.zeros((32, 7))
+    path[:, 0] = np.linspace(-0.5, 0.5, 32)
+    with h5py.File(source, "w") as file:
+        file["sol_path"] = np.stack([path, path[::-1]])
+        file["task_id"] = [10, 10]
+    calls = []
+    def reject_world(*args, **kwargs):
+        calls.append(1)
+        raise ValueError("no anchor in workspace")
+    monkeypatch.setattr(generation, "WarehouseCollision", FakeWarehouse)
+    monkeypatch.setattr(generation, "make_forecast", reject_world)
+    output = tmp_path / "output"
+    assert generation.main(["--source", str(source), "--output-root", str(output), "--device", "cpu",
+                            "--num-trajectories", "1", "--max-attempts", "2", "--max-world-attempts", "3"]) == 2
+    assert len(calls) == 6  # two task attempts, three world samples each
+    report = json.loads((output / "report.json").read_text())
+    assert report["attempts"] == 2 and report["failure_counts"] == {"world_anchor_or_initial_collision": 2}
+    assert json.loads((output / "config.json").read_text())["max_world_attempts"] == 3
 
 
 @pytest.mark.parametrize("policy,expected_sizes", [("fill", [3]), ("legacy", [1, 1, 1])])

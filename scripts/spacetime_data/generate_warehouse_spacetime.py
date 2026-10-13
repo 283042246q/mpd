@@ -84,6 +84,8 @@ def parse_args(argv=None):
     parser.add_argument("--source-group-size", type=int, default=2,
                         help="forward/reverse source rows per family; doubled warehouse default=2")
     parser.add_argument("--max-attempts", type=int, default=0, help="0 means 20 * requested trajectories")
+    parser.add_argument("--max-world-attempts", type=int, default=12,
+                        help="maximum dynamic-world samples per attempt; does not retry failed planning")
     parser.add_argument("--obstacles", type=int, default=3)
     parser.add_argument("--motion-modes", nargs="+", choices=MOTION_MODES, default=list(MOTION_MODES))
     parser.add_argument("--horizon", type=float, default=14.)
@@ -101,7 +103,8 @@ def parse_args(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     for name in ("num_trajectories", "query_batch_size", "checkpoint_batches", "edges_per_query", "goal_roots",
-                 "max_iterations", "cpu_workers", "source_group_size", "obstacles", "collision_chunk"):
+                 "max_iterations", "cpu_workers", "source_group_size", "obstacles", "collision_chunk",
+                 "max_world_attempts"):
         if getattr(args, name) < 1:
             parser.error(name + " must be positive")
     if args.start_index < 0 or args.max_attempts < 0 or args.seed < 0:
@@ -239,7 +242,7 @@ def prepare_job(args, source, collision, current):
     offset = current % len(args.motion_modes)
     modes = args.motion_modes[offset:] + args.motion_modes[:offset]
     forecast = None
-    for _ in range(12):
+    for _ in range(args.max_world_attempts):
         try:
             candidate = make_forecast(centers, args.nominal_duration, args.horizon, rng,
                                       object_count=args.obstacles, modes=modes, forecast_dt=args.forecast_dt)

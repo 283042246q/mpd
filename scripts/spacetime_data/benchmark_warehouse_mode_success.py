@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from scripts.spacetime_data.generate_warehouse_spacetime import REPOSITORY, SOURCE, atomic_json
+from scripts.spacetime_data.generate_warehouse_spacetime import REPOSITORY, SOURCE, atomic_json, sha256_file
 from scripts.spacetime_data.warehouse_world import MOTION_MODES
 
 
@@ -55,17 +55,22 @@ def command_for_case(args, mode, obstacles, output):
             "--edges-per-query", "16", "--goal-roots", "4", "--max-iterations", "512",
             "--solve-seconds", str(args.solve_seconds), "--collision-chunk", "512",
             "--seed", str(args.seed), "--start-index", str(args.start_index),
+            "--max-world-attempts", str(args.max_world_attempts),
             "--source-group-size", "2", "--obstacles", str(obstacles),
             "--motion-modes", mode, "--require-tau-r"]
 
 
 def verify_case_config(config, args, mode, obstacles, shared_config=None):
+    # Historical generators used exactly 12 samples without a CLI field. This
+    # inference permits read-only summaries; software hashes stay unchanged.
+    config = dict(config)
+    config.setdefault("max_world_attempts", 12)
     expected = dict(backend="torch-forest", device=args.device, source=str(args.source.resolve()),
                     seed=args.seed, start_index=args.start_index, source_group_size=2,
                     query_batch_size=args.query_batch_size, solve_seconds=args.solve_seconds,
                     torch_batch_policy="fill", require_tau_r=True, edges_per_query=16,
                     goal_roots=4, max_iterations=512, collision_chunk=512,
-                    motion_modes=[mode], obstacles=obstacles)
+                    motion_modes=[mode], obstacles=obstacles, max_world_attempts=args.max_world_attempts)
     if any(config.get(key) != value for key, value in expected.items()):
         raise ValueError("case configuration does not match benchmark parameters")
     normalized = {key: value for key, value in config.items() if key not in ("motion_modes", "obstacles")}
@@ -78,6 +83,7 @@ def publish(root, rows, args):
     atomic_json(root / "results.json", dict(
         backend="torch-forest", counts=[3, 5], modes=list(MOTION_MODES),
         attempts_per_case=args.attempts, seed=args.seed, start_index=args.start_index,
+        max_world_attempts=args.max_world_attempts,
         query_batch_size=args.query_batch_size, solve_seconds=args.solve_seconds,
         complete=len(rows) == 2 * len(MOTION_MODES), cases=rows,
         success_definition="final accepted c AND tau-r / all attempts, including preparation failures",
@@ -95,6 +101,7 @@ def publish(root, rows, args):
     by_key = {(row["mode"], row["obstacles"]): row for row in rows}
     lines = ["# Warehouse 单 mode attempt 成功率", "",
              "后端 torch-forest；每格固定 %d 次 attempt；成功要求 c 和 tau-r 均通过最终验收。" % args.attempts,
+             "每个 attempt 最多采样 %d 个动态场景，参考轨迹起始索引为 %d。" % (args.max_world_attempts, args.start_index),
              "", "| mode | 3 个障碍 | 5 个障碍 | 差值（5−3，百分点） |", "| --- | ---: | ---: | ---: |"]
     for mode in MOTION_MODES:
         a, b = by_key.get((mode, 3)), by_key.get((mode, 5))
@@ -116,11 +123,12 @@ def main(argv=None):
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=20261013)
     parser.add_argument("--start-index", type=int, default=0)
+    parser.add_argument("--max-world-attempts", type=int, default=12)
     parser.add_argument("--query-batch-size", type=int, default=8)
     parser.add_argument("--solve-seconds", type=float, default=5.)
     parser.add_argument("--summarize-only", action="store_true")
     args = parser.parse_args(argv)
-    if min(args.attempts, args.query_batch_size, args.solve_seconds) <= 0 or min(args.seed, args.start_index) < 0:
+    if min(args.attempts, args.query_batch_size, args.solve_seconds, args.max_world_attempts) <= 0 or min(args.seed, args.start_index) < 0:
         parser.error("invalid attempt budget, batch size, time, seed or index")
     root = args.output_root.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -134,6 +142,11 @@ def main(argv=None):
             if args.summarize_only and not complete:
                 continue
             if not args.summarize_only and not complete:
+                if shared_config is not None and shared_config["software"]["generate_warehouse_spacetime.py"] != sha256_file(
+                    REPOSITORY / "scripts/spacetime_data/generate_warehouse_spacetime.py"
+                ):
+                    raise ValueError("generator version changed: resume this frozen experiment with its original version, "
+                                     "or choose a new output-root; summarize-only can read the old results")
                 command = command_for_case(args, mode, obstacles, output)
                 if (output / "config.json").exists():
                     command.append("--resume")
