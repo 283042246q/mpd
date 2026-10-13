@@ -203,13 +203,13 @@ python -m pytest -q \
 | 机制 | GPU `torch-forest` | OMPL `streaming` |
 | --- | --- | --- |
 | source/world 有效性筛选 | 有 | 有 |
-| 筛掉无效候选后补齐有效任务 | 当前没有，每批最多尝试 query-batch-size 个候选 | 有，按有效任务补充队列 |
+| 筛掉无效候选后补齐有效任务 | 有，默认 torch-batch-policy=fill；legacy 保留旧候选批次行为 | 有，按有效任务补充队列 |
 | 不等待整批即可收取结果 | 当前没有，plan_batch 返回后才验收 | 有，逐条收取和验收 |
 | 候选准备与求解重叠 | 当前没有，主进程顺序执行 | 有，主进程准备/验收时 CPU workers 继续求解 |
 
-GPU 批内已经对 query × 候选边 × 边采样点并行。下一步适合做“补齐有效 batch + CPU 预取下一批 + 单 GPU batch 求解”的流水线。CPU producer 应独立持有 source/collision 对象，避免修改正在求解的 forecast；当前候选准备自身使用 CUDA，直接再开线程共享 collision world 不安全，也不一定有吞吐收益。
+GPU 批内已经对 query × 候选边 × 边采样点并行。已加入有效 batch 补齐和阶段计时，同参数对照方法见 [WAREHOUSE_TORCH_BATCH_FILL.md](WAREHOUSE_TORCH_BATCH_FILL.md)。候选预取尚未加入，先根据准备时间占比决定是否需要。CPU producer 应独立持有 source/collision 对象，避免修改正在求解的 forecast；当前候选准备自身使用 CUDA，直接再开线程共享 collision world 不安全，也不一定有吞吐收益。
 
-OMPL 的每 query 进程队列不能直接作为 GPU forest 的替代调度。多个进程争用一张 GPU 会重复创建上下文和模型；在 GPU 活跃树中即时替换 query，需要额外处理树、根、query/world ID 和预算隔离。通常先填满有效 batch，再测阶段耗时，最后决定是否需要预取。此次随机化修改未改变 GPU 的调度方式。
+OMPL 的每 query 进程队列不能直接作为 GPU forest 的替代调度。多个进程争用一张 GPU 会重复创建上下文和模型；在 GPU 活跃树中即时替换 query，需要额外处理树、根、query/world ID 和预算隔离。随机化修改后新增的是有效 batch 补齐，GPU 搜索仍按整批同步执行。
 
 ### 随机化验收（2026-10-13）
 
