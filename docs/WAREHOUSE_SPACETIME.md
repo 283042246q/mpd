@@ -71,7 +71,7 @@ data_trajectories/EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTCon
 
 ## 动态障碍如何设计
 
-默认每个 world 有三个物体，形状依次为 sphere、轴对齐 box、z 轴 capsule；可用 `--obstacles 5` 增加数量。尺寸与方向随机，形状和完整未来位置一并保存。障碍相对静态物体和相互之间可以穿模，**这些重叠不会拒绝场景或改变运动**；机械臂相对静态环境、自身和动态障碍的碰撞仍须检查。
+默认每个 world 有三个物体，可用 `--obstacles 5` 增加数量。2026-10-13 起，每个物体的形状独立等概率采样 sphere、轴对齐 box 或 z 轴 capsule，与物体序号和数量无关；一个场景允许重复形状，不保证恰好三种各一个。尺寸与方向随机，形状和完整未来位置一并保存。障碍相对静态物体和相互之间可以穿模，**这些重叠不会拒绝场景或改变运动**；机械臂相对静态环境、自身和动态障碍的碰撞仍须检查。
 
 | 模式 | 运动 |
 | --- | --- |
@@ -92,7 +92,9 @@ data_trajectories/EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTCon
 --motion-modes linear curved shuttle stop_go
 ```
 
-每个物体的交互锚点取自参考路径中位于 warehouse 工作区的机械臂碰撞球。工作区范围为 `[0.12,-0.78,0.08]` 到 `[0.88,0.68,1.00]` m；排除大部分底座区域。物体在设计事件时刻经过该锚点，事件时刻默认落在 nominal duration 的约 25%–65%。
+每个物体的交互锚点取自参考路径中位于 warehouse 工作区的机械臂碰撞球。工作区范围为 `[0.12,-0.78,0.08]` 到 `[0.88,0.68,1.00]` m；排除大部分底座区域。物体在设计事件时刻经过该锚点。事件时刻独立均匀采样于 nominal duration 的 25%–65%，与障碍数量和序号无关；不排序、不强制等间隔，因此允许交互聚集或近乎同时发生。默认 nominal duration 为 8 秒，对应 2–5.2 秒。参考路径上的 anchor phase 继续与本次抽到的事件比例对应。
+
+GPU forest 与 OMPL STRRT* 共用 `make_forecast`，两种后端同时生效。`config.json.world_sampling` 记录采样策略，软件 hash 记录生成器版本；最终接受数据的分布仍会受初始碰撞、搜索和拟合验收筛选影响。同 seed、attempt 和生成配置可复现 proposal。旧分段等距事件策略生成的数据保留原 forecast，新旧预测不覆盖；升级后使用新的输出目录，恢复仍严格检查代码与配置。
 
 默认 `--nominal-duration 8 --horizon 14`。最终接受时再次检查：**每个物体都必须在最终执行时长的 5%–95% 内发生事件，并在执行期间进入工作区。** 如果轨迹太早结束，或减速后的时长不再满足交互条件，该样本拒绝。环绕/往返模式可能多次经过工作区，不强求从工作区外起步。
 
@@ -195,3 +197,23 @@ python -m pytest -q \
 这两份数据位于 `data_trajectories_spacetime/`。GPU 使用 query batch 4、256 iterations、3 s/batch；OMPL 使用 query batch 2、2 workers、2 s/query、start-index 2。两者均启用 `--require-tau-r`。预览位于 `benchmark_results/warehouse_spacetime/preview.png`。
 
 这些小批用于功能与数据正确性验收，不能替代大规模 soak 或同任务、同预算的吞吐比较。小数据集按 family 哈希划分，某个 split 可能为空；生成训练规模数据后应检查各 split 的数量与场景覆盖。
+
+## GPU 与 CPU 的任务调度区别
+
+| 机制 | GPU `torch-forest` | OMPL `streaming` |
+| --- | --- | --- |
+| source/world 有效性筛选 | 有 | 有 |
+| 筛掉无效候选后补齐有效任务 | 当前没有，每批最多尝试 query-batch-size 个候选 | 有，按有效任务补充队列 |
+| 不等待整批即可收取结果 | 当前没有，plan_batch 返回后才验收 | 有，逐条收取和验收 |
+| 候选准备与求解重叠 | 当前没有，主进程顺序执行 | 有，主进程准备/验收时 CPU workers 继续求解 |
+
+GPU 批内已经对 query × 候选边 × 边采样点并行。下一步适合做“补齐有效 batch + CPU 预取下一批 + 单 GPU batch 求解”的流水线。CPU producer 应独立持有 source/collision 对象，避免修改正在求解的 forecast；当前候选准备自身使用 CUDA，直接再开线程共享 collision world 不安全，也不一定有吞吐收益。
+
+OMPL 的每 query 进程队列不能直接作为 GPU forest 的替代调度。多个进程争用一张 GPU 会重复创建上下文和模型；在 GPU 活跃树中即时替换 query，需要额外处理树、根、query/world ID 和预算隔离。通常先填满有效 batch，再测阶段耗时，最后决定是否需要预取。此次随机化修改未改变 GPU 的调度方式。
+
+### 随机化验收（2026-10-13）
+
+- 回归测试 **27 passed**：新增测试覆盖障碍数 1–5 的每个对象位置都能取到三种形状、事件窗口覆盖、非固定时间顺序、精确 anchor knot 和 seed 复现。
+- 真实 Warehouse 中两后端各生成 6 条 c/tau-r 合格轨迹，磁盘独立加密复检均 **6/6 passed**。GPU 使用 query batch 4、256 iterations、3 秒预算；OMPL 使用 2 workers、3 秒/query；两者均为 3 个障碍、start-index 2。
+- 两份结果中共同接受的 attempt 1、10，其保存的全部 world 数组逐项完全一致。
+- 结果位于 `benchmark_results/warehouse_world_randomization/20261013/`，包含两后端的 `validation.json` 和 `sampling-verification.json`。这次小试验证功能与契约，不用于性能比较。
