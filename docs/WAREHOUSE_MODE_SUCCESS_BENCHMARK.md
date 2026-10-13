@@ -12,7 +12,7 @@
 最终 c 和 tau-r 均验收合格的轨迹数 / 全部 attempt 数
 ```
 
-分母包含 source 的静态/自碰撞/限位失败，以及 world 锚点/初始动态碰撞失败。每个 attempt 在场景准备阶段允许原有最多 12 次重采样，这 12 次不另外计为 attempt。全部 mode/count 使用同一 source 前缀、seed 和参数，未按 mode 调整预算。
+分母包含 source 的静态/自碰撞/限位失败，以及 world 锚点/初始动态碰撞失败。每个 attempt 在场景准备阶段默认允许最多 12 次重采样，可用 `--max-world-attempts` 设置；这些内部重采样不另外计为 attempt。全部 mode/count 使用同一 source 前缀、seed 和参数，未按 mode 调整预算。
 
 同时保存进入求解器后的通过率，区分：
 
@@ -31,7 +31,7 @@ conda activate mpd-splines-public
 python -m scripts.spacetime_data.benchmark_warehouse_mode_success \
   --output-root benchmark_results/warehouse_mode_success/20261013/torch-forest-a100 \
   --attempts 100 --device cuda:0 \
-  --seed 20261013 --start-index 0 \
+  --seed 20261013 --start-index 0 --max-world-attempts 12 \
   --query-batch-size 8 --solve-seconds 5
 ```
 
@@ -45,12 +45,40 @@ python -m scripts.spacetime_data.benchmark_warehouse_mode_success \
 python -m scripts.spacetime_data.benchmark_warehouse_mode_success \
   --output-root benchmark_results/warehouse_mode_success/20261013/torch-forest-a100 \
   --attempts 100 --seed 20261013 --start-index 0 \
-  --query-batch-size 8 --solve-seconds 5 --summarize-only
+  --max-world-attempts 12 --query-batch-size 8 --solve-seconds 5 --summarize-only
 ```
 
 脚本校验各 case 的参数、source/资产/软件一致性以及 attempt/失败/求解计数，避免混合旧版本或残缺报告。完整结果与每格失败分类分别保存为 `results.md`、`results.csv`、`results.json`；每完成一格更新一次，原 HDF5 和 generator report 位于 `datasets/n3|n5/MODE/`。
 
 进入求解器及 raw 有解的累计数量从全部失败计数推导；恢复后的 `session_pipeline_statistics` 只属于最后会话，不能当作累计分母。`session_wall_s` 同样是最后会话时间，恢复后不代表整个 case 的总计算时间。
+
+### Bash 配置入口
+
+`scripts/spacetime_data/run_warehouse_mode_success.sh` 顶部可修改默认值，也可用环境变量覆盖：
+
+```bash
+conda activate mpd-splines-public
+START_INDEX=20000 MAX_WORLD_ATTEMPTS=12 ATTEMPTS_PER_CASE=100 \
+  bash scripts/spacetime_data/run_warehouse_mode_success.sh
+```
+
+| Bash 变量 | CLI 参数 | 默认值 | 含义 |
+| --- | --- | ---: | --- |
+| START_INDEX | --start-index | 0 | source 参考轨迹起始行，不是 task_id |
+| MAX_WORLD_ATTEMPTS | --max-world-attempts | 12 | 每个 attempt 的动态场景采样上限，不是规划重试次数 |
+| ATTEMPTS_PER_CASE | --attempts | 100 | 每个 mode/count 格子的参考任务尝试总数 |
+
+原版 OMPL 和 GPU 的普通生成入口也支持 `--max-world-attempts`，因为它们共用候选准备函数。参考轨迹静态检查失败时直接跳过，不执行动态场景重采样；规划失败后同样不会因该参数而重新规划。
+
+Bash 默认使用包含 start-index、world 重试上限和 seed 的新输出目录。代码或参数改变后，不追加到旧冻结目录。当前已暂停试验仍可只汇总：
+
+```bash
+START_INDEX=0 MAX_WORLD_ATTEMPTS=12 \
+OUTPUT_ROOT=benchmark_results/warehouse_mode_success/20261013/torch-forest-a100 \
+  bash scripts/spacetime_data/run_warehouse_mode_success.sh --summarize-only
+```
+
+旧 config 没有重试参数时，只读汇总按当时硬编码的 12 次解释，保留原代码 hash。旧试验剩余格子需使用原版本 `0bc6bf1` 续跑；新版本的生成器 hash 已变化，统计脚本会在新格子启动前拒绝混合版本。已完成数据和统计不被迁移或覆盖。
 
 ## 解读范围
 
