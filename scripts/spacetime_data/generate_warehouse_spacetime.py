@@ -66,6 +66,8 @@ def parse_args(argv=None):
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--num-trajectories", type=int, default=100)
     parser.add_argument("--query-batch-size", type=int, default=8)
+    parser.add_argument("--torch-batch-policy", choices=("fill", "legacy"), default="fill",
+                        help="Torch only: fill valid-query batches, or limit candidate attempts per batch")
     parser.add_argument("--checkpoint-batches", type=int, default=10,
                         help="publish derived index/report every N batches; shards commit every batch")
     parser.add_argument("--edges-per-query", type=int, default=16)
@@ -413,6 +415,30 @@ def _generate(args):
     max_attempts = args.max_attempts or args.num_trajectories * 20
     shard_index = len(list((output / "shards").glob("*.hdf5")))
     session_batches = 0
+    pipeline = None
+    if backend is None:
+        pipeline = dict(scheduling="torch-batch", batch_policy=args.torch_batch_policy,
+                        query_batch_size=args.query_batch_size, prepared=0, submitted=0,
+                        completed=0, raw_solved_queries=0, accepted=0, planned_batches=0,
+                        full_batches=0, batch_size_histogram={}, preparation_wall_s=0.,
+                        world_setup_wall_s=0., planner_wall_s=0., postprocess_wall_s=0.,
+                        shard_write_wall_s=0.)
+
+    def sync_stage():
+        if pipeline is not None and collision.tensor_args["device"].type == "cuda":
+            torch.cuda.synchronize(collision.tensor_args["device"])
+
+    def publish():
+        elapsed = time.perf_counter() - started
+        if pipeline is not None:
+            pipeline["effective_batch_size_mean"] = pipeline["submitted"] / max(pipeline["planned_batches"], 1)
+            pipeline["batch_fill_fraction"] = pipeline["submitted"] / max(
+                pipeline["planned_batches"] * args.query_batch_size, 1)
+            pipeline["preparation_fraction"] = pipeline["preparation_wall_s"] / max(elapsed, 1e-9)
+            pipeline["accepted_trajectories_per_minute"] = pipeline["accepted"] * 60 / max(elapsed, 1e-9)
+        publish_index(output, config_hash, accepted, attempt, failures, entries,
+                      elapsed, args.num_trajectories, pipeline)
+
     try:
         with h5py.File(args.source, "r") as source:
             paths = source["sol_path"]
@@ -425,7 +451,10 @@ def _generate(args):
                 begin = attempt
                 count = min(args.query_batch_size, args.num_trajectories - accepted, max_attempts - attempt)
                 jobs, batch_failures = [], Counter()
-                for _ in range(count):
+                sync_stage()
+                preparation_started = time.perf_counter()
+                fill_valid = backend is None and args.torch_batch_policy == "fill"
+                while attempt < max_attempts and (len(jobs) < count if fill_valid else attempt - begin < count):
                     current = attempt
                     attempt += 1
                     job, reason = prepare_job(args, source, collision, current)
@@ -433,9 +462,23 @@ def _generate(args):
                         batch_failures[reason] += 1
                     else:
                         jobs.append(job)
+                sync_stage()
+                if pipeline is not None:
+                    pipeline["prepared"] += attempt - begin
+                    pipeline["preparation_wall_s"] += time.perf_counter() - preparation_started
                 records = []
                 if jobs:
+                    world_started = time.perf_counter()
                     collision.set_worlds([job["forecast"] for job in jobs])
+                    sync_stage()
+                    if pipeline is not None:
+                        pipeline["world_setup_wall_s"] += time.perf_counter() - world_started
+                        pipeline["submitted"] += len(jobs)
+                        pipeline["planned_batches"] += 1
+                        pipeline["full_batches"] += int(len(jobs) == args.query_batch_size)
+                        histogram = pipeline["batch_size_histogram"]
+                        histogram[str(len(jobs))] = histogram.get(str(len(jobs)), 0) + 1
+                    planner_started = time.perf_counter()
                     if backend is None:
                         planner = TorchSpaceTimeForest(
                             collision, collision.robot.q_pos_min, collision.robot.q_pos_max,
@@ -450,13 +493,26 @@ def _generate(args):
                             reference_paths=np.stack([j["reference"] for j in jobs]))
                     else:
                         results = backend.plan_batch(jobs)
+                    sync_stage()
+                    if pipeline is not None:
+                        pipeline["planner_wall_s"] += time.perf_counter() - planner_started
+                        pipeline["completed"] += len(results)
+                        pipeline["raw_solved_queries"] += sum(bool(result.paths) for result in results)
+                    postprocess_started = time.perf_counter()
                     for query, (job, result) in enumerate(zip(jobs, results)):
                         record, reason = validate_result(args, collision, query, job, result)
                         if record is None:
                             batch_failures[reason] += 1
                         else:
                             records.append(record)
+                    sync_stage()
+                    if pipeline is not None:
+                        pipeline["postprocess_wall_s"] += time.perf_counter() - postprocess_started
+                        pipeline["accepted"] += len(records)
+                write_started = time.perf_counter()
                 destination = write_shard(output, shard_index, begin, attempt, records, batch_failures, config_hash)
+                if pipeline is not None:
+                    pipeline["shard_write_wall_s"] += time.perf_counter() - write_started
                 shard_index += 1
                 session_batches += 1
                 accepted += len(records)
@@ -466,12 +522,11 @@ def _generate(args):
                                 "duration_s": fitted["quality"]["duration"], "modes": job["forecast"].modes,
                                 "tau_r_valid": fitted["tau_r_valid"]} for job, _, fitted in records)
                 if session_batches % args.checkpoint_batches == 0 or accepted >= args.num_trajectories or attempt >= max_attempts:
-                    publish_index(output, config_hash, accepted, attempt, failures, entries,
-                                  time.perf_counter() - started, args.num_trajectories)
+                    publish()
                 print(json.dumps({"accepted": accepted, "attempts": attempt, "batch_accepted": len(records),
-                                  "batch_failures": dict(batch_failures), "wall_s": round(time.perf_counter() - started, 2)}), flush=True)
-        publish_index(output, config_hash, accepted, attempt, failures, entries,
-                      time.perf_counter() - started, args.num_trajectories)
+                                  "batch_failures": dict(batch_failures), "effective_queries": len(jobs),
+                                  "wall_s": round(time.perf_counter() - started, 2)}), flush=True)
+        publish()
         return 0 if accepted >= args.num_trajectories else 2
     finally:
         if backend is not None:
