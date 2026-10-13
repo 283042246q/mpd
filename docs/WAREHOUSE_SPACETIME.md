@@ -27,8 +27,13 @@ conda activate mpd-splines-public
 ### GPU batch 时空 teacher
 
 ```bash
+START_INDEX=0
+MAX_WORLD_ATTEMPTS=12
+
 python -m scripts.spacetime_data.generate_warehouse_spacetime \
   --backend torch-forest \
+  --start-index "$START_INDEX" \
+  --max-world-attempts "$MAX_WORLD_ATTEMPTS" \
   --device cuda:0 \
   --output-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1 \
   --num-trajectories 100 \
@@ -43,8 +48,13 @@ python -m scripts.spacetime_data.generate_warehouse_spacetime \
 ### 原版 ST-RRT* 多进程 batch
 
 ```bash
+START_INDEX=0
+MAX_WORLD_ATTEMPTS=12
+
 python -m scripts.spacetime_data.generate_warehouse_spacetime \
   --backend ompl-strrtstar \
+  --start-index "$START_INDEX" \
+  --max-world-attempts "$MAX_WORLD_ATTEMPTS" \
   --device cuda:0 \
   --output-root data_trajectories_spacetime/Warehouse-STRRTstar-v1 \
   --num-trajectories 100 \
@@ -54,6 +64,8 @@ python -m scripts.spacetime_data.generate_warehouse_spacetime \
   --obstacles 3 \
   --require-tau-r
 ```
+
+两个 Bash 示例均可直接修改 `START_INDEX` 和 `MAX_WORLD_ATTEMPTS`：前者是 source 参考轨迹的起始行；后者是每个 reference attempt 内动态场景的最大采样次数，规划失败后仍前进到下一条参考轨迹。
 
 OMPL worker 自动使用仓库 `deps/pybullet_ompl/ompl/py-bindings` 和当前 conda library path，运行环境需确有编译好的 `SpaceTimeStateSpace/STRRTstar`。CPU worker 不创建 CUDA context；主进程可用 GPU 做碰撞复检和拟合验收。纯 CPU 小试可显式设置 `--device cpu`。
 
