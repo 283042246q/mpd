@@ -57,6 +57,8 @@ python -m scripts.spacetime_data.generate_warehouse_spacetime \
 
 OMPL worker 自动使用仓库 `deps/pybullet_ompl/ompl/py-bindings` 和当前 conda library path，运行环境需确有编译好的 `SpaceTimeStateSpace/STRRTstar`。CPU worker 不创建 CUDA context；主进程可用 GPU 做碰撞复检和拟合验收。纯 CPU 小试可显式设置 `--device cpu`。
 
+2026-10-13 更新：OMPL 默认使用持续任务队列，补齐有效候选，单条结果返回后即可验收，候选准备与 worker 求解重叠。`--ompl-queue-size 0` 自动取 `max(query-batch-size, 2 × cpu-workers)`；此模式下 `query-batch-size` 控制 shard 的连续 attempt 提交数。旧批处理对照使用 `--ompl-scheduling batch`。参数、恢复与实测结果见 [WAREHOUSE_STRRT_STREAMING.md](WAREHOUSE_STRRT_STREAMING.md)。
+
 两后端的预算含义不同：GPU 的 `solve-seconds` 是一个 batch 的搜索预算，OMPL 是每个 query 的预算。这里的命令用于生成数据，不是同预算性能对照。
 
 默认 source：

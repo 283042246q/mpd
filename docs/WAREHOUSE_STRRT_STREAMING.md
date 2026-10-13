@@ -106,3 +106,33 @@ python -m scripts.spacetime_data.validate_warehouse_spacetime \
 ```
 
 测试覆盖无效候选补齐、慢任务期间继续准备/验收、验收失败补齐、准确目标数量、attempt 上限、结果重排缓存上限、异常/超时、中断恢复与 world 隔离。旧 GPU RRT 和 spacetime forest 同时回归。
+
+## 2026-10-13 实测验收
+
+在 `main` 的 `28278a1` 实现上，使用 `mpd-splines-public`、RTX 4090 D 和真实单臂 Warehouse 环境。两次运行依次执行，配置仅 `ompl_scheduling` 不同：6 workers、每 query 5 秒搜索预算、query batch 8、目标 40 条、3 个动态障碍、`require-tau-r`、默认 source/world seeds。streaming 自动队列容量为 12。
+
+| 指标 | batch | streaming |
+| --- | ---: | ---: |
+| 最终合格轨迹 | 40 | 40 |
+| 消耗 attempt | 89 | 94 |
+| 总会话耗时 | 85.731 s | 62.087 s |
+| 合格轨迹/分钟 | 27.995 | 38.656 |
+| 独立磁盘复检，5 ms 加密 | 40/40 | 40/40 |
+
+本次耗时减少 **27.58%**，吞吐提高 **38.08%（1.381 倍）**。改变调度会改变 worker RNG 的消耗顺序，两次运行的轨迹和失败次数不完全相同；这是一次端到端吞吐对照，不是多次重复实验的统计结论。
+
+streaming 共提交并收回 59 个有效 query（包含无解与后续验收失败的任务），队列峰值 12，结果重排范围峰值 26 个 attempt。平均求解时间 **5.031 s/query**；候选准备累计 0.681 s，结果复检/拟合累计 2.540 s，shard 写入累计 0.122 s。整次运行的 worker 求解占用估计为 79.68%，包含启动和接近目标时的并行度下降。
+
+重复执行已完成运行的 `--resume` 后，12 个完整 shard 的 SHA256 全部不变，会话统计保留。上述自动化测试为 **21 passed**，其中中断恢复测试覆盖未提交区间重算、连续 attempt 区间和逐条 world 恢复。
+
+结果位于：
+
+```text
+benchmark_results/warehouse_spacetime_streaming/20261013/
+  comparison.json
+  batch/{config.json,report.json,validation.json,shards/}
+  streaming/{config.json,report.json,validation.json,shards/}
+  streaming/shards-before-resume.json
+```
+
+`validation.json` 为干净的机器可读报告，验证器控制台原始输出另存 `validation.log`。中断前 `20261012` 的验收目录包含零字节分片，原样保留，不用于本次结论。
