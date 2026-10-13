@@ -18,6 +18,12 @@ MOTION_MODES = (
 )
 WORKSPACE_LOW = np.array([0.12, -0.78, 0.08])
 WORKSPACE_HIGH = np.array([0.88, 0.68, 1.00])
+EVENT_FRACTION_RANGE = (0.25, 0.65)
+WORLD_SAMPLING_POLICY = {
+    "shape": "iid_uniform_sphere_box_capsule",
+    "event_fraction": "iid_uniform",
+    "event_fraction_range": EVENT_FRACTION_RANGE,
+}
 
 
 @dataclass
@@ -58,7 +64,10 @@ def make_forecast(reference_centers, nominal_duration, horizon, rng, *,
         raise ValueError("invalid duration, object_count or forecast_dt")
     if not modes or any(mode not in MOTION_MODES for mode in modes):
         raise ValueError("unknown motion mode")
-    fractions = np.linspace(0.25, 0.65, object_count) + rng.uniform(-0.035, 0.035, object_count)
+    # Independent draws avoid coupling shape/event time to count or object
+    # index. Events can cluster or occur in any object order; do not sort them.
+    fractions = rng.uniform(*EVENT_FRACTION_RANGE, size=object_count)
+    sampled_shapes = rng.integers(0, 3, size=object_count)
     events = fractions * nominal_duration
     grid = np.linspace(0, horizon, int(np.ceil(horizon / forecast_dt)) + 1)
     times = np.unique(np.r_[grid, events])  # exact anchor knots survive serialization
@@ -105,7 +114,7 @@ def make_forecast(reference_centers, nominal_duration, horizon, rng, *,
             side = 0.12 * np.sin(2 * dt)
             up = 0.12 * (np.cos(2 * dt) - 1)
         positions.append(anchor + along[:, None] * direction + side[:, None] * lateral + up[:, None] * vertical)
-        shape = index % 3
+        shape = int(sampled_shapes[index])
         radius = float(rng.uniform(0.04, 0.075))
         shapes.append(shape)
         sizes.append([radius, 0., 0.] if shape == 0 else

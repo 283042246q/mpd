@@ -22,7 +22,9 @@ import torch
 
 from mpd.datasets.spacetime_schema import load_panda_robot_bundle, materialize_dataset_contract, sha256_file
 from scripts.spacetime_data.batch_spacetime_rrt import TorchSpaceTimeForest, edge_collision_mask
-from scripts.spacetime_data.warehouse_world import MOTION_MODES, WarehouseCollision, make_forecast
+from scripts.spacetime_data.warehouse_world import (
+    MOTION_MODES, WORLD_SAMPLING_POLICY, WarehouseCollision, make_forecast,
+)
 from scripts.spacetime_data.warehouse_trajectory_fit import fit_teacher
 
 
@@ -124,6 +126,7 @@ def run_identity(args, robot):
                            "numpy": np.__version__, "cuda": torch.version.cuda},
                   reused_tree_sha256=sha256_file(REPOSITORY / "scripts/generate_data/gpu_batch_rrt.py"),
                   static_environment="EnvWarehouse", goal_type="joint", oracle_forecast=True,
+                  world_sampling=WORLD_SAMPLING_POLICY,
                   terminal_hold="none; task ends at decoded trajectory duration",
                   software={name: sha256_file(REPOSITORY / "scripts/spacetime_data" / name) for name in
                             ("warehouse_world.py", "batch_spacetime_rrt.py", "ompl_strrt_batch.py", "streaming_spacetime.py", "warehouse_trajectory_fit.py",

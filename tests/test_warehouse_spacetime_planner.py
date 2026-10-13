@@ -44,6 +44,46 @@ def test_all_motion_modes_hit_their_saved_anchor_during_execution():
     assert forecast.metadata()["obstacle_static_collision"] == "ignored"
 
 
+def test_shape_and_event_randomization_covers_every_object_position_and_count():
+    centers = np.tile(np.array([0.45, 0., 0.5]), (64, 10, 1))
+    for count in (1, 2, 3, 4, 5):
+        shapes, fractions = [], []
+        for seed in range(96):
+            forecast = make_forecast(centers, 8., 14., np.random.default_rng(seed), object_count=count)
+            shapes.append(forecast.shape)
+            fractions.append(forecast.event_times / 8.)
+            assert interaction_audit(forecast, 8.)["all_objects_interact_during_execution"]
+            for obj, event in enumerate(forecast.event_times):
+                index = np.flatnonzero(forecast.times == event)[0]
+                np.testing.assert_allclose(forecast.positions[index, obj], forecast.anchors[obj], atol=1e-12)
+                size = forecast.size[obj]
+                assert 0.04 <= size[0] <= 0.075
+                if forecast.shape[obj] == 0:
+                    assert size[1] == size[2] == 0
+                elif forecast.shape[obj] == 1:
+                    assert (size > 0).all()
+                else:
+                    assert size[1] > 0 and size[2] == 0
+        shapes, fractions = np.asarray(shapes), np.asarray(fractions)
+        assert ((fractions >= 0.25) & (fractions <= 0.65)).all()
+        for obj in range(count):
+            assert set(shapes[:, obj]) == {0, 1, 2}
+            assert fractions[:, obj].min() < 0.35 and fractions[:, obj].max() > 0.55
+        if count > 1:
+            assert (np.diff(fractions, axis=1) < 0).any()  # no object-order time binding
+
+
+def test_randomized_forecast_is_reproducible_and_seed_changes_the_world():
+    centers = np.tile(np.array([0.45, 0., 0.5]), (64, 10, 1))
+    first, repeated, other = [make_forecast(centers, 8., 14., np.random.default_rng(seed), object_count=5)
+                              for seed in (71, 71, 72)]
+    for key in ("times", "positions", "shape", "size", "event_times", "anchors"):
+        np.testing.assert_array_equal(getattr(first, key), getattr(repeated, key))
+    assert first.modes == repeated.modes
+    assert not np.array_equal(first.event_times, other.event_times)
+    assert not np.array_equal(first.positions, other.positions)
+
+
 def test_forest_returns_velocity_valid_monotone_paths_and_isolates_failure():
     def collision(q, t, query):
         return query == 1  # one invalid world must not poison the other
