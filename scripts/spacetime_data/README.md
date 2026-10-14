@@ -142,3 +142,11 @@ native Torch multi-query spacetime forest. It rechecks decoded spatial/timing
 splines against static, self and dynamic collisions and saves full world
 predictions. Its `warehouse_spacetime_joint_v1` schema is separate from the
 kinematic retiming converter above; existing interfaces are unchanged.
+
+### Empty dynamic worlds and independent mode sampling (2026-10-15)
+
+Both Warehouse backends accept `--obstacles 0` while retaining static/self
+collision and kinematic checks. Dynamic modes are now sampled independently
+per object, with replacement, from `--motion-modes`; a singleton pool still
+selects that mode for all objects. See [configuration, empty-world fields and
+resume rules](../../docs/WAREHOUSE_EMPTY_WORLD_RANDOM_MODES.md).
