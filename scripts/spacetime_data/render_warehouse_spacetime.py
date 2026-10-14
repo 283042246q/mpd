@@ -37,7 +37,8 @@ def main(argv=None):
     world = WarehouseCollision("cpu")
     robot = world.robot
     ee = robot.get_EE_pose(torch.as_tensor(q[::8], dtype=torch.float32))[:, :3, 3].cpu().numpy()
-    event = float(forecast.event_times[len(forecast.event_times) // 2])
+    event = (float(forecast.event_times[len(forecast.event_times) // 2])
+             if len(forecast.event_times) else float(times[-1]) / 2)
     frame_times = [0., event, float(times[-1])]
     fig = plt.figure(figsize=(16, 5))
     colors = ["#d1495b", "#00798c", "#edae49", "#7b2cbf", "#3a7d44"]
@@ -72,7 +73,7 @@ def main(argv=None):
         ax.set(xlim=(-0.2, 1.1), ylim=(-1., 1.), zlim=(-0.1, 1.2), title="t = %.2f s" % instant,
                xlabel="x (m)", ylabel="y (m)", zlabel="z (m)")
         ax.view_init(elev=27, azim=-52)
-    fig.suptitle("Warehouse / %s / %s" % (entry["attempt_id"], ", ".join(forecast.modes)))
+    fig.suptitle("Warehouse / %s / %s" % (entry["attempt_id"], ", ".join(forecast.modes) or "no dynamic obstacles"))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(args.output, dpi=150)

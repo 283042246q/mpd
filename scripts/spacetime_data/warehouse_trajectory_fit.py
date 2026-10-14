@@ -77,11 +77,16 @@ def audit_decoded(spline, phase, times, density, density_s, collision, query, fo
     dense_q = spline(dense_phase)
     clearances = collision.clearances(dense_q, dense_times, np.full(len(dense_q), query)).cpu().numpy()
     minima = clearances.min(axis=0)
-    if not np.isfinite(minima).all() or np.any(minima <= collision.margin):
-        reason = ["static_collision", "self_collision", "dynamic_collision"][int(np.argmin(minima))]
+    dynamic_active = len(forecast.shape) > 0
+    finite = np.isfinite(minima)
+    if not dynamic_active:
+        finite[2] |= np.isposinf(minima[2])  # no dynamic objects: clearance is unbounded
+    if not finite.all() or np.any(minima <= collision.margin):
+        reason = ["static_collision", "self_collision", "dynamic_collision"][
+            int(np.argmin(np.where(finite, minima, -np.inf)))]
         return None, reason
     return {"duration": duration, "v_ratio_max": v_ratio, "a_ratio_max": a_ratio,
-            "clearance_min": minima, "validation_dt_max": dt,
+            "clearance_min": minima, "dynamic_collision_active": dynamic_active, "validation_dt_max": dt,
             "validation_samples": len(dense_phase), **interaction}, None
 
 

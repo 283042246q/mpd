@@ -86,7 +86,8 @@ def parse_args(argv=None):
     parser.add_argument("--max-attempts", type=int, default=0, help="0 means 20 * requested trajectories")
     parser.add_argument("--max-world-attempts", type=int, default=12,
                         help="maximum dynamic-world samples per attempt; does not retry failed planning")
-    parser.add_argument("--obstacles", type=int, default=3)
+    parser.add_argument("--obstacles", type=int, default=3,
+                        help="dynamic object count; 0 retains only static Warehouse and self collision")
     parser.add_argument("--motion-modes", nargs="+", choices=MOTION_MODES, default=list(MOTION_MODES))
     parser.add_argument("--horizon", type=float, default=14.)
     parser.add_argument("--nominal-duration", type=float, default=8.)
@@ -103,12 +104,14 @@ def parse_args(argv=None):
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     for name in ("num_trajectories", "query_batch_size", "checkpoint_batches", "edges_per_query", "goal_roots",
-                 "max_iterations", "cpu_workers", "source_group_size", "obstacles", "collision_chunk",
+                 "max_iterations", "cpu_workers", "source_group_size", "collision_chunk",
                  "max_world_attempts"):
         if getattr(args, name) < 1:
             parser.error(name + " must be positive")
     if args.start_index < 0 or args.max_attempts < 0 or args.seed < 0:
         parser.error("indices, seed and max-attempts must be non-negative")
+    if args.obstacles < 0:
+        parser.error("obstacles must be non-negative")
     if args.ompl_queue_size < 0:
         parser.error("ompl-queue-size must be non-negative")
     if not 2 < args.nominal_duration <= args.horizon or not 0 < args.velocity_scale <= 1:
@@ -237,8 +240,10 @@ def prepare_job(args, source, collision, current):
         return None, "source_static_self_or_limits"
     seed = int(np.random.SeedSequence([args.seed, current]).generate_state(1)[0])
     rng = np.random.default_rng(seed)
-    anchor_indices = np.linspace(0, len(reference) - 1, min(64, len(reference))).astype(int)
-    centers = collision.centers(reference[anchor_indices]).cpu().numpy()
+    centers = None
+    if args.obstacles:
+        anchor_indices = np.linspace(0, len(reference) - 1, min(64, len(reference))).astype(int)
+        centers = collision.centers(reference[anchor_indices]).cpu().numpy()
     offset = current % len(args.motion_modes)
     modes = args.motion_modes[offset:] + args.motion_modes[:offset]
     forecast = None
@@ -491,7 +496,8 @@ def _generate(args):
                         results = planner.plan_batch(
                             np.stack([j["q_start"] for j in jobs]), np.stack([j["q_goal"] for j in jobs]),
                             np.full(len(jobs), args.horizon),
-                            np.array([max(j["forecast"].event_times) + 0.25 for j in jobs]),
+                            np.array([float(np.max(j["forecast"].event_times)) + 0.25
+                                      if len(j["forecast"].event_times) else 0. for j in jobs]),
                             allowed_time=args.solve_seconds, seed=jobs[0]["seed"],
                             reference_paths=np.stack([j["reference"] for j in jobs]))
                     else:

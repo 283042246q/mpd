@@ -46,6 +46,7 @@ class Forecast:
             "evaluator": "piecewise_linear_v1", "modes": self.modes,
             "obstacle_static_collision": "ignored", "obstacle_obstacle_collision": "ignored",
             "workspace_low": WORKSPACE_LOW.tolist(), "workspace_high": WORKSPACE_HIGH.tolist(),
+            "dynamic_known": True, "object_count": len(self.shape),
         }
 
 
@@ -57,11 +58,15 @@ def make_forecast(reference_centers, nominal_duration, horizon, rng, *,
     nominal motion, not relative to planner compute time. The final generator
     checks again against the *accepted* trajectory duration.
     """
+    if not 0 < nominal_duration <= horizon or object_count < 0 or forecast_dt <= 0:
+        raise ValueError("invalid duration, object_count or forecast_dt")
+    if object_count == 0:
+        return Forecast(np.array([0., horizon]), np.empty((2, 0, 3)),
+                        np.empty(0, dtype=np.int64), np.empty((0, 3)),
+                        np.empty(0), [], np.empty((0, 3)))
     centers = np.asarray(reference_centers, dtype=float)
     if centers.ndim != 3 or centers.shape[-1] != 3 or len(centers) < 3:
         raise ValueError("reference_centers must be [phase,sphere,3]")
-    if not 0 < nominal_duration <= horizon or object_count < 1 or forecast_dt <= 0:
-        raise ValueError("invalid duration, object_count or forecast_dt")
     if not modes or any(mode not in MOTION_MODES for mode in modes):
         raise ValueError("unknown motion mode")
     # Independent draws avoid coupling shape/event time to count or object
@@ -165,6 +170,10 @@ class ForecastBatch:
 
     def clearance(self, robot_centers, robot_radii, times, query_ids):
         obstacle_centers = self.centers(times, query_ids)
+        invalid_time = ~torch.isfinite(times) | (times < self.times[0] - 1e-6) | (times > self.times[-1] + 1e-6)
+        if self.shapes.shape[1] == 0:
+            result = robot_centers.new_full((len(times),), torch.inf)
+            return result.masked_fill(invalid_time, -torch.inf)
         delta = robot_centers[:, :, None] - obstacle_centers[:, None]
         sizes = self.sizes[query_ids, None]
         sphere = torch.linalg.vector_norm(delta, dim=-1) - sizes[..., 0]
@@ -177,7 +186,6 @@ class ForecastBatch:
                           torch.where(self.shapes[query_ids, None] == 1, box, capsule))
         sdf = (sdf - robot_radii[None, :, None]).masked_fill(~self.masks[query_ids, None], torch.inf)
         result = sdf.amin(dim=(1, 2))
-        invalid_time = ~torch.isfinite(times) | (times < self.times[0] - 1e-6) | (times > self.times[-1] + 1e-6)
         return result.masked_fill(invalid_time, -torch.inf)
 
 

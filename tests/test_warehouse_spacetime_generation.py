@@ -281,3 +281,55 @@ def test_streaming_dataset_recovers_committed_prefix_and_restores_each_world(tmp
     assert generation.read_progress(output, report["config_hash"])[0:2] == (5, 5)
     assert generation.main(command + ["--resume"]) == 0
     assert json.loads((output / "report.json").read_text())["session_pipeline_statistics"] == stats
+
+
+@pytest.mark.parametrize('backend', ['torch-forest', 'ompl-strrtstar'])
+def test_zero_obstacle_generation_writes_empty_world_and_resumes(tmp_path, monkeypatch, backend):
+    from multiprocessing.pool import ThreadPool
+    from scripts.spacetime_data import ompl_strrt_batch
+    class StaticWarehouse(FakeWarehouse):
+        def centers(self, q):
+            raise AssertionError('empty worlds must not require a workspace anchor')
+        def clearances(self, q, times, ids):
+            result = super().clearances(q, times, ids)
+            result[:, 2] = torch.inf
+            return result
+    class AsyncPlanner:
+        def __init__(self, *args, **kwargs):
+            self.pool = ThreadPool(2)
+        def submit(self, job):
+            return self.pool.apply_async(lambda: SpaceTimeResult(
+                [np.c_[np.linspace(job['q_start'], job['q_goal'], 8), np.linspace(0, 5, 8)]],
+                {'backend': 'fixture', 'wall_s': .01}))
+        def close(self):
+            self.pool.close()
+            self.pool.join()
+        terminate = close
+    path = np.zeros((32, 7)); path[:, 0] = np.linspace(-.5, .5, 32)
+    source = tmp_path / 'source.hdf5'
+    with h5py.File(source, 'w') as f:
+        f['sol_path'] = np.stack([path, path[::-1]]); f['task_id'] = [10, 11]
+    monkeypatch.setattr(generation, 'WarehouseCollision', StaticWarehouse)
+    monkeypatch.setattr(generation, 'TorchSpaceTimeForest', FakePlanner)
+    monkeypatch.setattr(ompl_strrt_batch, 'OmplSTRRTBatch', AsyncPlanner)
+    root = tmp_path / 'empty'
+    args = ['--source', str(source), '--output-root', str(root), '--device', 'cpu', '--backend', backend,
+            '--obstacles', '0', '--num-trajectories', '2', '--query-batch-size', '2', '--require-tau-r']
+    assert generation.main(args) == 0
+    report = json.loads((root / 'report.json').read_text())
+    assert report['accepted'] == report['tau_r_valid_samples'] == 2
+    assert report['object_motion_mode_counts'] == {}
+    shard = next((root / 'shards').glob('*.hdf5')); before = shard.read_bytes()
+    with h5py.File(shard, 'r') as f:
+        for g in f['samples'].values():
+            assert g['world/positions'].shape == (2, 0, 3)
+            assert g['world/shape'].shape == (0,)
+            assert g['world/size'].shape == (0, 3)
+            for name in ('quality_json', 'tau_r_quality_json'):
+                quality = json.loads(g.attrs[name])
+                assert quality['clearance_min'][2] is None
+                assert not quality['dynamic_collision_active']
+    assert generation.main(args + ['--resume']) == 0
+    assert shard.read_bytes() == before
+    with pytest.raises(SystemExit):
+        generation.parse_args(['--output-root', str(root), '--obstacles', '-1'])

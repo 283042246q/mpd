@@ -64,3 +64,25 @@ def test_fit_never_accepts_dynamic_collision_after_retiming():
     result, reason = fit_teacher(raw_line(), fixture, 0, forecast_fixture())
     assert result is None and reason == "dynamic_collision"
     assert fixture.calls and all((times > 1).any() for times in fixture.calls)
+
+
+def test_empty_world_accepts_unbounded_dynamic_clearance_but_keeps_other_gates():
+    from scripts.spacetime_data.warehouse_world import make_forecast
+    from scripts.spacetime_data.generate_warehouse_spacetime import json_value
+    class StaticOnly(CollisionFixture):
+        def clearances(self, q, times, query_ids):
+            result = super().clearances(q, times, query_ids)
+            result[:, 2] = torch.inf
+            if self.blocked:
+                result[:, 0] = -.1
+            return result
+    forecast = make_forecast(None, 8., 14., np.random.default_rng(0), object_count=0)
+    result, reason = fit_teacher(raw_line(), StaticOnly(), 0, forecast, require_tau_r=True)
+    assert result is not None, reason
+    assert result['tau_r_valid'] and not result['quality']['dynamic_collision_active']
+    assert json_value(result['quality'])['clearance_min'] == [1., 1., None]
+    blocked, reason = fit_teacher(raw_line(), StaticOnly(blocked=True), 0, forecast, require_tau_r=True)
+    assert blocked is None and reason == 'static_collision'
+    # Infinity remains invalid if a real dynamic object is present.
+    blocked, reason = fit_teacher(raw_line(), StaticOnly(), 0, forecast_fixture())
+    assert blocked is None and reason == 'dynamic_collision'

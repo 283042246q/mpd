@@ -117,3 +117,23 @@ def test_temporarily_closed_passage_is_not_treated_as_static():
         blocked, _ = edge_collision_mask(starts, goals, torch.zeros(starts.shape[:2], dtype=torch.long),
                                          collision, joint_step=0.01, time_step=0.01)
         assert not blocked.any()
+
+
+def test_empty_and_mixed_forecasts_preserve_masks_and_time_bounds():
+    empty = make_forecast(None, 8., 14., np.random.default_rng(0), object_count=0)
+    assert empty.positions.shape == (2, 0, 3)
+    assert empty.size.shape == empty.anchors.shape == (0, 3)
+    assert empty.shape.shape == empty.event_times.shape == (0,)
+    assert empty.modes == [] and empty.metadata()['dynamic_known']
+    assert empty.metadata()['object_count'] == 0
+    assert interaction_audit(empty, 5.) == dict(all_objects_interact_during_execution=True, workspace_visits=[])
+    robot = torch.tensor([[[.45, 0., .5]]] * 4)
+    times = torch.tensor([0., 7., 15., float('nan')])
+    result = ForecastBatch([empty]).clearance(robot, torch.tensor([.1]), times, torch.zeros(4, dtype=torch.long))
+    assert torch.isposinf(result[:2]).all() and torch.isneginf(result[2:]).all()
+    dynamic = Forecast(np.array([0., 14.]), np.tile([[[.45, 0., .5]]], (2, 1, 1)),
+                       np.array([0]), np.array([[.05, 0., 0.]]), np.array([3.]), ['linear'], np.array([[.45, 0., .5]]))
+    mixed = ForecastBatch([empty, dynamic])
+    assert mixed.masks.tolist() == [[False], [True]]
+    result = mixed.clearance(robot[:2], torch.tensor([.1]), times[:2], torch.tensor([0, 1]))
+    assert torch.isposinf(result[0]) and result[1] < 0

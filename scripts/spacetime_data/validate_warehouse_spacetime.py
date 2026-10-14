@@ -15,7 +15,7 @@ from mpd.datasets.spacetime_schema import load_panda_robot_bundle, sha256_file
 from mpd.parametric_trajectory.timing_fitting import TimingSplineNumpy
 from mpd.parametric_trajectory.normalized_timing import NormalizedTimingSplineNumpy, minimum_duration_for_path
 from scripts.spacetime_data.batch_spacetime_rrt import edge_collision_mask
-from scripts.spacetime_data.generate_warehouse_spacetime import REPOSITORY, SCHEMA, read_progress
+from scripts.spacetime_data.generate_warehouse_spacetime import REPOSITORY, SCHEMA, json_value, read_progress
 from scripts.spacetime_data.warehouse_trajectory_fit import audit_decoded
 from scripts.spacetime_data.warehouse_world import Forecast, WarehouseCollision
 
@@ -115,7 +115,8 @@ def validate_dataset(root, *, device="cuda:0", limit=None):
                     if tau_quality is None:
                         raise ValueError("decoded tau_r failed: " + str(reason))
                 summaries.append({"attempt_id": entry["attempt_id"], "duration": quality["duration"],
-                                  "clearance_min": quality["clearance_min"].tolist(), "tau_r_valid": tau_valid,
+                                  "clearance_min": json_value(quality["clearance_min"]),
+                                  "dynamic_collision_active": quality["dynamic_collision_active"], "tau_r_valid": tau_valid,
                                   "modes": forecast.modes})
         except (ValueError, AssertionError, KeyError) as exc:
             errors.append({"entry": entry, "error": str(exc)})
