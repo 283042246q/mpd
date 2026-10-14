@@ -34,14 +34,16 @@ def test_forecast_interpolation_ragged_objects_and_horizon_rejection():
 
 def test_all_motion_modes_hit_their_saved_anchor_during_execution():
     centers = np.tile(np.array([0.45, 0., 0.5]), (64, 10, 1))
-    forecast = make_forecast(centers, 8., 14., np.random.default_rng(12),
-                             object_count=len(MOTION_MODES), modes=MOTION_MODES)
-    for obj, event in enumerate(forecast.event_times):
-        index = np.flatnonzero(forecast.times == event)[0]
-        np.testing.assert_allclose(forecast.positions[index, obj], forecast.anchors[obj], atol=1e-12)
-    assert interaction_audit(forecast, 8.)["all_objects_interact_during_execution"]
-    assert not interaction_audit(forecast, 0.5)["all_objects_interact_during_execution"]
-    assert forecast.metadata()["obstacle_static_collision"] == "ignored"
+    for mode in MOTION_MODES:
+        forecast = make_forecast(centers, 8., 14., np.random.default_rng(12),
+                                 object_count=3, modes=[mode])
+        assert forecast.modes == [mode] * 3
+        for obj, event in enumerate(forecast.event_times):
+            index = np.flatnonzero(forecast.times == event)[0]
+            np.testing.assert_allclose(forecast.positions[index, obj], forecast.anchors[obj], atol=1e-12)
+        assert interaction_audit(forecast, 8.)["all_objects_interact_during_execution"]
+        assert not interaction_audit(forecast, 0.5)["all_objects_interact_during_execution"]
+        assert forecast.metadata()["obstacle_static_collision"] == "ignored"
 
 
 def test_shape_and_event_randomization_covers_every_object_position_and_count():
@@ -137,3 +139,19 @@ def test_empty_and_mixed_forecasts_preserve_masks_and_time_bounds():
     assert mixed.masks.tolist() == [[False], [True]]
     result = mixed.clearance(robot[:2], torch.tensor([.1]), times[:2], torch.tensor([0, 1]))
     assert torch.isposinf(result[0]) and result[1] < 0
+
+
+def test_modes_are_random_per_object_with_repeats_and_respect_the_pool():
+    centers = np.tile(np.array([.45, 0., .5]), (64, 10, 1))
+    for count in (1, 2, 3, 5):
+        draws = [make_forecast(centers, 8., 14., np.random.default_rng(seed), object_count=count).modes
+                 for seed in range(160)]
+        for obj in range(count):
+            assert {m[obj] for m in draws} == set(MOTION_MODES)
+        if count > 1:
+            assert any(len(set(m)) < count for m in draws)
+            assert len({tuple(m) for m in draws}) > 10  # no longer just ten cyclic windows
+    draws = [tuple(make_forecast(centers, 8., 14., np.random.default_rng(seed),
+                                object_count=3, modes=['linear', 'orbit']).modes) for seed in range(96)]
+    import itertools
+    assert set(draws) == set(itertools.product(['linear', 'orbit'], repeat=3))

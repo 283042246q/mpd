@@ -88,7 +88,8 @@ def parse_args(argv=None):
                         help="maximum dynamic-world samples per attempt; does not retry failed planning")
     parser.add_argument("--obstacles", type=int, default=3,
                         help="dynamic object count; 0 retains only static Warehouse and self collision")
-    parser.add_argument("--motion-modes", nargs="+", choices=MOTION_MODES, default=list(MOTION_MODES))
+    parser.add_argument("--motion-modes", nargs="+", choices=MOTION_MODES, default=list(MOTION_MODES),
+                        help="mode pool: each dynamic object samples independently with replacement")
     parser.add_argument("--horizon", type=float, default=14.)
     parser.add_argument("--nominal-duration", type=float, default=8.)
     parser.add_argument("--forecast-dt", type=float, default=0.02)
@@ -244,13 +245,11 @@ def prepare_job(args, source, collision, current):
     if args.obstacles:
         anchor_indices = np.linspace(0, len(reference) - 1, min(64, len(reference))).astype(int)
         centers = collision.centers(reference[anchor_indices]).cpu().numpy()
-    offset = current % len(args.motion_modes)
-    modes = args.motion_modes[offset:] + args.motion_modes[:offset]
     forecast = None
     for _ in range(args.max_world_attempts):
         try:
             candidate = make_forecast(centers, args.nominal_duration, args.horizon, rng,
-                                      object_count=args.obstacles, modes=modes, forecast_dt=args.forecast_dt)
+                                      object_count=args.obstacles, modes=args.motion_modes, forecast_dt=args.forecast_dt)
         except ValueError:
             continue
         collision.set_worlds([candidate])

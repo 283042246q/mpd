@@ -333,3 +333,21 @@ def test_zero_obstacle_generation_writes_empty_world_and_resumes(tmp_path, monke
     assert shard.read_bytes() == before
     with pytest.raises(SystemExit):
         generation.parse_args(['--output-root', str(root), '--obstacles', '-1'])
+
+
+def test_candidate_preparation_does_not_rotate_the_mode_pool_by_attempt(tmp_path, monkeypatch):
+    original = generation.make_forecast
+    received = []
+    def record(*args, **kwargs):
+        received.append(tuple(kwargs['modes']))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(generation, 'make_forecast', record)
+    args = generation.parse_args(['--output-root', str(tmp_path), '--obstacles', '5',
+                                  '--motion-modes', 'linear', 'orbit', 'stop_go'])
+    source = dict(sol_path=np.zeros((8, 32, 7)), task_id=np.arange(8))
+    collision = FakeWarehouse()
+    for attempt in range(4):
+        job, reason = generation.prepare_job(args, source, collision, attempt)
+        assert job is not None, reason
+        assert set(job['forecast'].modes) <= {'linear', 'orbit', 'stop_go'}
+    assert received == [('linear', 'orbit', 'stop_go')] * 4

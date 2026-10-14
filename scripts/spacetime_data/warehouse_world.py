@@ -23,6 +23,7 @@ WORLD_SAMPLING_POLICY = {
     "shape": "iid_uniform_sphere_box_capsule",
     "event_fraction": "iid_uniform",
     "event_fraction_range": EVENT_FRACTION_RANGE,
+    "motion_mode": "iid_uniform_with_replacement_from_motion_modes",
 }
 
 
@@ -73,6 +74,7 @@ def make_forecast(reference_centers, nominal_duration, horizon, rng, *,
     # index. Events can cluster or occur in any object order; do not sort them.
     fractions = rng.uniform(*EVENT_FRACTION_RANGE, size=object_count)
     sampled_shapes = rng.integers(0, 3, size=object_count)
+    sampled_modes = rng.integers(0, len(modes), size=object_count)
     events = fractions * nominal_duration
     grid = np.linspace(0, horizon, int(np.ceil(horizon / forecast_dt)) + 1)
     times = np.unique(np.r_[grid, events])  # exact anchor knots survive serialization
@@ -90,7 +92,7 @@ def make_forecast(reference_centers, nominal_duration, horizon, rng, *,
         lateral = np.cross(direction, [0., 0., 1.])
         lateral /= np.linalg.norm(lateral)
         vertical = np.cross(direction, lateral)
-        mode = modes[index % len(modes)]
+        mode = modes[int(sampled_modes[index])]
         speed = float(rng.uniform(0.22, 0.42))
         dt = times - event
         along, side, up = speed * dt, np.zeros_like(dt), np.zeros_like(dt)
