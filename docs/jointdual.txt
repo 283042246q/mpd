@@ -1,0 +1,663 @@
+1. 整个 JD-WORLD 的数学输入
+当前 noisy joint state：
+\[
+X_k=(P_k,c_k,u_{T,k}),
+\]
+其中我建议 duration 用
+\[
+u_T=\log T
+\]
+而不是直接 diffusion \(T>0\)。
+形状：
+\[
+P_k\in\mathbb R^{B\times N_P\times d_q},
+\]
+\[
+c_k\in\mathbb R^{B\times N_c},
+\]
+\[
+u_{T,k}\in\mathbb R^{B\times1}.
+\]
+另外：
+\[
+e_k=E_{\rm diff}(k)\in\mathbb R^{B\times d_e},
+\]
+\[
+e_{\rm task}=E_{\rm task}(q_s,q_g)\in\mathbb R^{B\times d_e}.
+\]
+MPD 本身使用 TimeEncoder 对 diffusion timestep 编码，然后把它与 context 一起送进 U-Net。GitHub CAMPD 对 diffusion step 也是 sinusoidal PE 后接 MLP：
+z_k=\mathrm{MLP}_k(\mathrm{PE}(k)).
+\] :chatgpt-content-reference{index="3"}
+
+
+我会取：
+
+\[
+d_e=128.
+2. Dynamic World Encoder
+这是 JD-WORLD 相比 JD-KIN 新增的第一块。
+假设 obstacle \(j\) 在采样时间 \(t_r\) 的描述为：
+\[
+o_{j,r}
+=
+[
+p_j(t_r),
+R_j(t_r),
+v_j(t_r),
+g_j,
+\mathrm{PE}(t_r)
+].
+\]
+其中 \(g_j\) 是 size / radius / primitive type 等几何信息。
+每个 obstacle-time instance 独立编码：
+\[
+w_{j,r}
+=
+\phi_{\rm world}(o_{j,r})
+\in\mathbb R^{d_w}.
+\]
+例如：
+\[
+\phi_{\rm world}(o)
+=
+W_2\sigma(W_1o+b_1)+b_2.
+\]
+最终得到：
+\[
+W=
+[w_1,\ldots,w_M]
+\in
+\mathbb R^{B\times M\times d_w}.
+\]
+这里：
+\[
+M=N_{\rm obs}N_{\rm time}.
+\]
+这是直接借鉴 CAMPD 的：
+\[
+z_{c_{k,l}}=\mathrm{MLP}_k(c_{k,l}),
+\]
+即每个 context instance 独立 MLP，然后作为 attention 的 K/V。arXiv
+注意：这一层目前是 scene-level 的。
+它不知道：
+当前 candidate 在时间 \(t\) 恰好走到哪里。
+
+它只知道：
+障碍什么时候在哪里。
+
+这与后面 candidate-relative context 是两个东西。
+3. Timing Pre-Encoder 到底怎么算
+它不是 timing predictor。
+它的工作是：
+\[
+(c_k,u_{T,k})
+\rightarrow h_z.
+\]
+先独立编码 \(c\) 和 \(T\)。
+timing shape
+\[
+h_c
+=
+\phi_c(c_k)
+=
+W_{c2}\sigma(W_{c1}c_k+b_{c1})+b_{c2},
+\]
+例如：
+\[
+N_c\rightarrow64\rightarrow128.
+\]
+所以：
+\[
+h_c\in\mathbb R^{128}.
+\]
+duration
+\[
+h_T
+=
+\phi_T(u_{T,k}),
+\]
+例如：
+\[
+1\rightarrow32\rightarrow64.
+\]
+于是：
+\[
+h_T\in\mathbb R^{64}.
+\]
+然后融合：
+\[
+z_0=
+[
+h_c,
+h_T,
+e_k,
+e_{\rm task}
+].
+\]
+\[
+\bar h_z
+=
+\phi_z(z_0).
+\]
+可以用一个 Residual MLP：
+\[
+u=W_0z_0+b_0,
+\]
+\[
+\bar h_z
+=
+u+
+W_2\sigma(W_1\mathrm{LN}(u)+b_1)+b_2.
+\]
+最终：
+\[
+\bar h_z\in\mathbb R^{128}.
+\]
+4. JD-WORLD 中 Timing branch 怎么看 dynamic world
+有两个实现。
+简单 V1：pool world
+先：
+\[
+g_W
+=
+\frac{
+\sum_m m_mw_m
+}{
+\sum_m m_m
+},
+\]
+其中 \(m_m\) 是 padding mask。
+然后：
+\[
+h_z
+=
+\phi_z(
+[\bar h_z,g_W]
+).
+\]
+最简单，但损失：
+- obstacle identity；
+- temporal location；
+- obstacle-to-obstacle structure。
+更推荐：single-query cross attention
+让 timing latent 作为一个 query：
+\[
+Q_z=\bar h_zW_Q,
+\]
+world tokens：
+\[
+K_W=WW_K,
+\qquad
+V_W=WW_V.
+\]
+然后：
+\[
+A_z
+=
+\operatorname{softmax}
+\left(
+\frac{Q_zK_W^T}{\sqrt d}
++M
+\right),
+\]
+\[
+a_z=A_zV_W.
+\]
+最后 residual：
+\[
+h_z
+=
+\mathrm{LN}
+(
+\bar h_z+W_Oa_z
+).
+\]
+再接 FFN：
+\[
+h_z
+\leftarrow
+\mathrm{LN}
+\left[
+h_z+
+W_2\sigma(W_1h_z)
+\right].
+\]
+这个其实就是标准 cross-attention，只是 Timing branch 只有一个 query token。
+计算很便宜：
+\[
+1\times M
+\]
+而不是：
+\[
+N_P\times M.
+\]
+CAMPD 的 attention 也是用 encoded context vectors 作为 K/V，并用 residual self/cross-attention + FFN 融入 U-Net。arXiv
+5. Spatial U-Net Encoder 的数学实现
+这里基本沿用 MPD。
+首先：
+\[
+P_k:
+[B,N_P,d_q]
+\]
+转成 Conv1D 格式：
+\[
+H_0
+=
+\operatorname{transpose}(P_k)
+\in
+\mathbb R^{B\times d_q\times N_P}.
+\]
+再：
+\[
+H_0
+=
+\mathrm{Conv1D}_{1\times1}(H_0)
+\]
+投影到 \(C_0\) channels。
+例如 MPD 风格：
+\[
+C_l\in
+\{32,64,128,256\}.
+\]
+当前 MPD 的 TemporalUnet 正是沿 support-point/horizon 轴做 1D U-Net，并常用：
+\[
+(1,2,4,8)
+\]
+channel multipliers。GitHub
+6. FiLM 怎么把 Timing 信息注入 Spatial Encoder
+定义 global conditioning：
+\[
+g=
+[e_k,e_{\rm task},h_z].
+\]
+对于第 \(l\) 层：
+\[
+(\gamma_l,\beta_l)
+=
+W_lg+b_l.
+\]
+假设 residual feature：
+\[
+H_l\in\mathbb R^{B\times C_l\times L_l}.
+\]
+先 convolution / norm：
+\[
+U_l
+=
+\mathrm{GN}
+(
+\mathrm{Conv1D}(H_l)
+).
+\]
+FiLM：
+\[
+\tilde U_l
+=
+(1+\gamma_l)\odot U_l+\beta_l.
+\]
+其中：
+\[
+\gamma_l,\beta_l\in\mathbb R^{B\times C_l}
+\]
+broadcast 到 length 维。
+然后：
+\[
+R_l=
+\mathrm{Conv1D}
+(
+\sigma(\tilde U_l)
+).
+\]
+Residual：
+\[
+H_l'
+=
+S_l(H_l)+R_l,
+\]
+\(S_l\) 是 identity 或 \(1\times1\) projection。
+再 downsample：
+\[
+H_{l+1}
+=
+D_l(H_l').
+\]
+所以 timing 对 spatial 的作用不是：
+\[
+[c,T]
+\]
+硬拼到每个控制点，而是：
+\[
+\boxed{
+(c,T)
+\rightarrow h_z
+\rightarrow
+(\gamma_l,\beta_l)
+\rightarrow
+\text{modulate spatial feature}
+}
+\]
+这个更合理。
+7. Spatial Encoder 怎么看 world tokens
+这是 JD-WORLD 第二条 world pathway。
+在中层或 bottleneck：
+\[
+H_l
+\in
+\mathbb R^{B\times C_l\times L_l}.
+\]
+先 reshape：
+\[
+\bar H_l
+\in
+\mathbb R^{B\times L_l\times C_l}.
+\]
+然后：
+\[
+Q=\bar H_lW_Q,
+\]
+\[
+K=WW_K,
+\qquad
+V=WW_V.
+\]
+Cross-attention：
+\[
+A
+=
+\operatorname{softmax}
+\left(
+\frac{QK^T}{\sqrt{d_h}}
++M
+\right),
+\]
+\[
+C=A V.
+\]
+Residual：
+\[
+\bar H_l'
+=
+\mathrm{LN}
+(
+\bar H_l+CW_O
+).
+\]
+FFN：
+\[
+\bar H_l''
+=
+\mathrm{LN}
+\left[
+\bar H_l'
++
+W_2\sigma(W_1\bar H_l')
+\right].
+\]
+再 reshape 回：
+\[
+[B,C_l,L_l].
+\]
+这部分和 CAMPD 最接近。CAMPD 明确说明 U-Net encoder/decoder 与 MPD/Diffuser 风格类似，并在 encoder-decoder 之间加入 multi-head cross-attention，使任意数量的 context instances 可以影响 trajectory generation。arXiv
+8. 到这里得到 Spatial bottleneck
+最后得到：
+\[
+H_P
+\in
+\mathbb R^{B\times C_b\times L_b}.
+\]
+这里要区分两种用途。
+Spatial decoder 需要完整序列：
+\[
+H_P.
+\]
+Timing head 不需要整条 sequence，可以 pool：
+\[
+h_P
+=
+\operatorname{Pool}(H_P).
+\]
+首版直接 mean：
+\[
+h_P
+=
+\frac1{L_b}
+\sum_{i=1}^{L_b}
+H_{P,:,i}.
+\]
+于是：
+\[
+h_P\in\mathbb R^{B\times C_b}.
+\]
+这就是：
+\[
+\boxed{P\rightarrow timing}
+\]
+的信息通路。
+9. Joint Fusion 的数学实现
+这块是整个 JointDual 真正区别于 factorized 的关键。
+输入：
+\[
+h_P,
+\quad
+h_z,
+\quad
+e_k,
+\quad
+e_{\rm task}.
+\]
+JD-WORLD 里 world 已经进入 \(h_z,H_P\)，所以首版没必要再 concat 一次完整 world tokens。
+定义：
+\[
+f_0
+=
+[
+h_P,
+h_z,
+e_k,
+e_{\rm task}
+].
+\]
+然后：
+\[
+u=W_f f_0+b_f.
+\]
+一个两层 Residual MLP：
+\[
+r
+=
+W_2
+\sigma
+(
+W_1\mathrm{LN}(u)+b_1
+)
++b_2,
+\]
+\[
+\boxed{
+h_{\rm joint}=u+r.
+}
+\]
+例如：
+\[
+\dim h_{\rm joint}=256.
+\]
+这代表：
+\[
+h_{\rm joint}
+=
+F(P_k,c_k,T_k,k,task,world).
+\]
+真正最终的两个输出 branch 都必须使用它。
+否则如果：
+\[
+\epsilon_P
+\]
+只来自 spatial encoder，
+而：
+\[
+\epsilon_c,\epsilon_T
+\]
+只来自 timing encoder，
+那还是两个并排网络，不是真 joint。
+10. Timing Head 的数学实现
+我会建议比 MD 里再稍微好一点：保留 timing residual path。
+先：
+\[
+h_t
+=
+h_z+
+W_{tj}h_{\rm joint}.
+\]
+然后：
+\[
+r_t
+=
+h_t+
+W_{t2}
+\sigma(
+W_{t1}\mathrm{LN}(h_t)
+).
+\]
+最后两个独立 heads：
+\[
+\boxed{
+\hat\epsilon_c
+=
+W_c r_t+b_c
+}
+\]
+和：
+\[
+\boxed{
+\hat\epsilon_T
+=
+W_T r_t+b_T.
+}
+\]
+输出：
+\[
+\hat\epsilon_c\in\mathbb R^{B\times N_c},
+\]
+\[
+\hat\epsilon_T\in\mathbb R^{B\times1}.
+\]
+为什么分头？
+因为：
+\[
+c
+\]
+控制 local timing shape，
+而：
+\[
+T
+\]
+控制 global duration。
+没必要强迫最后一个 linear layer 把两者当成同一种 variable。
+11. Spatial Decoder 怎么算
+Spatial decoder 使用：
+\[
+H_P
+\]
+以及 encoder skip features：
+\[
+S_1,S_2,\ldots.
+\]
+同时 conditioning 改为：
+\[
+g_{\rm dec}
+=
+[e_k,e_{\rm task},h_{\rm joint}].
+\]
+每层：
+\[
+H_l^{up}
+=
+\mathrm{Upsample}(H_l).
+\]
+拼 skip：
+\[
+\tilde H_l
+=
+[
+H_l^{up},S_l
+].
+\]
+再用同样 FiLM residual blocks：
+\[
+H_l'
+=
+\mathrm{ResBlock}
+(
+\tilde H_l;
+g_{\rm dec}
+).
+\]
+最后：
+\[
+\boxed{
+\hat\epsilon_P
+=
+\mathrm{Conv1D}_{1\times1}
+(H_{\rm final})
+}
+\]
+恢复：
+\[
+\hat\epsilon_P
+\in
+\mathbb R^{B\times N_P\times d_q}.
+\]
+这与 MPD 当前 TemporalUnet 的 decoder 结构非常接近：encoder skip 与 decoder feature concat，然后 residual blocks + upsample，最后 Conv1D 输出原 state dimension。GitHub
+12. 所以整个数学图其实是
+\[
+(c_k,T_k)
+\rightarrow h_z^{pre}
+\]
+\[
+h_z^{pre}
+\overset{W}{\longrightarrow}
+h_z
+\]
+\[
+(P_k,h_z)
+\overset{W}{\longrightarrow}
+H_P
+\]
+\[
+H_P\rightarrow h_P
+\]
+然后：
+\[
+\boxed{
+h_{\rm joint}
+=
+F(h_P,h_z,e_k,e_{\rm task})
+}
+\]
+最终：
+\[
+\boxed{
+\hat\epsilon_P
+=
+D_P(H_P,h_{\rm joint})
+}
+\]
+\[
+\boxed{
+(\hat\epsilon_c,\hat\epsilon_T)
+=
+D_T(h_z,h_{\rm joint})
+}
+\]
+即：
+\[
+\boxed{
+\epsilon_\theta(P_k,c_k,T_k,\mathcal W,k)
+=
+\begin{bmatrix}
+\epsilon_P\\
+\epsilon_c\\
+\epsilon_T
+\end{bmatrix}
+}
+\]
