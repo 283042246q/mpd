@@ -1,6 +1,6 @@
 # Warehouse 同任务多世界轨迹生成方案
 
-日期：2026-10-15。状态：设计方案，尚未实现 family/world 任务调度入口，未启动新一轮正式生成。当前生成器已支持两个后端的 0 动态障碍和各对象独立 mode 抽样；本方案新增的 family 清单、world 槽位、成对事件变体与 seed 分层仍需实施。
+日期：2026-10-15。状态：本页的 8 槽位及早/晚配对仍为设计方案，未启动新一轮正式生成。已另行实现用户指定的简化版：随机抽取 X 个历史高障碍有解 family，每个固定方向、生成 0～5 障碍共 6 个 world，3～5 障碍保留 phase/event 绑定并扩展到 25%～80%，按障碍数组 batch。运行方式见[独立 torch-forest 多世界入口](WAREHOUSE_MULTIWORLD_TORCHFOREST.md)。本页其余早/晚配对与参考 retime 设计不代表该入口已经实现。
 
 补充核查：[失败槽位、采样关联与文献依据](WAREHOUSE_MULTIWORLD_AUDIT_AND_LITERATURE.md)。生成前需重点处理 anchor phase/event time、稳定 world seed 及交互时长政策；8 槽位是本项目的小试配额，不是文献证明的最优值。
 

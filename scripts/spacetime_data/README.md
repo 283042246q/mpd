@@ -1,5 +1,10 @@
 # Unified Space-Time `(P,c)` and `(P,tau,r)` data generator
 
+For family-grouped torch-forest generation with six obstacle counts (0..5), use
+the independent [Warehouse multiworld entry point](../../docs/WAREHOUSE_MULTIWORLD_TORCHFOREST.md).
+It samples X historical solved families, fixes one direction per family, and
+batches queries by obstacle count without changing the original generators.
+
 The generator is independent from the legacy spatial training loader. It
 streams `sol_path` from the warehouse HDF5, fits one canonical full spatial
 B-spline `P`, generates multiple fixed-path timing teachers, fits the runtime
