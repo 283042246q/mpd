@@ -56,7 +56,7 @@
 - **一个 batch 只有一种障碍数量**，不产生跨数量 padding；各队列末尾允许不足一个 batch。
 - 同一进程复用机器人和静态环境；参考路径静态检查与 anchor FK 使用有界缓存。
 - `--solve-seconds` 是每 batch 的规划预算，不是每条轨迹的预算，也不包含准备、拟合和写盘时间。
-- 默认 batch=128、solve=10s、edges=16、roots=4、max_iterations=512，与前轮正式 GPU 数据参数相同。
+- Python 与 Bash 均默认 batch=128、collision_chunk=32768、edges=16、roots=4、solve=10s、max_world_attempts=12；max_iterations=512。Bash 可通过 `QUERY_BATCH_SIZE`、`COLLISION_CHUNK`、`EDGES_PER_QUERY`、`GOAL_ROOTS`、`SOLVE_SECONDS`、`MAX_WORLD_ATTEMPTS` 分别覆盖。
 - 不额外增加候选预取或多进程 GPU 并发。
 
 ## 4. Seed 与恢复

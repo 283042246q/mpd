@@ -52,7 +52,7 @@ def parse_args(argv=None):
         ("edges-per-query", int, 16), ("goal-roots", int, 4), ("max-iterations", int, 512),
         ("horizon", float, 14.), ("forecast-dt", float, .02), ("edge-dt", float, .02),
         ("joint-step", float, .04), ("velocity-scale", float, .4), ("margin", float, .005),
-        ("collision-chunk", int, 512), ("spatial-rmse-max", float, .08),
+        ("collision-chunk", int, 32768), ("spatial-rmse-max", float, .08),
         ("timing-rmse-max", float, .08),
     ):
         parser.add_argument("--" + name, type=kind, default=default)
