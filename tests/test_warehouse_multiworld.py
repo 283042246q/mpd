@@ -9,6 +9,7 @@ from scripts.spacetime_data import generate_warehouse_multiworld as multi
 from scripts.spacetime_data import generate_warehouse_spacetime as base
 from scripts.spacetime_data.multiworld_sampling import make_multiworld_forecast
 from scripts.spacetime_data.warehouse_world import make_forecast
+from scripts.spacetime_data.warehouse_family_catalog import export_catalog, load_catalog, source_contract
 from tests.test_warehouse_spacetime_generation import FakePlanner, FakeWarehouse
 
 
@@ -247,3 +248,42 @@ def test_dry_run_freezes_plan_without_constructing_planner(tmp_path, monkeypatch
     assert json.loads((output / "report.json").read_text())["pending_worlds"] == 30
     patch_teacher(monkeypatch)
     assert multi.main(command + ["--resume"]) == 0
+
+
+def test_portable_catalog_preserves_sampling_and_generates_without_historical_directories(tmp_path, monkeypatch):
+    source, command = fixtures(tmp_path)
+    historical_args = multi.parse_args(command)
+    historical_plan, _ = multi.select_families(historical_args)
+    catalog = tmp_path / "portable.npz"
+    metadata = export_catalog(source, historical_args.eligible_roots, catalog)
+    assert metadata["family_count"] == 5
+    assert sum(metadata["split_counts"].values()) == 5
+    assert json.loads(catalog.with_suffix(".json").read_text()) == metadata
+    catalog_command = command[:command.index("--eligible-roots")] + ["--family-catalog", str(catalog)]
+    for root in historical_args.eligible_roots:
+        root.rename(root.with_name(root.name + "-unavailable"))
+    assert all(not root.exists() for root in historical_args.eligible_roots)
+    args = multi.parse_args(catalog_command)
+    plan, selection = multi.select_families(args)
+    assert plan == historical_plan
+    assert selection["family_catalog"]["sha256"] == base.sha256_file(catalog)
+    patch_teacher(monkeypatch)
+    assert multi.main(catalog_command) == 0
+    assert multi.main(catalog_command + ["--resume"]) == 0
+
+
+def test_catalog_rejects_changed_source_and_corrupt_ids(tmp_path):
+    source, command = fixtures(tmp_path)
+    args = multi.parse_args(command)
+    catalog = tmp_path / "portable.npz"
+    metadata = export_catalog(source, args.eligible_roots, catalog)
+    identity, _, source_rows, _ = source_contract(source)
+    with pytest.raises(ValueError, match="different source"):
+        load_catalog(catalog, dict(identity, size=identity["size"] + 1), source_rows)
+    # Sorted IDs inside the source still must match the exported digest/count.
+    np.savez_compressed(catalog, family_id=np.arange(4), metadata_json=json.dumps(metadata))
+    with pytest.raises(ValueError, match="hash mismatch"):
+        load_catalog(catalog, identity, source_rows)
+    np.savez_compressed(catalog, family_id=np.array([0, 0, 1]), metadata_json=json.dumps(metadata))
+    with pytest.raises(ValueError, match="unique, sorted"):
+        load_catalog(catalog, identity, source_rows)

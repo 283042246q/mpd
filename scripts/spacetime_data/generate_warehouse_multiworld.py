@@ -25,14 +25,13 @@ from mpd.datasets.spacetime_schema import load_panda_robot_bundle, materialize_d
 from scripts.spacetime_data import generate_warehouse_spacetime as base
 from scripts.spacetime_data.batch_spacetime_rrt import TorchSpaceTimeForest
 from scripts.spacetime_data.multiworld_sampling import make_multiworld_forecast
+from scripts.spacetime_data.warehouse_family_catalog import (
+    DEFAULT_CATALOG, DEFAULT_ELIGIBLE_ROOTS, load_catalog, scan_history, source_contract,
+)
 from scripts.spacetime_data.warehouse_world import WarehouseCollision
 
 
 COUNTS = tuple(range(6))
-DEFAULT_ELIGIBLE_ROOTS = tuple(
-    base.REPOSITORY / f"data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-{n}obstacle"
-    for n in (3, 4, 5)
-)
 
 
 def parse_args(argv=None):
@@ -40,8 +39,11 @@ def parse_args(argv=None):
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--source", type=Path, default=base.SOURCE)
     parser.add_argument("--num-families", type=int, required=True)
-    parser.add_argument("--eligible-roots", type=Path, nargs="+", default=list(DEFAULT_ELIGIBLE_ROOTS),
-                        help="historical accepted datasets with >=3 obstacles; union their family IDs")
+    pool_source = parser.add_mutually_exclusive_group()
+    pool_source.add_argument("--family-catalog", type=Path, default=DEFAULT_CATALOG,
+                             help="portable solved-family catalog; historical dynamic directories are not needed")
+    pool_source.add_argument("--eligible-roots", type=Path, nargs="+",
+                             help="instead scan historical accepted datasets with >=3 obstacles")
     parser.add_argument("--direction", choices=("random", "forward", "reverse"), default="random",
                         help="random assigns one direction independently per family; all six slots share it")
     parser.add_argument("--seed", type=int, default=20261015)
@@ -75,7 +77,8 @@ def parse_args(argv=None):
     args = base.parse_args(common)
     vars(args).update(vars(cli))
     args.source, args.output_root = cli.source.resolve(), cli.output_root.resolve()
-    args.eligible_roots = [path.resolve() for path in cli.eligible_roots]
+    args.eligible_roots = [path.resolve() for path in cli.eligible_roots] if cli.eligible_roots else []
+    args.family_catalog = None if args.eligible_roots else cli.family_catalog.resolve()
     args.num_trajectories = cli.num_families * len(COUNTS)
     return args
 
@@ -90,38 +93,20 @@ def keyed_seed(seed, source_namespace, *keys):
 
 
 def select_families(args):
-    """Read accepted historical indexes, validate source identity, sample without replacement."""
-    stat = args.source.stat()
-    source_identity = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "source_group_size": 2}
-    namespace = int(hashlib.sha256(json.dumps(source_identity, sort_keys=True).encode()).hexdigest()[:8], 16)
-    pool, evidence = set(), []
-    with h5py.File(args.source, "r") as source:
-        shape = source["sol_path"].shape
-        if len(shape) != 3 or shape[0] % 2 or shape[1] < 3 or shape[2] != 7:
-            raise ValueError("source must be a doubled [2*families,waypoints,7] dataset")
-        source_ids = np.asarray(source["task_id"])
-        if source_ids.shape != (shape[0],):
-            raise ValueError("source task_id shape mismatch")
-    for root in args.eligible_roots:
-        config = json.loads((root / "config.json").read_text())
-        index = json.loads((root / "index.json").read_text())
-        expected = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
-        if index.get("config_hash") != expected or config.get("schema") != base.SCHEMA:
-            raise ValueError("historical dataset contract mismatch: " + str(root))
-        if (config.get("obstacles", -1) < 3 or config.get("source_group_size") != 2
-            or config.get("source_size") != stat.st_size or config.get("source_mtime_ns") != stat.st_mtime_ns):
-            raise ValueError("historical dataset must use >=3 obstacles and the same doubled source: " + str(root))
-        families = {int(entry["family_id"]) for entries in index["splits"].values() for entry in entries}
-        if any(family < 0 or 2 * family + 1 >= shape[0] for family in families):
-            raise ValueError("historical family ID outside source")
-        pool.update(families)
-        evidence.append({"root": str(root), "obstacles": config["obstacles"], "families": len(families),
-                         "config_sha256": sha256_file(root / "config.json"),
-                         "index_sha256": sha256_file(root / "index.json")})
+    """Read a portable catalog or historical indexes, then sample without replacement."""
+    source_identity, namespace, source_rows, source_ids = source_contract(args.source)
+    catalog_evidence = {}
+    if args.family_catalog is not None:
+        pool, metadata = load_catalog(args.family_catalog, source_identity, source_rows)
+        evidence = metadata["historical_datasets"]
+        catalog_evidence = {"family_catalog": {"path": str(args.family_catalog),
+                                               "sha256": sha256_file(args.family_catalog)}}
+    else:
+        pool, evidence = scan_history(args.eligible_roots, source_identity, source_rows)
     if args.num_families > len(pool):
         raise ValueError(f"requested {args.num_families} families, but eligible union has {len(pool)}")
     rng = np.random.default_rng(keyed_seed(args.seed, namespace, 10))
-    selected = rng.permutation(np.array(sorted(pool), dtype=np.int64))[:args.num_families]
+    selected = rng.permutation(pool)[:args.num_families]
     plan = []
     for family in selected:
         family = int(family)
@@ -131,7 +116,7 @@ def select_families(args):
         plan.append({"family_id": family, "direction": direction, "source_row": row,
                      "source_task_id": int(source_ids[row]), "split": split_for(family)})
     return plan, {"eligible_families": len(pool), "source_identity": source_identity,
-                  "source_namespace": namespace, "historical_datasets": evidence}
+                  "source_namespace": namespace, "historical_datasets": evidence, **catalog_evidence}
 
 
 def make_config(args, robot, plan, selection):
@@ -150,7 +135,7 @@ def make_config(args, robot, plan, selection):
                                   "nominal_duration": 8., "reference_retime": False},
                   seed_policy="source namespace/family/direction/count/scene draw; separate solver namespace",
                   slot_failure_policy="at most max_world_attempts scene draws; submit first initially valid scene once")
-    for filename in ("generate_warehouse_multiworld.py", "multiworld_sampling.py"):
+    for filename in ("generate_warehouse_multiworld.py", "multiworld_sampling.py", "warehouse_family_catalog.py"):
         config["software"][filename] = sha256_file(Path(__file__).with_name(filename))
     return base.json_value(config)
 

@@ -1,0 +1,43 @@
+{
+  "format": "warehouse_solved_family_catalog_v1",
+  "source_identity": {
+    "size": 6552652018,
+    "mtime_ns": 1725520823000000000,
+    "source_group_size": 2
+  },
+  "source_namespace": 2539864792,
+  "source_rows": 456726,
+  "eligibility_min_obstacles": 3,
+  "criterion": "family accepted at least once in one historical dataset with >=3 obstacles",
+  "family_id_definition": "source_row // 2; both directions grouped",
+  "family_count": 104319,
+  "split_counts": {
+    "train": 83650,
+    "validation": 10214,
+    "test": 10455
+  },
+  "family_ids_sha256": "8e0b7fb699856520b571a6d778e53f73ca6232db5b6abd3ac2eadbc0753a6eab",
+  "historical_datasets": [
+    {
+      "root": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-3obstacle",
+      "obstacles": 3,
+      "families": 67500,
+      "config_sha256": "cad65165f824ccfe5afc85202ba60de667dd973e43231c92a2bae4afd06c1f6d",
+      "index_sha256": "38adfaafb11ad7628cf09164e8ef1e91dce44af00865aa611a15f36efe26c306"
+    },
+    {
+      "root": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-4obstacle",
+      "obstacles": 4,
+      "families": 33750,
+      "config_sha256": "2e7e77e765f3c954519f84e13a5f1a2fd9b431163a48bebe654c5c80189979d6",
+      "index_sha256": "70ad8f244ba19196a0caa7ab1aa6507dd47e9fd483d28af89699e18229abae66"
+    },
+    {
+      "root": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-5obstacle",
+      "obstacles": 5,
+      "families": 22500,
+      "config_sha256": "b897cce3b3fc3ebbe32b5ff40997862a2f5ca57c3fc0c9f13b182b53e32c4fb2",
+      "index_sha256": "a7b520cb9755a776685a65dcc11092b19756069ef94c0044d56cbbcb92fc96c9"
+    }
+  ]
+}

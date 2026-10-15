@@ -14,6 +14,12 @@ SOLVE_SECONDS="${SOLVE_SECONDS:-10}"
 DEVICE="${DEVICE:-cuda:0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-data_trajectories_spacetime/Warehouse-TorchForest-Multiworld-f${NUM_FAMILIES}-${DIRECTION}-seed${SEED}}"
+# Empty uses the packaged catalog; no old dynamic dataset directories are read.
+FAMILY_CATALOG="${FAMILY_CATALOG:-}"
+catalog_args=()
+if [[ -n "$FAMILY_CATALOG" ]]; then
+  catalog_args=(--family-catalog "$FAMILY_CATALOG")
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
@@ -25,4 +31,5 @@ exec "$PYTHON_BIN" -m scripts.spacetime_data.generate_warehouse_multiworld \
   --query-batch-size "$QUERY_BATCH_SIZE" --max-world-attempts "$MAX_WORLD_ATTEMPTS" \
   --collision-chunk "$COLLISION_CHUNK" --edges-per-query "$EDGES_PER_QUERY" --goal-roots "$GOAL_ROOTS" \
   --solve-seconds "$SOLVE_SECONDS" --require-tau-r \
+  "${catalog_args[@]}" \
   "$@"

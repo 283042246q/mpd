@@ -7,9 +7,10 @@
 
 ## 1. 抽样与方向
 
-- 默认读取历史 `Warehouse-TorchSpaceTime-v1-{3,4,5}obstacle` 三个目录的 `config.json` 与 `index.json`，取有成功记录的 family 并集，当前为 **104,319**。
+- 默认读取已随代码导出的 `scripts/spacetime_data/assets/warehouse_solved_families_ge3_v1.npz`，当前为 **104,319** 个 family，约 157 KiB。生成时不再打开历史动态数据目录。
+- 清单来自历史 `Warehouse-TorchSpaceTime-v1-{3,4,5}obstacle` 三个目录的成功 family 并集；1/2 障碍目录不参与。旁边的同名 `.json` 保存源数据身份、各目录数量、split 统计和来源哈希。统计为 train 83,650、validation 10,214、test 10,455。
 - `--num-families X` 从并集均匀、无放回抽取 X 个；不会按历史成功轨迹条数给 family 加权。
-- 检查历史配置/index 哈希、源文件大小/mtime、双向分组大小和 family 行号范围。历史源文件绝对路径可以不同，便于复用从其他机器拷贝的数据；源文件内容身份沿用已有大小/mtime 合约，不新增全文件内容认证。
+- 默认检查清单格式、family ID 排序/去重/范围/内容哈希，以及源文件大小/mtime、源行数和双向分组大小。来源中的旧目录路径仅作为记录，不需要存在。源文件内容身份沿用已有大小/mtime 合约，不新增全文件内容认证。
 - 同一 seed 和候选池，抽样结果可复现；较小 X 是较大 X 抽样清单的前缀。生成过程中不补换失败 family。
 - `--direction random` 为每个 family 独立指定正向或反向，**该 family 的六档全部使用同一个方向**。总体约一半正向一半反向，不保证精确各半。
 - `--direction forward` 或 `reverse` 可以使全部 family 使用指定方向。
@@ -17,6 +18,20 @@
 - 沿用旧数据的 family 哈希 80/10/10 split；随机抽样不保证各 split 精确占比。同 family 的全部新旧样本归属相同 split。
 
 抽样结果保存在 `families.json`，包含 family、方向、source row、source task ID 和 split。
+
+### 预先统计与跨机器使用
+
+已完成一次统计并提交清单，通常不必再执行导出。其他机器只需此 NPZ、原始 `dataset_merged_doubled.hdf5` 参考路径与原本依赖的机器人/静态环境资产，不需要复制五个旧动态数据目录。生成仍须从原始 HDF5 读取参考轨迹及起终点；清单不包含参考路径。
+
+若历史数据更新，重新导出只读取三个旧目录的 `config.json`、`index.json`，不读取动态轨迹 shards、不运行 GPU 规划：
+
+```bash
+python -m scripts.spacetime_data.warehouse_family_catalog
+```
+
+可加 `--output /path/to/catalog.npz` 另存，再通过 Python `--family-catalog /path/to/catalog.npz` 或 Bash `FAMILY_CATALOG=/path/to/catalog.npz` 使用。NPZ 内含完整来源元数据，运行时不依赖旁边的统计 JSON。
+
+仍可通过 `--eligible-roots DIR3 DIR4 DIR5` 恢复现场扫描历史目录的方式；它与显式 `--family-catalog` 互斥。现场扫描时会检查旧 config/index 哈希与 source 合约。
 
 ## 2. 障碍物与时间政策
 
@@ -67,7 +82,7 @@ solver 使用独立 namespace 派生每任务的 seed key。当前底层 forest 
 
 每个 batch 将成功样本、失败槽位和计数一起原子提交到 shard。恢复时从已提交 shard 的 `task_outcomes` 重建六个队列游标与 report/index；未提交 batch 重新计算。已提交成功或失败槽位都不会重复执行。
 
-`--resume` 要求源文件、候选池及 index、X、方向、所有生成配置与代码哈希一致。改变 X 或其他参数需使用新输出目录。
+`--resume` 要求源文件、候选清单文件（现场扫描模式为历史 config/index）、X、方向、所有生成配置与代码哈希一致。改变 X 或其他参数需使用新输出目录。
 
 ## 5. 运行命令
 
@@ -106,7 +121,7 @@ OUTPUT_ROOT=data_trajectories_spacetime/Warehouse-TorchForest-Multiworld-f10000-
 bash scripts/spacetime_data/run_warehouse_multiworld.sh --resume
 ```
 
-可通过 `--eligible-roots DIR3 DIR4 DIR5` 指定其他历史成功目录，但必须满足相同 source 合约且障碍数至少 3。
+默认启动不需要旧动态数据目录。可通过 `FAMILY_CATALOG` 指定另一个已导出的清单；或通过 `--eligible-roots DIR3 DIR4 DIR5` 现场扫描其他历史成功目录，但必须满足相同 source 合约且障碍数至少 3。
 
 ## 6. 输出、失败与验收
 
@@ -146,3 +161,5 @@ python -m scripts.spacetime_data.validate_warehouse_spacetime \
 这些仅用于确认入口、六种数量、导出和验收链路，不用于估计总体成功率或 GPU 吞吐；两个候选池和配置不同。有限失败均保留，未启动正式数据生成。
 
 验证产物位于 `benchmark_results/warehouse_multiworld_smoke/20261015/`，对应目录 `gpu-f4-default-budget`、`gpu-f4-five-obstacle-pool`，独立复验记录分别为 `verification-default-budget.json`、`verification-five-obstacle-pool.json`。开发期间的代码快照哈希保存在各自 config 中；按严格合约，当前代码与快照不一致时不能直接 resume 这些 smoke 输出，正式运行使用新目录。
+
+清单解耦另有两项测试：移走历史目录后，抽样清单与原扫描方式完全相同，仍可完成生成和 resume；源文件不匹配或清单内容损坏会拒绝使用。导出的真实 104,319 个 ID 还与前次统计的 `eligible-families.npz` 全量对照。
