@@ -4,7 +4,7 @@
 
 实际设计文件名为 [jointdual.md](jointdual.md) 和 [jointdual.txt](jointdual.txt)。本文是对方案的评审与落地建议，不代表 JointDual 已实现或已取得实验收益。
 
-实施补充：§14～§18给出实施契约，最终采用公开模型统一的 **P21／16个生成点＋EE pose goal**。原P29审计事实保留。raw转换见§19；已实现的快照、loader与canonical codec见§20，网络/训练/推理按阶段交付。原始数据与运行中的生成任务不变。
+实施补充：最终采用公开模型统一的 **P21／16个生成点＋EE pose goal**。raw转换见§19，四版数据/网络/训练/推理的已实现入口、命令与验证见§20。§14～§18保留设计契约；其中旧planner注入与adapter是备选接法，本次采用独立JointDual engine复用物理cost、DenseCheck、ranking及服务协议。原P29审计事实与旧版入口保留。
 
 ## 1. 核心判断
 
@@ -653,6 +653,8 @@ evaluate(decode_context, phase_query) -> TimingSplineEvaluation
 export(z_normalized) -> representation_specific_arrays
 ```
 
+实现中，标签编码与标准化由 `WarehouseJointDataset` 负责，codec提供 `raw / full_path / prepare / evaluate / phase_at_times / export`，上述是职责划分，不是逐字的函数名保证。
+
 `prepare` 接收物理空间P21，在固定2049网格上算q_s/q_ss、density normalization、T_min（仅tau_r）、u和累计时间表；其结果只属于这一组P/z，任一变化都重新计算。`evaluate`在任意查询phase求q/q_s/q_ss/u/u_s，时间来自同一累计积分表的插值，duration取canonical表末端。禁止在128点或validator网格重新归一化density、重算T_min或重置duration。累计梯形积分及插值规则、数值dtype都写入codec version；解析导数与离散积分之间的误差需要通过重建与网格收敛测试量化。
 
 最终物理时间网格通过同一单调累计表反求 phase，再查询解析 q/dq/ddq。禁止单独线性缩放导出的 time 数组来修复期限：这会使 dq/ddq、碰撞时刻与 latent 不一致。c、tau_r 都保证正 u，但均须拒绝 NaN/Inf、数值下溢导致非严格递增时间及超期限结果。
@@ -699,7 +701,7 @@ HDF5 handle 采用每个 DataLoader worker 自己打开、只读、有限 LRU �
 
 ### 15.3 与旧 planner 的数据接口分开
 
-`WarehouseJointDataset` 的训练 batch 不能直接替换旧 `TrajectoryDatasetBspline` 对象。现有 planner 还调用 `create_data_sample_normalized`、`build_context`、`normalize/unnormalize_control_points`，读取 `control_points_dim / n_learnable_control_points / context_ee_goal_pose`。建议增加从 checkpoint contract 构造的轻量 `JointPlanningDataAdapter`，明确实现这些接口；推理不要求训练 HDF5 常驻本机。
+训练batch不能直接替换旧 `TrajectoryDatasetBspline`。若接旧planner，需下述 `JointPlanningDataAdapter` 接口；**本次独立engine直接从checkpoint构造task、codec与sampler，不走旧dataset/model初始化，因而无需该兼容adapter或训练HDF5。** 以下adapter约定保留用于后续接旧planner的备选方案。
 
 该adapter的 `control_points_dim=(16,7)`、`n_learnable_control_points=16`、`context_qs=True`、`context_ee_goal_pose=True`。`hard_conds={}`；完整P扩回 `[q_start×3,P_free[:15],P_free[-1]×3]`。最后一个生成点必须接受去噪、guidance与EE误差梯度，不能钉到teacher的q_goal。非零dq/ddq请求在进入sampler前拒绝。
 
@@ -877,7 +879,7 @@ V1 的 joint guide 仅缓存 world 编码、spline basis 和静态机器人信�
 
 ## 18. 实施交付顺序与验收清单
 
-D0转换器及其测试已实现并运行；其余行为仍是后续代码实现的验收要求，不表示对应训练或runtime模块已完成。
+此表保留阶段验收要求；当前D0/D1/D2、四版训练和rest-to-rest推理链已实现，具体测试、入口及未验证的部署范围见§20。正式规划收益与闭环实验仍待执行。
 
 | 阶段 | 交付 | 必须通过的检查 |
 |---|---|---|
@@ -951,7 +953,7 @@ multiworld可单独转换到另一个root，也可在首次命令中追加其 `-
 
 新增测试 [test_warehouse_eegoal_refit.py](../tests/test_warehouse_eegoal_refit.py)，覆盖P21/16点展开、EE字段、T_min重算、raw回退、碰撞拒绝、空world、来源保护、family split冲突和提交后中断恢复。连同原fit与multiworld测试共 **24项通过**，默认P29生成行为保持兼容。真实Panda/Warehouse/原动态world上，一障碍train前3条已完成转换并接受3条，输出位于 `/tmp/jointdual_p21_eegoal_smoke_final`；同参数resume成功，原raw/world数值逐项保留，重算T_min及tau duration往返检查通过。这是功能检查，不是202,500条全量保留率结论。
 
-转换器已实现；后续训练loader需识别新schema并实际使用EE条件，联合模型/codec运行时查询网格拆分/推理接入仍按§15～§18实施。输出与公开模型对齐的是CP数量、生成点布局、EE字段及静止边界，不代表可以未经核对直接加载全部网络权重或已消除训练分布差异。
+后续实现已补齐loader、四版网络/训练与独立推理入口，见§20。与公开模型对齐的是CP数量、生成点布局、EE字段及静止边界；权重迁移及规划性能需要另行实验。
 
 ## 20. 分阶段实现记录
 
@@ -983,3 +985,43 @@ python -m scripts.train.train_jointdual \
 另三份配置为 `jdkin_c.yaml`、`jdkin_tau_r.yaml`、`jdworld_c.yaml`。`--device`、`--max-steps`可覆盖配置；`--resume path/to/last.pt`恢复，数据、表示、结构与训练配方不一致会拒绝。最后checkpoint和周期性step checkpoint均包含normalizer、codec/world/static/robot身份，不依赖旧公开checkpoint或原训练HDF5才能加载模型。训练默认100,000 optimizer steps，未在本次自动启动正式长训练。
 
 阶段2新增7项测试，覆盖双向梯度、WORLD对象顺序不变性、空mask和四组合保存/恢复；实际3条P21动态样本上，四组合各训练2步完成并保存至 `/tmp/jointdual_four_smoke`。这些是训练链路检查，不是收敛或规划性能结论。
+
+### 阶段3：四版联合推理、独立CLI与socket服务
+
+已实现 `JointDualSampler`、`JointDualCostGuide`、`OracleForecastWorld` 和 `JointDualMpdRuntimeEngine`。checkpoint中的variant/representation决定四种方式，禁止加载时改解释。stage1提交 `2b7edf2`，stage2提交 `7bd5858`；推理作为第三阶段单独提交。
+
+实现选择与关键约束：
+
+- engine直接构造Panda/Warehouse/P21 task，在加载joint checkpoint后执行自己的warmup，不加载公开模型或旧训练数据。旧空间、Phase5、factorized的CLI/server和配置保持原入口。共享 `timing_contract.py`只新增两个joint输出mode，原Phase5 CLI的mode枚举不变。
+- P/z在同一个k同步DDIM，clean estimate上做late guidance，修改后用effective epsilon回写；c六个自由量全部可更新。z始终由sampler持有，不经过旧c reset/Adam。WORLD每请求编码一次并给候选共享；缓存不跨request复用，CFG及其额外forward计入统计。
+- 物理代价复用 `SpaceTimeCostEvaluator` 的动态mean/CVaR、时间加权v/a、duration和smoothness。空间使用原SDF hinge及self field，EE使用原SE(3) log误差；静态primitive缺少显式gradient时通过SDF值autograd，self采用原解析梯度的局部代理。空间项按phase mean聚合并记录 `legacy_sdf_hinge_se3_phase_mean_v1`，与旧guide的数值步长、phase聚合及clip仍需在F-matched实验中统一，不能仅凭相同cost名称声称完整采样配方已一致。
+- 超期限候选先做明确拒绝/期限修复，不向越界world查询动态代价。有限时长候选分别在2049 phase点与≤0.01s物理时间网格调用现有DenseCheck，要求collision margin、joint/v/a、rest边界和EE误差均通过。`dense_checked`记录实际几何检查数，`bounds_rejected`记录期限预拒绝，所有候选均有决策。
+- 排名复用原weighted metrics与Phase5 selection score；导出的top-K、z、q/dq/ddq、collision spheres和各自time使用同一候选索引。无有效候选返回 `no_valid_trajectory`，失败CLI会清理旧成功artifact。输出schema3/timing schema1；health报告 `jd_kin/jd_world`、representation与rest-to-rest能力。
+- oracle入口保留HDF5整条piecewise-linear曲线；request/world入口复用CV动态预测及handoff offset、world version、预测有效期。WORLD v1拒绝旋转box/capsule条件，KIN的动态cost仍可处理已有runtime的旋转primitive。两者仍需区分oracle与预测结果；本次未新增prediction-conditioned训练或moving-start。
+
+离线oracle规划：
+
+```bash
+python -m scripts.inference.infer_jointdual \
+  --joint-checkpoint data_trained_models/jointdual/jdworld_tau_r/last.pt \
+  --dataset-root data_trajectories_spacetime/Warehouse-P21-EE-main-v1 \
+  --split test --sample-index 0 \
+  --output-dir results/jointdual/oracle-0000 --device cuda:0
+```
+
+也可使用 `--request request.json --world world.json --trajectory-start-unix-ns <handoff>`；此模式读取现有runtime snapshot格式，缺省world为显式空场景。runtime配置默认为 [config_EnvWarehouse-RobotPanda-jointdual.yaml](../scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-jointdual.yaml)，可通过 `--config`调整候选数、步数、guidance和EE验收容差。checkpoint为默认100级schedule时可用默认32步；短smoke checkpoint须使用不超过其训练levels的采样步数。
+
+独立resident服务：
+
+```bash
+python -m scripts.runtime.infer_jointdual_server \
+  --joint-checkpoint data_trained_models/jointdual/jdworld_tau_r/last.pt \
+  --socket /tmp/mpd-jointdual.sock \
+  --output-root results/jointdual/runtime --device cuda:0
+```
+
+服务复用 `DynamicResidentPlannerService` 的world上传、request_seq、handoff、deadline和artifact写入。接现有adapter时配置独立socket、匹配 `EnvWarehouse` 的scene以及 `expected_timing_mode=jd_world`（或jd_kin）；representation由worker health/metadata标识。本次没有修改physical_ai_runtime配置或自动启动仿真/执行。
+
+阶段3新增7项检查，含真实Panda的c/tau_r guidance与GT轨迹验收、错误EE目标/移动边界拒绝、旧dynamic服务dispatch及NPZ导出。GT候选被显式注入以验证解码/验收/协议，不计作学习模型的规划成功率。四个仅训练2步的checkpoint均已运行真实sampler＋guidance CLI，并正确以 `no_valid_trajectory` 结束；这验证失败路径，不代表模型已收敛。CPU链路已验证，CUDA与正式长训练/闭环性能尚未验证。
+
+最终相关回归范围包含joint数据/训练/推理、原P29拟合与multiworld、旧timing训练、factorized sampler/guide/CLI/server、Phase5 guidance/CLI、动态SDF与timing contract：**112项通过、1项CUDA检查因当前环境无GPU跳过**。不支持的移动边界等请求以可恢复的PLAN_FAILED返回，worker保留READY；未修改physical_ai_runtime、原multiworld启动脚本或storage guard。

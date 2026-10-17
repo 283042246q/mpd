@@ -21,6 +21,7 @@ TIMING_MODES = {
     "phase5_timing_only",
     "phase5_joint",
 }
+JOINT_TIMING_MODES = {"jd_kin", "jd_world"}
 
 
 class TimingContractError(ValueError):
@@ -67,7 +68,7 @@ def attach_candidate_timing(
 ) -> PlanArtifacts:
     """Upgrade mutable plan artifacts to trajectory schema v3."""
 
-    if timing_mode not in TIMING_MODES:
+    if timing_mode not in TIMING_MODES | JOINT_TIMING_MODES:
         raise TimingContractError(f"unsupported Phase-5 timing mode {timing_mode!r}")
     topk_positions = np.asarray(artifacts.trajectory_arrays.get("topk_positions"))
     if topk_positions.ndim != 3:
