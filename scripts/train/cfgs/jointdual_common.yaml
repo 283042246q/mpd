@@ -1,0 +1,25 @@
+model:
+  channels: [32, 64, 128, 256]
+  timing_width: 128
+  joint_width: 256
+  world_width: 128
+  attention_heads: 4
+  world_dropout: 0.1
+diffusion:
+  num_diffusion_steps: 100
+training:
+  seed: 1726484688
+  device: auto
+  torch_threads: 4
+  batch_size: 64
+  accumulate_steps: 4
+  num_workers: 0
+  max_steps: 100000
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  gradient_clip_norm: 0.5
+  ema_decay: 0.999
+  use_amp: false
+  log_every: 100
+  validate_every: 1000
+  checkpoint_every: 1000

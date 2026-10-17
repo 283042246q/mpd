@@ -1,0 +1,3 @@
+base: jointdual_common.yaml
+variant: jd_world
+representation: tau_r

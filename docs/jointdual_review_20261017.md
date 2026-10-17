@@ -968,3 +968,18 @@ python -m scripts.spacetime_data.build_jointdual_snapshot \
 ```
 
 可重复 `--dataset-root` 合并P21派生multiworld，输出快照文件必须尚不存在。旧P29生成与旧timing loader入口保留。
+
+### 阶段2：四版网络与训练
+
+已实现 `JointDualDenoiser`、`WorldEncoder`、`JointDiffusion`、独立trainer和四份配置。网络保持P16/z6联合输入、双向fusion；WORLD用带有效性mask的两处cross-attention，区分EMPTY/NULL，KIN不读取W。trainer使用family→world抽样、EMA、梯度裁剪和可恢复的optimizer/RNG状态，microbatch索引由seed/step确定。已验证中断续训与连续训练权重逐位一致；旧空间/timing训练入口不变。
+
+```bash
+python -m scripts.train.train_jointdual \
+  --config scripts/train/cfgs/jdworld_tau_r.yaml \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_tau_r
+```
+
+另三份配置为 `jdkin_c.yaml`、`jdkin_tau_r.yaml`、`jdworld_c.yaml`。`--device`、`--max-steps`可覆盖配置；`--resume path/to/last.pt`恢复，数据、表示、结构与训练配方不一致会拒绝。最后checkpoint和周期性step checkpoint均包含normalizer、codec/world/static/robot身份，不依赖旧公开checkpoint或原训练HDF5才能加载模型。训练默认100,000 optimizer steps，未在本次自动启动正式长训练。
+
+阶段2新增7项测试，覆盖双向梯度、WORLD对象顺序不变性、空mask和四组合保存/恢复；实际3条P21动态样本上，四组合各训练2步完成并保存至 `/tmp/jointdual_four_smoke`。这些是训练链路检查，不是收敛或规划性能结论。
