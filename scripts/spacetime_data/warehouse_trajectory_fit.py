@@ -91,7 +91,8 @@ def audit_decoded(spline, phase, times, density, density_s, collision, query, fo
 
 
 def fit_teacher(path, collision, query, forecast, *, spatial_rmse_max=0.08,
-                timing_rmse_max=0.08, duration_floor=2., require_tau_r=False):
+                timing_rmse_max=0.08, duration_floor=2., require_tau_r=False,
+                spatial_control_points=29):
     """Return a safe canonical c trajectory plus independently checked tau-r.
 
     Any global slowdown changes the interaction with the world and is rechecked.
@@ -99,7 +100,8 @@ def fit_teacher(path, collision, query, forecast, *, spatial_rmse_max=0.08,
     """
     robot = collision.robot
     try:
-        spline, raw_phase, spatial_error = fit_spatial_time_path(path)
+        spline, raw_phase, spatial_error = fit_spatial_time_path(
+            path, control_points=spatial_control_points)
     except (ValueError, np.linalg.LinAlgError) as exc:
         return None, "spatial_fit:" + str(exc)
     # Clamp only free control points to the convex position-limit hull, then
