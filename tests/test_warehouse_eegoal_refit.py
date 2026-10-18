@@ -1,5 +1,7 @@
 """Conversion contracts, independent refit gates, and crash-safe resume."""
 import json
+import os
+import signal
 from types import SimpleNamespace
 
 import h5py
@@ -188,3 +190,148 @@ def test_empty_world_and_partial_crash_resume(tmp_path, monkeypatch):
         g = f["samples/000000001"]
         assert g["world/positions"].shape == (2, 0, 3)
         assert g["world/event_times"].shape == (0,)
+
+
+def two_row_source(root):
+    shard = source_fixture(root)
+    with h5py.File(shard, "a") as f:
+        f.copy("samples/000000000", "samples/000000001")
+        f["samples/000000001"].attrs["attempt_id"] = 1
+        f.attrs["attempt_stop"] = 2
+    index = json.loads((root / "index.json").read_text())
+    index["splits"]["train"].append(dict(index["splits"]["train"][0], group="samples/000000001"))
+    base.atomic_json(root / "index.json", index)
+
+
+def fixture_native_worker(args, snapshot, config_hash, number, begin, sender, writer_lock=None):
+    """Spawnable fixture: abrupt native-like death, including lost commit notice."""
+    marker = args.output_root / "fixture_crashed"
+    crash = not marker.exists() or args.crash_phase == "always"
+    if crash:
+        marker.touch()
+        if args.crash_phase != "after_commit":
+            staging = args.output_root / ".refit-staging/shards"
+            staging.mkdir(parents=True, exist_ok=True)
+            (staging / "shard-000000.hdf5.inprogress").write_bytes(b"incomplete HDF5")
+            os.kill(os.getpid(), signal.SIGKILL)
+    refit.process_shard(args, snapshot, config_hash, number, begin, CollisionFixture())
+    if crash:
+        os.kill(os.getpid(), signal.SIGKILL)
+    sender.send({"shard": number})
+    sender.close()
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_native_worker_death_replays_only_uncommitted_input(tmp_path, phase):
+    root, output = tmp_path / "source", tmp_path / "converted"
+    two_row_source(root)
+    output.mkdir(); (output / "shards").mkdir()
+    args = args_for(root, output)
+    args.crash_phase, args.worker_shards, args.worker_retries = phase, 1, 1
+    snapshot = refit.freeze_inputs([root], 0, load_panda_robot_bundle(base.REPOSITORY))
+    paths = list(refit.isolated_shards(args, snapshot, "test-identity", 0, 0,
+                                     worker_target=fixture_native_worker))
+    assert [p.name for p in paths] == ["shard-000000.hdf5", "shard-000001.hdf5"]
+    outcomes, entries = refit.restore(output, "test-identity", snapshot)
+    assert [r["conversion_id"] for r in outcomes] == [0, 1]
+    assert len(entries) == 2 and all(r["status"] == "accepted" for r in outcomes)
+    assert not list((output / ".refit-staging/shards").glob("*"))
+
+
+def test_repeated_native_failure_stops_without_rejection_or_skipping(tmp_path):
+    root, output = tmp_path / "source", tmp_path / "converted"
+    source_fixture(root)
+    output.mkdir(); (output / "shards").mkdir()
+    args = args_for(root, output)
+    args.crash_phase, args.worker_retries = "always", 1
+    snapshot = refit.freeze_inputs([root], 0, load_panda_robot_bundle(base.REPOSITORY))
+    with pytest.raises(RuntimeError, match="no inputs skipped"):
+        list(refit.isolated_shards(args, snapshot, "test-identity", 0, 0,
+                                  worker_target=fixture_native_worker))
+    assert not list((output / "shards").glob("*.hdf5"))
+    assert len((output / "refit_faults.log").read_text().splitlines()) == 2
+
+
+def fixture_lock_worker(writer_lock, connection):
+    with os.fdopen(writer_lock.fd, "a"):
+        connection.send("locked")
+        connection.recv()
+    connection.close()
+
+
+def test_spawn_writer_keeps_exclusive_lock_after_supervisor_fd_closes(tmp_path):
+    path = tmp_path / ".writer.lock"
+    lock = path.open("a")
+    refit.fcntl.flock(lock, refit.fcntl.LOCK_EX | refit.fcntl.LOCK_NB)
+    context = refit.multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    worker = context.Process(target=fixture_lock_worker,
+        args=(refit.SpawnWriterLock(lock.fileno()), child))
+    try:
+        worker.start(); child.close()
+        assert parent.poll(15) and parent.recv() == "locked"
+        lock.close()
+        with path.open("a") as contender:
+            with pytest.raises(BlockingIOError):
+                refit.fcntl.flock(contender, refit.fcntl.LOCK_EX | refit.fcntl.LOCK_NB)
+        parent.send("stop")
+        worker.join(timeout=15)
+        assert worker.exitcode == 0
+        with path.open("a") as contender:
+            refit.fcntl.flock(contender, refit.fcntl.LOCK_EX | refit.fcntl.LOCK_NB)
+    finally:
+        lock.close(); parent.close(); child.close()
+        if worker.pid is not None:
+            if worker.is_alive():
+                worker.terminate()
+            worker.join(timeout=5)
+            worker.close()
+
+
+def test_legacy_resume_audit_preserves_identity_and_never_initializes_cuda(tmp_path, monkeypatch):
+    root, output = tmp_path / "source", tmp_path / "converted"
+    two_row_source(root); output.mkdir()
+    original_commit = refit.commit
+
+    def interrupted_commit(*args, **kwargs):
+        original_commit(*args, **kwargs)
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(refit, "commit", interrupted_commit)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        refit.run(args_for(root, output), collision=CollisionFixture())
+    monkeypatch.setattr(refit, "commit", original_commit)
+    # Model a pre-upgrade output, including the original immutable shard hash.
+    config = json.loads((output / "config.json").read_text())
+    config["options"]["software"][refit.CONTROLLER] = next(iter(refit.COMPATIBLE_CONTROLLERS))
+    config_hash = refit.digest(config)
+    base.atomic_json(output / "config.json", config)
+    manifest = yaml.safe_load((output / "manifest.yaml").read_text())
+    manifest["config_hash"] = config_hash
+    (output / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True))
+    shard = output / "shards/shard-000000.hdf5"
+    with h5py.File(shard, "a") as f:
+        f.attrs["config_hash"] = config_hash
+    protected = {p: sha256_file(p) for p in (shard, output / "config.json", output / "input_snapshot.json")}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("audit must not initialize fitting/CUDA")
+
+    monkeypatch.setattr(refit, "WarehouseCollision", forbidden)
+    monkeypatch.setattr(refit, "isolated_shards", forbidden)
+    args = args_for(root, output, resume=True)
+    args.audit_only = True
+    refit.run(args)
+    assert protected == {p: sha256_file(p) for p in protected}
+    report = json.loads((output / "report.json").read_text())
+    assert report["processed"] == report["accepted"] == 1
+    assert not report["run_finished"] and report["config_hash"] == config_hash
+    # A known controller upgrade cannot authorize a numerical/config change.
+    args.margin += .001
+    with pytest.raises(ValueError, match="options/software differ"):
+        refit.run(args)
+    args.margin -= .001
+    config["options"]["software"]["scripts/spacetime_data/warehouse_trajectory_fit.py"] = "changed"
+    base.atomic_json(output / "config.json", config)
+    with pytest.raises(ValueError, match="options/software differ"):
+        refit.run(args)

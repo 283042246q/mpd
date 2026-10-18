@@ -945,15 +945,40 @@ python -m scripts.spacetime_data.refit_warehouse_eegoal \
 
 multiworld可单独转换到另一个root，也可在首次命令中追加其 `--dataset-root`；路径由实际生成任务决定。正式转换默认不限制样本数。转换器的CPU线程默认4，`--collision-chunk`控制碰撞检查块大小；SciPy拟合在CPU执行，device主要影响FK/碰撞，不表示所有拟合都在GPU上。
 
-中断后使用**原命令原参数**追加 `--resume`。恢复以已提交shard及ledger为准，可重建丢失/滞后的index/report；不重复处理已提交输入。代码、选项、机器人/静态几何或已提交源shard身份变化时拒绝续跑，改用新输出root。改变 `max-samples`、来源root或新增数据也使用新输出root，不在已有快照上扩充。
+中断后使用**原命令原参数**追加 `--resume`。恢复以已提交shard及ledger为准，可重建丢失/滞后的index/report；不重复处理已提交输入。拟合代码、选项、机器人/静态几何或已提交源shard身份变化时拒绝续跑，改用新输出root。2026-10-19的进程隔离修复仅对白名单中的初版转换器（`2b7edf2`）开放控制流程升级：保留旧config、config_hash和已提交shard，仍逐项校验其余软件/参数；当前控制器身份另记于 `refit_runtime.json`。改变 `max-samples`、来源root或新增数据仍使用新输出root，不在已有快照上扩充。
 
 输出root必须与输入分开，禁止输入目录本身及其祖先/子目录；脚本使用独占writer lock、staging文件和原子rename，不修改原shard。index/report默认每16个shard发布一次，结束时强制发布；意外中断的未提交staging批次在resume时重算。
+
+默认 `--worker-shards 128`：父进程管理恢复与派生索引，独立的spawn进程执行拟合、CUDA/FK/碰撞与HDF5写盘，每128个shard重建进程，不继承已初始化的CUDA/HDF5句柄。worker持有父进程writer lock的副本，父进程意外退出也不会放行第二个writer。原生信号退出默认 `--worker-retries 2`，从最后提交处重试；同一位置连续失败则报错停止，绝不当作fit rejection或跳过输入。Python异常直接报错。worker在rename之后、发送完成通知之前崩溃，也按已提交shard恢复。`--worker-shards 0`保留单进程诊断方式；这两个运行控制参数可在续跑时调整，不改变标签定义。
+
+`refit_faults.log`保存worker启动位置、原生异常的Python栈和重试记录；`refit_worker_status.json`记录当前输入或写盘区间。它们用于定位，不替代提交ledger。原命令追加 `--resume --audit-only`只核验冻结来源、提交ledger和数据集身份，并重建index/report，不初始化CUDA或重拟合，也不将未提交staging文件当作有效分片。
 
 ### 19.3 本次验证及尚未实现部分
 
 新增测试 [test_warehouse_eegoal_refit.py](../tests/test_warehouse_eegoal_refit.py)，覆盖P21/16点展开、EE字段、T_min重算、raw回退、碰撞拒绝、空world、来源保护、family split冲突和提交后中断恢复。连同原fit与multiworld测试共 **24项通过**，默认P29生成行为保持兼容。真实Panda/Warehouse/原动态world上，一障碍train前3条已完成转换并接受3条，输出位于 `/tmp/jointdual_p21_eegoal_smoke_final`；同参数resume成功，原raw/world数值逐项保留，重算T_min及tau duration往返检查通过。这是功能检查，不是202,500条全量保留率结论。
 
 后续实现已补齐loader、四版网络/训练与独立推理入口，见§20。与公开模型对齐的是CP数量、生成点布局、EE字段及静止边界；权重迁移及规划性能需要另行实验。
+
+### 19.4 2026-10-19 全量转换段错误恢复
+
+现场 `Warehouse-P21-EE-main-v1` 有2,767个已提交分片，最后一个为 `shard-002766.hdf5`，ledger覆盖 `[0,177088)`。已用 `--resume --audit-only`完成全部提交分片的身份、范围与accepted ledger核验，并将滞后的index/report从176,128条更新到177,088条：接受172,027条、拒绝5,061条，剩余25,412条。原始数据、冻结快照、config和已提交shard保留。
+
+下一分片 `.refit-staging/shards/shard-002767.hdf5.inprogress`无法正常打开，未提交；它对应的 `[177088,177152)` 输入将在恢复时重算。现场表明中断发生于临时分片写入期间，但没有可用原生堆栈，不能据此断言是CUDA、SciPy或HDF5本身的缺陷。进程隔离限制原生状态的存活时间并补上诊断与恢复，尚未证明底层故障根因已消除。
+
+续跑命令如下，保持原来的来源顺序、device及拟合参数：
+
+```bash
+python -m scripts.spacetime_data.refit_warehouse_eegoal \
+  --dataset-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-1obstacle \
+  --dataset-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-2obstacle \
+  --dataset-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-3obstacle \
+  --dataset-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-4obstacle \
+  --dataset-root data_trajectories_spacetime/Warehouse-TorchSpaceTime-v1-5obstacle \
+  --output-root data_trajectories_spacetime/Warehouse-P21-EE-main-v1 \
+  --shard-size 64 --publish-every 16 --device cuda:0 --resume
+```
+
+新增恢复测试覆盖未提交临时文件残留、提交后通知丢失、连续原生失败不丢输入、worker保留writer lock、初版输出身份兼容与无CUDA的audit；连同原fit、multiworld和JointDual数据/codec测试共 **34项通过**。实际Panda数据还完成了两个CPU分片、每分片重启一次的功能检查。当前工具环境无法连接NVIDIA驱动，未复现原CUDA段错误，也未自动启动剩余全量转换。
 
 ## 20. 分阶段实现记录
 

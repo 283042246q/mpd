@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import closing, ExitStack
+import faulthandler
 import fcntl
 import hashlib
 import json
+import multiprocessing
+from multiprocessing.reduction import DupFd
 import os
 from pathlib import Path
+import signal
 import time
+import traceback
 from types import SimpleNamespace
 
 import h5py
@@ -35,6 +41,24 @@ from scripts.spacetime_data.warehouse_world import Forecast, WarehouseCollision
 SCHEMA = "warehouse_spacetime_eegoal_v1"
 FORMAT = "warehouse_eegoal_raw_refit_v1"
 SPLITS = ("train", "validation", "test")
+CONTROLLER = "scripts/spacetime_data/refit_warehouse_eegoal.py"
+# The initial P21 controller used the identical numerical pipeline. Only this
+# audited predecessor may retain its config/shard identity across this upgrade.
+COMPATIBLE_CONTROLLERS = {
+    "c571eae88f05f9a42a175f27b02ba4ca668a104347e60e4e658a91e84f727723",
+}
+
+
+class SpawnWriterLock:
+    """Transfer the flock via spawn's inherited FDs, without a socket server."""
+    def __init__(self, fd):
+        self.fd = fd
+
+    def __getstate__(self):
+        return DupFd(self.fd)
+
+    def __setstate__(self, handle):
+        self.fd = handle.detach()
 
 
 def digest(value):
@@ -294,7 +318,153 @@ def publish(output, config_hash, snapshot, outcomes, entries):
         "safety_scope": "sampled sphere/primitive phase-and-time checks; not continuous collision certification"})
 
 
-def run(args, *, collision=None):
+def compatible_resume(saved, current):
+    if saved == current:
+        return True
+    previous = json.loads(json.dumps(saved))
+    if previous.get("software", {}).get(CONTROLLER) not in COMPATIBLE_CONTROLLERS:
+        return False
+    previous["software"][CONTROLLER] = current["software"][CONTROLLER]
+    return previous == current
+
+
+def process_shard(args, snapshot, config_hash, number, begin, collision, *, diagnostic=False):
+    rows, records = [], []
+    stop = min(begin + args.shard_size, len(snapshot["entries"]))
+    for conversion_id in range(begin, stop):
+        entry = snapshot["entries"][conversion_id]
+        source = snapshot["sources"][entry["root_id"]]
+        path = Path(source["root"]) / entry["file"]
+        if diagnostic:
+            base.atomic_json(args.output_root / "refit_worker_status.json", {
+                "pid": os.getpid(), "stage": "refit", "conversion_id": conversion_id,
+                "source": str(path), "group": entry["group"], "shard": number})
+        with h5py.File(path, "r") as shard:
+            if shard.attrs["schema"] != base.SCHEMA or shard.attrs["config_hash"] != source["config_hash"]:
+                raise ValueError("source shard contract mismatch")
+            group = shard[entry["group"]]
+            record, detail = refit_sample(group, dict(entry, conversion_id=conversion_id), collision,
+                spatial_rmse_max=args.spatial_rmse_max, timing_rmse_max=args.timing_rmse_max)
+            count = len(group["world/shape"])
+        rows.append({"conversion_id": conversion_id, "input": entry,
+                     "status": "accepted" if record is not None else "fit_rejected",
+                     "obstacle_count": count, **detail})
+        if record is not None:
+            records.append(record)
+    if diagnostic:
+        base.atomic_json(args.output_root / "refit_worker_status.json", {
+            "pid": os.getpid(), "stage": "commit", "shard": number,
+            "attempt_start": begin, "attempt_stop": stop})
+    return commit(args.output_root, number, begin, rows, records, config_hash, snapshot)
+
+
+def shard_worker(args, snapshot, config_hash, number, begin, sender, writer_lock=None):
+    """A fresh interpreter owns fitting, CUDA, and HDF5 writing for a bounded run."""
+    with ExitStack() as resources:
+        if writer_lock is not None:
+            # Retain the parent's flock even if the supervisor is killed. A new
+            # invocation cannot race a still-running writer from the old run.
+            resources.enter_context(os.fdopen(writer_lock.fd, "a"))
+        faults = resources.enter_context((args.output_root / "refit_faults.log").open("a", buffering=1))
+        faulthandler.enable(file=faults, all_threads=True)
+        faults.write(f"worker pid={os.getpid()} start={begin} shard={number}\n")
+        try:
+            torch.set_num_threads(args.torch_threads)
+            collision = WarehouseCollision(args.device, margin=args.margin, chunk_size=args.collision_chunk)
+            for _ in range(args.worker_shards):
+                if begin >= len(snapshot["entries"]):
+                    break
+                process_shard(args, snapshot, config_hash, number, begin, collision, diagnostic=True)
+                # A crash between rename and send is recovered by the parent.
+                sender.send({"shard": number})
+                number += 1
+                begin = min(begin + args.shard_size, len(snapshot["entries"]))
+        except Exception:
+            error = traceback.format_exc()
+            faults.write(error)
+            sender.send({"error": error})
+            raise
+        finally:
+            sender.close()
+            faulthandler.disable()
+
+
+def isolated_shards(args, snapshot, config_hash, number, begin, *, worker_target=shard_worker, writer_fd=None):
+    """Recover native worker death without converting it into a rejected label."""
+    context = multiprocessing.get_context("spawn")
+    failures = 0
+    while begin < len(snapshot["entries"]):
+        initial_begin = begin
+        receiver, sender = context.Pipe(duplex=False)
+        writer_lock = None if writer_fd is None else SpawnWriterLock(writer_fd)
+        worker = context.Process(target=worker_target,
+            args=(args, snapshot, config_hash, number, begin, sender, writer_lock))
+        error = None
+        try:
+            worker.start()
+            sender.close()
+            while True:
+                if receiver.poll(.2):
+                    try:
+                        message = receiver.recv()
+                    except EOFError:
+                        break
+                    if "error" in message:
+                        error = message["error"]
+                    else:
+                        if message["shard"] != number:
+                            raise ValueError("out-of-order worker commit")
+                        yield args.output_root / "shards" / ("shard-%06d.hdf5" % number)
+                        number += 1
+                        begin = min(begin + args.shard_size, len(snapshot["entries"]))
+                elif not worker.is_alive():
+                    break
+            worker.join()
+            # The worker may have died after atomic rename, before notification.
+            while True:
+                path = args.output_root / "shards" / ("shard-%06d.hdf5" % number)
+                if not path.exists():
+                    break
+                yield path
+                number += 1
+                begin = min(begin + args.shard_size, len(snapshot["entries"]))
+            if worker.exitcode:
+                if worker.exitcode > 0 or error:
+                    raise RuntimeError(f"refit worker failed (exit={worker.exitcode}):\n{error or 'see refit_faults.log'}")
+                failures = (0 if begin > initial_begin else failures) + 1
+                detail = {"event": "native_worker_exit", "exitcode": worker.exitcode,
+                          "resume_at": begin, "retry": failures, "retry_limit": args.worker_retries}
+                print(json.dumps(detail), flush=True)
+                with (args.output_root / "refit_faults.log").open("a") as faults:
+                    faults.write(json.dumps(detail) + "\n")
+                if failures > args.worker_retries:
+                    raise RuntimeError(f"native worker repeatedly failed at conversion {begin}; "
+                        "no inputs skipped; see refit_faults.log and refit_worker_status.json")
+            else:
+                if begin == initial_begin:
+                    raise RuntimeError("refit worker exited without committing a shard")
+                failures = 0
+        finally:
+            sender.close()
+            receiver.close()
+            if worker.pid is not None:
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(timeout=5)
+                    if worker.is_alive():
+                        worker.kill()
+                worker.join()
+                worker.close()
+
+
+def inline_shards(args, snapshot, config_hash, number, begin, collision):
+    while begin < len(snapshot["entries"]):
+        yield process_shard(args, snapshot, config_hash, number, begin, collision, diagnostic=True)
+        number += 1
+        begin = min(begin + args.shard_size, len(snapshot["entries"]))
+
+
+def run(args, *, collision=None, writer_fd=None):
     output = args.output_root
     bundle = load_panda_robot_bundle(base.REPOSITORY)
     options = {"format": FORMAT, "roots": [str(p) for p in args.dataset_root],
@@ -315,7 +485,7 @@ def run(args, *, collision=None):
     config_path, snapshot_path = output / "config.json", output / "input_snapshot.json"
     if args.resume:
         config = json.loads(config_path.read_text())
-        if config["options"] != options:
+        if not compatible_resume(config["options"], options):
             raise ValueError("resume options/software differ; use the same command and code or a new output root")
         snapshot = json.loads(snapshot_path.read_text())
         if digest(snapshot) != config["input_snapshot_hash"]:
@@ -348,38 +518,32 @@ def run(args, *, collision=None):
     materialize_dataset_contract(output, bundle, manifest)
     outcomes, entries = restore(output, config_hash, snapshot)
     publish(output, config_hash, snapshot, outcomes, entries)
-    if len(outcomes) == len(snapshot["entries"]):
+    base.atomic_json(output / "refit_runtime.json", {
+        "config_hash": config_hash, "controller_sha256": options["software"][CONTROLLER],
+        "config_controller_sha256": config["options"]["software"][CONTROLLER],
+        "worker_shards": args.worker_shards, "worker_retries": args.worker_retries,
+        "audit_only": args.audit_only, "pid": os.getpid(), "restored": len(outcomes)})
+    print(json.dumps({"event": "restored", "processed": len(outcomes),
+        "selected": len(snapshot["entries"]), "accepted": len(entries),
+        "rejected": len(outcomes) - len(entries)}), flush=True)
+    if args.audit_only or len(outcomes) == len(snapshot["entries"]):
         return 0
-    collision = collision or WarehouseCollision(args.device, margin=args.margin, chunk_size=args.collision_chunk)
     number = len(list((output / "shards").glob("shard-*.hdf5")))
-    while len(outcomes) < len(snapshot["entries"]):
-        begin = len(outcomes)
-        rows, records = [], []
-        for conversion_id in range(begin, min(begin + args.shard_size, len(snapshot["entries"]))):
-            entry = snapshot["entries"][conversion_id]
-            source = snapshot["sources"][entry["root_id"]]
-            path = Path(source["root"]) / entry["file"]
-            with h5py.File(path, "r") as shard:
-                if shard.attrs["schema"] != base.SCHEMA or shard.attrs["config_hash"] != source["config_hash"]:
-                    raise ValueError("source shard contract mismatch")
-                group = shard[entry["group"]]
-                record, detail = refit_sample(group, dict(entry, conversion_id=conversion_id), collision,
-                    spatial_rmse_max=args.spatial_rmse_max, timing_rmse_max=args.timing_rmse_max)
-                count = len(group["world/shape"])
-            rows.append({"conversion_id": conversion_id, "input": entry,
-                         "status": "accepted" if record is not None else "fit_rejected",
-                         "obstacle_count": count, **detail})
-            if record is not None:
-                records.append(record)
-        destination = commit(output, number, begin, rows, records, config_hash, snapshot)
-        number += 1
-        # Restore is also the crash-recovery path; the committed shard is truth.
-        outcomes, entries = restore(output, config_hash, snapshot,
-            outcomes=outcomes, entries=entries, paths=[destination])
-        if number % args.publish_every == 0 or len(outcomes) == len(snapshot["entries"]):
-            publish(output, config_hash, snapshot, outcomes, entries)
-        print(json.dumps({"processed": len(outcomes), "selected": len(snapshot["entries"]),
-                          "accepted": len(entries), "rejected": len(outcomes) - len(entries)}), flush=True)
+    if collision is not None or args.worker_shards == 0:
+        collision = collision or WarehouseCollision(args.device, margin=args.margin, chunk_size=args.collision_chunk)
+        paths = inline_shards(args, snapshot, config_hash, number, len(outcomes), collision)
+    else:
+        paths = isolated_shards(args, snapshot, config_hash, number, len(outcomes), writer_fd=writer_fd)
+    with closing(paths):
+        for destination in paths:
+            number += 1
+            # Restore is also the crash-recovery path; the committed shard is truth.
+            outcomes, entries = restore(output, config_hash, snapshot,
+                outcomes=outcomes, entries=entries, paths=[destination])
+            if number % args.publish_every == 0 or len(outcomes) == len(snapshot["entries"]):
+                publish(output, config_hash, snapshot, outcomes, entries)
+            print(json.dumps({"processed": len(outcomes), "selected": len(snapshot["entries"]),
+                              "accepted": len(entries), "rejected": len(outcomes) - len(entries)}), flush=True)
     return 0  # completion and per-sample rejection are separate report fields
 
 
@@ -397,28 +561,42 @@ def parse_args(argv=None):
     p.add_argument("--spatial-rmse-max", type=float, default=.08)
     p.add_argument("--timing-rmse-max", type=float, default=.08)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--worker-shards", type=int, default=128,
+                   help="recreate fitting/CUDA/writer process every N shards; 0=in-process diagnostics")
+    p.add_argument("--worker-retries", type=int, default=2,
+                   help="native worker exit retries without progress; Python errors are not retried")
+    p.add_argument("--audit-only", action="store_true", help="with --resume, rebuild index/report without fitting/CUDA")
     args = p.parse_args(argv)
     args.dataset_root = [root.resolve() for root in args.dataset_root]
     args.output_root = args.output_root.resolve()
     if len(set(args.dataset_root)) != len(args.dataset_root):
         p.error("duplicate input roots")
-    if (args.max_samples < 0 or min(args.shard_size, args.publish_every, args.collision_chunk, args.torch_threads) < 1
+    if (min(args.max_samples, args.worker_shards, args.worker_retries) < 0
+        or min(args.shard_size, args.publish_every, args.collision_chunk, args.torch_threads) < 1
         or not np.isfinite([args.margin, args.spatial_rmse_max, args.timing_rmse_max]).all()
         or args.margin < 0 or min(args.spatial_rmse_max, args.timing_rmse_max) <= 0):
         p.error("invalid sample count, size, fit tolerance, or margin")
+    if args.audit_only and not args.resume:
+        p.error("--audit-only requires --resume")
     if any(within(args.output_root, root) or within(root, args.output_root)
            for root in args.dataset_root):
         p.error("output must be separate from input roots, not an ancestor or descendant")
     return args
 
 
+def terminate_supervisor(signum, frame):
+    raise KeyboardInterrupt("refit supervisor received SIGTERM")
+
+
 def main(argv=None):
+    faulthandler.enable(all_threads=True)
+    signal.signal(signal.SIGTERM, terminate_supervisor)
     args = parse_args(argv)
     torch.set_num_threads(args.torch_threads)
     args.output_root.mkdir(parents=True, exist_ok=True)
     with (args.output_root / ".writer.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return run(args)
+        return run(args, writer_fd=lock.fileno())
 
 
 if __name__ == "__main__":
