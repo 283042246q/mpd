@@ -1085,3 +1085,29 @@ world时间频率为 `pi..8*pi`（作用于t/14），最高为14秒内4个周期
 四个原训练YAML/入口不改名称，通过公共配置显式写入 `model.architecture_version: v2`，checkpoint将该字段保存在model_config中，推理自动构造对应结构。历史checkpoint没有此字段时严格按v1加载；直接调用构造函数而省略字段也保持v1。旧checkpoint续训应使用其保存的原始 `run/config.json`（CLI的YAML loader也接受JSON），保持原model_config及训练配方；不要用现已切到v2的公共配置去resume旧模型。v1→v2不是精确resume，本次不增加部分权重热启动，也不静默迁移权重。旧snapshot和已经转换的数据可直接用于v2新训练，无需重新refit。
 
 本次CPU验证覆盖v1/v2两套结构、四种组合的训练/保存/精确续训、跨架构resume拒绝、双向P/z梯度、门控首步启动与后续分支梯度、world排列/有效性mask/EMPTY、物理时间敏感性、缓存token等价性、CFG采样及坐标规则。运行 `tests/test_jointdual_training.py tests/test_jointdual_inference.py tests/test_jointdual_data_codec.py`：**28项通过，2项因本地真实数据smoke文件缺失而跳过**。额外对照修改前的v1网络，同seed下state_dict与forward输出逐位一致。门控为零时world暂不影响输出属于初始化设计，条件敏感性测试须先打开门控。未开展正式长训练，不能据此声称规划成功率提升；CUDA当前不可用。
+
+## 22. 训练张量缓存与运行工具（2026-10-19）
+
+### 22.1 一次性训练张量缓存
+
+新增 [warehouse_joint_cache.py](../mpd/datasets/warehouse_joint_cache.py)，训练默认 `training.tensor_cache: auto`。首次从冻结snapshot顺序读取HDF5，一次性生成归一化P16、task19、c6、tau_r6以及原始world token/mask/state。两种timing标签同存，四个训练组合复用同一缓存；每个split的样本顺序、family抽样、normalizer和sample_index与HDF5视图一致。缓存保存的是确定性输入张量，扩散噪声/k、world dropout、world encoder输出仍在每次训练时计算。
+
+固定字段使用 `.npy`，world token使用连续二进制文件和逐行offset，避免按最大障碍数padding整个数据集。读取时用NumPy memory map，按需交由操作系统页缓存，不把全量缓存一次装入Python堆内存。KIN不映射、不组装world字段；未启用缓存的KIN也跳过world读取。CUDA时默认启用pin_memory和non_blocking传输；缓存模式仍默认num_workers=0，可按实际机器测量后调整。
+
+```bash
+# 可提前构建；不执行此命令也会在首次训练时自动构建。
+python -m scripts.spacetime_data.build_jointdual_tensor_cache \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json
+
+# --output可指定共享缓存目录；训练时使用同一路径。
+python -m scripts.train.train_jointdual \
+  --config scripts/train/cfgs/jdworld_tau_r.yaml \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_tau_r
+```
+
+自动路径是snapshot旁 `.jointdual_tensor_cache/<identity>`；身份绑定snapshot和归一化、world/codec契约、缓存/数据读取实现的代码hash。指定 `--tensor-cache /path/to/cache` 可共享自选目录，`--no-tensor-cache` 保留直接HDF5读取。缓存设置不改变checkpoint的模型/数据契约，允许在精确resume时切换读取方式。
+
+首次构建通过文件锁串行化，临时目录完整写入和flush后原子发布；异常时不发布半成品，不覆盖已有缓存。复用时校验manifest身份、字段shape/dtype、缓存文件size/mtime，以及snapshot冻结源shard的size/mtime；完整内容SHA在构建时保存，不在每次训练启动时重新扫描全部GB文件。源shard、snapshot或读取实现改变后使用新缓存，不能静默沿用旧张量。缓存仍依赖源文件存在以完成身份检查，不能作为独立的数据归档。
+
+实际本地数据前4096条上，以同一组2048个随机索引、batch64、CPU单进程读取与collate测得：HDF5约913 samples/s，缓存约54,630 samples/s；首次构建约4.55秒，占9.36MB。此结果包含操作系统热缓存，数据为该子集的障碍分布，不能直接作为全量数据或GPU端到端训练的加速倍数。默认全量构建由用户启动训练时执行，本次只构建了 `/tmp` 中的4096条基准缓存。

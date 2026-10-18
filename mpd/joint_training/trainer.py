@@ -1,5 +1,6 @@
 """Four-variant trainer with EMA, deterministic batch schedules and resume."""
 import copy
+from contextlib import ExitStack
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from mpd.datasets.warehouse_joint_dataset import WarehouseJointDataset, collate_joint, atomic_json, WORLD_CONTRACT
+from mpd.datasets.warehouse_joint_cache import build_tensor_cache, CachedWarehouseJointDataset
 from mpd.models.diffusion_models.jointdual import JointDualDenoiser, JointDiffusion
 from mpd.parametric_trajectory.joint_timing_codec import CODEC_CONTRACT
 from mpd.timing_training.trainer import _atomic_torch_save, _update_ema, _set_seed
@@ -57,6 +59,25 @@ class JointBatchSampler:
 
 
 def train_jointdual(config, snapshot, output_dir, *, resume=None):
+    opts = config.get("training", {})
+    cache = opts.get("tensor_cache", "auto")
+    with ExitStack() as resources:
+        dataset_class, dataset_args = WarehouseJointDataset, {}
+        if cache not in (False, None, "off"):
+            path = build_tensor_cache(snapshot, None if cache in (True, "auto") else cache)
+            dataset_class, dataset_args = CachedWarehouseJointDataset, dict(cache=path)
+        else:
+            path = None
+        datasets = []
+        for split in ("train", "validation"):
+            dataset = dataset_class(snapshot, split=split, representation=config["representation"],
+                                    include_world=config["variant"] == "jd_world", **dataset_args)
+            resources.callback(dataset.close)
+            datasets.append(dataset)
+        return _train_jointdual(config, snapshot, output_dir, *datasets, resume=resume, cache=path)
+
+
+def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None):
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
     variant, representation = config["variant"], config["representation"]
     opts = dict(config.get("training", {}))
@@ -64,8 +85,6 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None):
     torch.set_num_threads(int(opts.get("torch_threads", 4)))
     device_name = opts.get("device", "auto")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device_name == "auto" else torch.device(device_name)
-    data = WarehouseJointDataset(snapshot, representation=representation)
-    validation = WarehouseJointDataset(snapshot, split="validation", representation=representation)
     if not len(data):
         raise ValueError("empty training split")
     model_config = dict(config.get("model", {}), variant=variant)
@@ -102,12 +121,15 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None):
         step = previous["step"]
     elif (output / "last.pt").exists():
         raise FileExistsError("output already has a checkpoint; specify --resume")
-    atomic_json(output / "config.json", dict(config, snapshot=str(Path(snapshot).resolve())))
+    atomic_json(output / "config.json", dict(config, snapshot=str(Path(snapshot).resolve()),
+                tensor_cache_path=str(cache) if cache is not None else None))
     workers = int(opts.get("num_workers", 0))
+    pin_memory = bool(opts.get("pin_memory", True)) and device.type == "cuda"
     loader = DataLoader(data, batch_sampler=JointBatchSampler(data.entries, batch_size, seed,
         step*accumulate, maximum*accumulate), collate_fn=collate_joint, num_workers=workers,
         multiprocessing_context="spawn" if workers else None, persistent_workers=bool(workers),
         timeout=float(opts.get("worker_timeout", 60)) if workers else 0,
+        pin_memory=pin_memory,
         generator=torch.Generator().manual_seed(seed + 113))
     iterator = iter(loader)
     def save():
@@ -123,7 +145,7 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None):
             model.train(); optimizer.zero_grad(set_to_none=True)
             loss_total = 0.; metrics = {}
             for _ in range(accumulate):
-                batch = {k: v.to(device) for k, v in next(iterator).items()}
+                batch = {k: v.to(device, non_blocking=pin_memory) for k, v in next(iterator).items()}
                 with torch.autocast(device_type=device.type, enabled=amp):
                     loss, metrics = model.training_loss(batch)
                 if representation == "c":

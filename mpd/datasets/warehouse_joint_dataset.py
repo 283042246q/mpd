@@ -168,21 +168,28 @@ def build_snapshot(roots, output):
     return snapshot
 
 
+def load_snapshot(snapshot):
+    value = json.loads(Path(snapshot).read_text())
+    saved = dict(value); expected = saved.pop("identity")
+    if saved["version"] != SNAPSHOT_VERSION or identity(saved) != expected:
+        raise ValueError("corrupted snapshot")
+    for name, expected in value["files"].items():
+        stat = Path(name).stat()
+        if expected != dict(size=stat.st_size, mtime_ns=stat.st_mtime_ns):
+            raise ValueError("frozen shard changed")
+    return value
+
+
 class WarehouseJointDataset(Dataset):
-    def __init__(self, snapshot, split="train", representation="tau_r", max_open_files=8):
+    def __init__(self, snapshot, split="train", representation="tau_r", max_open_files=8,
+                 include_world=True):
         if representation not in ("c", "tau_r") or split not in ("train", "validation", "test"):
             raise ValueError("invalid representation or split")
-        self.snapshot = json.loads(Path(snapshot).read_text())
-        saved = dict(self.snapshot); expected = saved.pop("identity")
-        if saved["version"] != SNAPSHOT_VERSION or identity(saved) != expected:
-            raise ValueError("corrupted snapshot")
-        for name, expected in self.snapshot["files"].items():
-            stat = Path(name).stat()
-            if expected != dict(size=stat.st_size, mtime_ns=stat.st_mtime_ns):
-                raise ValueError("frozen shard changed")
+        self.snapshot = load_snapshot(snapshot)
         self.entries = [e for e in self.snapshot["entries"] if e["split"] == split]
         self.normalization = self.snapshot["normalization"]
         self.representation, self.max_open_files = representation, max_open_files
+        self.include_world = include_world
         self._handles, self._pid = OrderedDict(), os.getpid()
 
     def __len__(self):
@@ -199,20 +206,30 @@ class WarehouseJointDataset(Dataset):
             self._handles.popitem(last=False)[1].close()
         return self._handles[name]
 
-    def __getitem__(self, index):
-        e = self.entries[index]; g = self._open(e["file"])[e["group"]]
+    def _read_sample(self, entry):
+        """One HDF5 read produces both standardized timing targets for the cache."""
+        g = self._open(entry["file"])[entry["group"]]
         p, targets, task = read_label(g)
-        n = self.normalization; stats = n[self.representation]
+        n = self.normalization
         p = (p - n["q_mean"]) / n["q_std"]
         task = np.r_[(task[:7] - n["q_mean"]) / n["q_std"],
                      (task[7:] - n["ee"]["mean"]) / n["ee"]["std"]]
-        z = (targets[self.representation] - stats["mean"]) / stats["std"]
-        features, mask, state = world_features(g["world/times"][:], g["world/positions"][:],
-                                               g["world/shape"][:], g["world/size"][:])
-        return {"p": torch.tensor(p, dtype=torch.float32), "z": torch.tensor(z, dtype=torch.float32),
-                "task": torch.tensor(task, dtype=torch.float32), "world_features": torch.from_numpy(features),
-                "world_mask": torch.from_numpy(mask), "world_state": torch.tensor(state),
-                "sample_index": torch.tensor(index)}
+        result = {"p": torch.tensor(p, dtype=torch.float32), "task": torch.tensor(task, dtype=torch.float32)}
+        for representation, z in targets.items():
+            stats = n[representation]
+            result["z_" + representation] = torch.tensor((z - stats["mean"]) / stats["std"], dtype=torch.float32)
+        if self.include_world:
+            features, mask, state = world_features(g["world/times"][:], g["world/positions"][:],
+                                                   g["world/shape"][:], g["world/size"][:])
+            result.update(world_features=torch.from_numpy(features), world_mask=torch.from_numpy(mask),
+                          world_state=torch.tensor(state))
+        return result
+
+    def __getitem__(self, index):
+        result = self._read_sample(self.entries[index])
+        result["z"] = result.pop("z_" + self.representation)
+        result.pop("z_tau_r" if self.representation == "c" else "z_c")
+        return dict(result, sample_index=torch.tensor(index))
 
     def close(self):
         for f in self._handles.values():
@@ -225,6 +242,8 @@ class WarehouseJointDataset(Dataset):
 
 
 def collate_joint(batch):
+    if "world_mask" not in batch[0]:
+        return {k: torch.stack([row[k] for row in batch]) for k in batch[0]}
     count = max(len(row["world_mask"]) for row in batch)
     features = torch.zeros(len(batch), count, 13)
     mask = torch.zeros(len(batch), count, dtype=torch.bool)

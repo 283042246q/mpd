@@ -26,8 +26,13 @@ def main(argv=None):
     p.add_argument("--device")
     p.add_argument("--max-steps", type=int)
     p.add_argument("--resume", type=Path)
+    cache = p.add_mutually_exclusive_group()
+    cache.add_argument("--tensor-cache", help="Shared cache directory, built once when absent")
+    cache.add_argument("--no-tensor-cache", action="store_true", help="Read original HDF5 data directly")
     args = p.parse_args(argv)
     config = load_config(args.config)
+    if args.tensor_cache is not None or args.no_tensor_cache:
+        config.setdefault("training", {})["tensor_cache"] = args.tensor_cache if not args.no_tensor_cache else False
     for key in ("device", "max_steps"):
         if getattr(args, key) is not None:
             config.setdefault("training", {})[key] = getattr(args, key)
