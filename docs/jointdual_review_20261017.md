@@ -1111,3 +1111,11 @@ python -m scripts.train.train_jointdual \
 首次构建通过文件锁串行化，临时目录完整写入和flush后原子发布；异常时不发布半成品，不覆盖已有缓存。复用时校验manifest身份、字段shape/dtype、缓存文件size/mtime，以及snapshot冻结源shard的size/mtime；完整内容SHA在构建时保存，不在每次训练启动时重新扫描全部GB文件。源shard、snapshot或读取实现改变后使用新缓存，不能静默沿用旧张量。缓存仍依赖源文件存在以完成身份检查，不能作为独立的数据归档。
 
 实际本地数据前4096条上，以同一组2048个随机索引、batch64、CPU单进程读取与collate测得：HDF5约913 samples/s，缓存约54,630 samples/s；首次构建约4.55秒，占9.36MB。此结果包含操作系统热缓存，数据为该子集的障碍分布，不能直接作为全量数据或GPU端到端训练的加速倍数。默认全量构建由用户启动训练时执行，本次只构建了 `/tmp` 中的4096条基准缓存。
+
+### 22.2 TensorBoard与指标口径
+
+训练默认 `training.tensorboard: true`，event写入 `<output-dir>/tensorboard`，不影响原stdout和 `metrics.jsonl`。使用 `tensorboard --logdir data_trained_models/jointdual` 可同时比较四种run；CLI的 `--no-tensorboard` 或配置false可关闭。依赖已在本仓库 `environment.yml` 中声明。
+
+每 `log_every` 个optimizer step及最后一步写入 `train/loss,p,z,grad_norm,learning_rate`，tau_r额外写 `train/tau,r`；`performance/step_seconds,data_wait_seconds,samples_per_second`记录单个训练step耗时、组批等待与吞吐。step耗时包含读取/传输、前后向、优化和EMA，不包含之后的验证、checkpoint和日志写盘；data_wait只计等待DataLoader返回batch，不计GPU传输。验证按 `validate_every` 写 `validation/loss,p,z`，tau_r同样含tau/r；默认仍为最多20个batch的epsilon验证，不能当作规划成功率。
+
+所有训练loss分量按该optimizer step的全部microbatch求均值，修正旧实现仅记录最后一个microbatch分量的问题；验证按样本数加权。保存checkpoint时flush事件，结束或异常时关闭writer。resume使用 `purge_step=checkpoint_step+1`，TensorBoard可丢弃意外中断后超出持久checkpoint的孤立事件，继续原曲线。验证保持独立固定generator；切换缓存或开关TensorBoard均不改变精确resume的模型轨迹。

@@ -3,6 +3,7 @@ import copy
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -74,10 +75,11 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None):
                                     include_world=config["variant"] == "jd_world", **dataset_args)
             resources.callback(dataset.close)
             datasets.append(dataset)
-        return _train_jointdual(config, snapshot, output_dir, *datasets, resume=resume, cache=path)
+        return _train_jointdual(config, snapshot, output_dir, *datasets, resume=resume, cache=path,
+                                resources=resources)
 
 
-def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None):
+def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None, resources):
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
     variant, representation = config["variant"], config["representation"]
     opts = dict(config.get("training", {}))
@@ -99,6 +101,9 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
     batch_size, accumulate = int(opts.get("batch_size", 64)), int(opts.get("accumulate_steps", 4))
     if min(maximum, batch_size, accumulate) < 1:
         raise ValueError("training counts must be positive")
+    if min(int(opts.get(k, default)) for k, default in
+           (("log_every", 100), ("validate_every", 1000), ("validation_batches", 20), ("checkpoint_every", 1000))) < 1:
+        raise ValueError("logging/validation/checkpoint intervals must be positive")
     contract = dict(variant=variant, representation=representation, model_config=model_config,
         diffusion_config=diffusion_config, normalization=data.normalization,
         dataset_snapshot_hash=data.snapshot["identity"], robot_hashes=data.snapshot["robot_hashes"],
@@ -123,6 +128,14 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         raise FileExistsError("output already has a checkpoint; specify --resume")
     atomic_json(output / "config.json", dict(config, snapshot=str(Path(snapshot).resolve()),
                 tensor_cache_path=str(cache) if cache is not None else None))
+    writer = None
+    if opts.get("tensorboard", True):
+        from torch.utils.tensorboard import SummaryWriter
+        writer = SummaryWriter(log_dir=str(output / "tensorboard"), purge_step=step+1 if resume else None)
+        resources.callback(writer.close)
+        writer.add_text("run/config", json.dumps(dict(variant=variant, representation=representation,
+            model=model_config, training=opts, dataset_snapshot_hash=data.snapshot["identity"],
+            tensor_cache_path=str(cache) if cache is not None else None), indent=2), step)
     workers = int(opts.get("num_workers", 0))
     pin_memory = bool(opts.get("pin_memory", True)) and device.type == "cuda"
     loader = DataLoader(data, batch_sampler=JointBatchSampler(data.entries, batch_size, seed,
@@ -140,12 +153,17 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
             cuda_rng_state_all=torch.cuda.get_rng_state_all() if device.type == "cuda" else None)
         _atomic_torch_save(payload, output / "last.pt")
         _atomic_torch_save(payload, output / f"step-{step:08d}.pt")
+        if writer is not None:
+            writer.flush()
     try:
         while step < maximum:
+            started = time.perf_counter(); data_wait = 0.
             model.train(); optimizer.zero_grad(set_to_none=True)
-            loss_total = 0.; metrics = {}
+            loss_total = 0.; metrics_total = {}
             for _ in range(accumulate):
-                batch = {k: v.to(device, non_blocking=pin_memory) for k, v in next(iterator).items()}
+                waiting = time.perf_counter(); batch = next(iterator)
+                data_wait += time.perf_counter() - waiting
+                batch = {k: v.to(device, non_blocking=pin_memory) for k, v in batch.items()}
                 with torch.autocast(device_type=device.type, enabled=amp):
                     loss, metrics = model.training_loss(batch)
                 if representation == "c":
@@ -153,6 +171,8 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
                 if not torch.isfinite(loss):
                     raise ValueError("nonfinite training loss")
                 scaler.scale(loss / accumulate).backward(); loss_total += float(loss.detach()) / accumulate
+                for key, value in metrics.items():
+                    metrics_total[key] = metrics_total.get(key, 0.) + float(value) / accumulate
             scaler.unscale_(optimizer)
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float(opts.get("gradient_clip_norm", .5)))
             if not torch.isfinite(norm):
@@ -160,23 +180,43 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
             scaler.step(optimizer); scaler.update()
             _update_ema(ema, model, float(opts.get("ema_decay", .999)))
             step += 1
-            record = dict(step=step, loss=loss_total, **{k: float(v) for k, v in metrics.items()})
+            grad_norm = float(norm)
+            seconds = time.perf_counter() - started
+            record = dict(step=step, loss=loss_total, **metrics_total, grad_norm=grad_norm,
+                          learning_rate=optimizer.param_groups[0]["lr"], step_seconds=seconds,
+                          data_wait_seconds=data_wait, samples_per_second=batch_size*accumulate/seconds)
             if len(validation) and step % int(opts.get("validate_every", 1000)) == 0:
                 gen = torch.Generator(device=device).manual_seed(seed + 917)
                 val_loader = DataLoader(validation, batch_size=batch_size, collate_fn=collate_joint,
                     generator=torch.Generator().manual_seed(seed + 114))
-                losses = []
+                totals, samples = {}, 0
                 with torch.no_grad():
                     for i, b in enumerate(val_loader):
                         if i >= int(opts.get("validation_batches", 20)):
                             break
-                        losses.append(float(ema.training_loss({k: v.to(device) for k, v in b.items()}, generator=gen)[0]))
-                record["validation_loss"] = float(np.mean(losses))
+                        loss, metrics = ema.training_loss({k: v.to(device) for k, v in b.items()}, generator=gen)
+                        if representation == "c":
+                            metrics = {k: metrics[k] for k in ("p", "z")}
+                        count = len(b["p"]); samples += count
+                        for key, value in dict(loss=loss, **metrics).items():
+                            totals[key] = totals.get(key, 0.) + float(value)*count
+                record.update({"validation_" + key: value/samples for key, value in totals.items()})
             with (output / "metrics.jsonl").open("a") as f:
                 f.write(json.dumps(record) + "\n")
+            log_step = step == maximum or step % int(opts.get("log_every", 100)) == 0
+            if writer is not None:
+                if log_step:
+                    for key in ("loss", "p", "z", "tau", "r", "grad_norm", "learning_rate"):
+                        if key in record:
+                            writer.add_scalar("train/" + key, record[key], step)
+                    for key in ("step_seconds", "data_wait_seconds", "samples_per_second"):
+                        writer.add_scalar("performance/" + key, record[key], step)
+                for key, value in record.items():
+                    if key.startswith("validation_"):
+                        writer.add_scalar("validation/" + key[len("validation_"):], value, step)
             if step == maximum or step % int(opts.get("checkpoint_every", 1000)) == 0:
                 save()
-            if step == maximum or step % int(opts.get("log_every", 100)) == 0:
+            if log_step:
                 print(json.dumps(record), flush=True)
     finally:
         data.close(); validation.close()

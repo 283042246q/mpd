@@ -17,6 +17,7 @@ training:
   num_workers: 0
   tensor_cache: auto
   pin_memory: true
+  tensorboard: true
   max_steps: 100000
   learning_rate: 0.0001
   weight_decay: 0.0001
