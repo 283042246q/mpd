@@ -1082,7 +1082,7 @@ world时间频率为 `pi..8*pi`（作用于t/14），最高为14秒内4个周期
 | JD-KIN | 3,675,987 | 3,742,291 |
 | JD-WORLD | 3,960,275 | 4,554,963 |
 
-四个原训练YAML/入口不改名称，通过公共配置显式写入 `model.architecture_version: v2`，checkpoint将该字段保存在model_config中，推理自动构造对应结构。历史checkpoint没有此字段时严格按v1加载；直接调用构造函数而省略字段也保持v1。旧checkpoint续训应使用其保存的原始 `run/config.json`（CLI的YAML loader也接受JSON），保持原model_config及训练配方；不要用现已切到v2的公共配置去resume旧模型。v1→v2不是精确resume，本次不增加部分权重热启动，也不静默迁移权重。旧snapshot和已经转换的数据可直接用于v2新训练，无需重新refit。
+四个原训练YAML/入口不改名称，通过公共配置显式写入 `model.architecture_version: v2`，checkpoint将该字段保存在model_config中，推理自动构造对应结构。历史checkpoint没有此字段时严格按v1加载；直接调用构造函数而省略字段也保持v1。旧checkpoint续训应使用其保存的原始 `run/config.json`（CLI的YAML loader也接受JSON），保持原model_config及训练配方；不要用现已切到v2的公共配置去resume旧模型。v1→v2不是精确resume，部分参数迁移需显式使用§22.3的compatible热启动。旧snapshot和已经转换的数据可直接用于v2新训练，无需重新refit。
 
 本次CPU验证覆盖v1/v2两套结构、四种组合的训练/保存/精确续训、跨架构resume拒绝、双向P/z梯度、门控首步启动与后续分支梯度、world排列/有效性mask/EMPTY、物理时间敏感性、缓存token等价性、CFG采样及坐标规则。运行 `tests/test_jointdual_training.py tests/test_jointdual_inference.py tests/test_jointdual_data_codec.py`：**28项通过，2项因本地真实数据smoke文件缺失而跳过**。额外对照修改前的v1网络，同seed下state_dict与forward输出逐位一致。门控为零时world暂不影响输出属于初始化设计，条件敏感性测试须先打开门控。未开展正式长训练，不能据此声称规划成功率提升；CUDA当前不可用。
 
@@ -1119,3 +1119,44 @@ python -m scripts.train.train_jointdual \
 每 `log_every` 个optimizer step及最后一步写入 `train/loss,p,z,grad_norm,learning_rate`，tau_r额外写 `train/tau,r`；`performance/step_seconds,data_wait_seconds,samples_per_second`记录单个训练step耗时、组批等待与吞吐。step耗时包含读取/传输、前后向、优化和EMA，不包含之后的验证、checkpoint和日志写盘；data_wait只计等待DataLoader返回batch，不计GPU传输。验证按 `validate_every` 写 `validation/loss,p,z`，tau_r同样含tau/r；默认仍为最多20个batch的epsilon验证，不能当作规划成功率。
 
 所有训练loss分量按该optimizer step的全部microbatch求均值，修正旧实现仅记录最后一个microbatch分量的问题；验证按样本数加权。保存checkpoint时flush事件，结束或异常时关闭writer。resume使用 `purge_step=checkpoint_step+1`，TensorBoard可丢弃意外中断后超出持久checkpoint的孤立事件，继续原曲线。验证保持独立固定generator；切换缓存或开关TensorBoard均不改变精确resume的模型轨迹。
+
+### 22.3 权重热启动与精确resume分开
+
+训练入口新增 `--warm-start <joint-checkpoint>`，与 `--resume`互斥；要求使用新的output-dir，不覆盖已有checkpoint。默认 `--warm-start-weights ema`，可选model读取原始训练权重。两种热启动模式均从step0开始，AdamW/scaler/RNG按新训练配置初始化，EMA从加载后的模型重新初始化；不继承旧optimizer、EMA历史或batch进度。源路径、同一文件句柄读取内容的SHA256、源step、加载/跳过参数与数据变化记录于 `warm_start.json`、run config和后续checkpoint，并在之后的resume中保留。
+
+| 方式 | 参数与状态 | 数据/结构要求 |
+|---|---|---|
+| `--resume` | 恢复model、EMA、optimizer、scaler、RNG、step | 保持既有模型/表示、snapshot/normalizer及训练配方契约 |
+| `--warm-start`（默认strict） | 严格加载所选完整模型权重，重置训练状态 | 构造参数按默认值补齐后相同；允许新snapshot、normalizer、静态场景和训练超参 |
+| `--warm-start --warm-start-mode compatible` | 只复制同名同shape的可学习参数，其余保持新模型初始化 | 显式允许部分结构迁移，例如v1→v2；报告全部保留/跳过项 |
+
+两种热启动都要求同一jd_kin/jd_world、同一c/tau_r、同一robot和codec/world契约，以及相同扩散levels。暂只接受本仓库JointDual checkpoint，不把旧公开空间模型或独立timing checkpoint直接解释为joint权重。新snapshot的normalizer始终生效；normalizer变化会标记 `normalization_changed` 并在启动输出中提示，不会自动改写网络以保持原函数，因此属于需要继续训练的迁移。
+
+compatible只迁移可学习参数，不复制position、spatial_phase、world时间频率、schedule等buffer。v1/v2切换时，整个world encoder重新初始化，避免旧时间PE的隐藏层被当成新编码；旧attention/fusion名称不匹配的参数也跳过。v2新增的门控保持零初始化。这是部分参数初始化，不能把源checkpoint已学会的world使用能力视为完整保留。
+
+```bash
+# 同结构权重微调：默认加载EMA，使用新run目录。
+python -m scripts.train.train_jointdual \
+  --config scripts/train/cfgs/jdworld_tau_r.yaml \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_tau_r_finetune \
+  --warm-start data_trained_models/jointdual/jdworld_tau_r/last.pt
+
+# 从旧v1切换到当前v2：在上面的命令显式追加
+# --warm-start-mode compatible
+
+# 中断续训仍使用原入口，不能再同时传--warm-start。
+python -m scripts.train.train_jointdual \
+  --config data_trained_models/jointdual/jdworld_tau_r_finetune/config.json \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_tau_r_finetune \
+  --resume data_trained_models/jointdual/jdworld_tau_r_finetune/last.pt
+```
+
+这里的热启动指**训练权重初始化**；推理时从上一条轨迹P/z开始采样仍未实现，原sampler继续明确拒绝该请求。
+
+### 22.4 本次验证
+
+运行joint训练工具、v1/v2训练、张量缓存、data/codec与推理五组测试：**41项通过，2项因本地真实数据smoke文件缺失而跳过**。覆盖缓存/HDF5逐项一致、EMPTY/KNOWN及ragged world、无HDF5迭代、pickle和spawn进程重开memmap、缓存/来源变化拒绝、失败构建不发布、TensorBoard事件/续训purge、梯度累积指标、切换读取后精确resume，以及四种组合的EMA/model热启动、状态重置和v1→v2部分迁移。
+
+当前sandbox中原生torch DataLoader的spawn共享张量IPC对普通TensorDataset同样超时，因此多进程缓存读取用spawn+Pipe单独验证，没有把num_workers>0的端到端DataLoader列为已验证性能路径；默认num_workers=0。CUDA当前不可用，未启动正式全量缓存或长训练。缓存、TensorBoard、热启动按阶段独立commit，保留原四个训练入口和推理服务入口，未修改用户multiworld脚本改动。

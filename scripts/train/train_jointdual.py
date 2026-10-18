@@ -25,7 +25,11 @@ def main(argv=None):
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--device")
     p.add_argument("--max-steps", type=int)
-    p.add_argument("--resume", type=Path)
+    initialization = p.add_mutually_exclusive_group()
+    initialization.add_argument("--resume", type=Path, help="Restore exact optimizer/EMA/RNG/step state")
+    initialization.add_argument("--warm-start", type=Path, help="Initialize a new run from JointDual weights")
+    p.add_argument("--warm-start-mode", choices=("strict", "compatible"), default="strict")
+    p.add_argument("--warm-start-weights", choices=("ema", "model"), default="ema")
     cache = p.add_mutually_exclusive_group()
     cache.add_argument("--tensor-cache", help="Shared cache directory, built once when absent")
     cache.add_argument("--no-tensor-cache", action="store_true", help="Read original HDF5 data directly")
@@ -39,7 +43,8 @@ def main(argv=None):
     for key in ("device", "max_steps"):
         if getattr(args, key) is not None:
             config.setdefault("training", {})[key] = getattr(args, key)
-    print(train_jointdual(config, args.snapshot, args.output_dir, resume=args.resume))
+    print(train_jointdual(config, args.snapshot, args.output_dir, resume=args.resume, warm_start=args.warm_start,
+                          warm_start_mode=args.warm_start_mode, warm_start_weights=args.warm_start_weights))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Four-variant trainer with EMA, deterministic batch schedules and resume."""
 import copy
 from contextlib import ExitStack
+import hashlib
+import inspect
 import json
 from pathlib import Path
 import time
@@ -40,6 +42,71 @@ def load_joint_checkpoint(path, device="cpu", *, use_ema=True, variant=None, rep
     return model.to(device).eval().requires_grad_(False), payload
 
 
+def _model_options(config):
+    options = inspect.signature(JointDualDenoiser).bind(**config)
+    options.apply_defaults()
+    result = dict(options.arguments)
+    result["channels"] = list(result["channels"])
+    return result
+
+
+def _warm_start_model(model, checkpoint, contract, *, mode="strict", weights="ema"):
+    """Initialize model weights only; keep target buffers/coordinates in compatible mode."""
+    if mode not in ("strict", "compatible") or weights not in ("ema", "model"):
+        raise ValueError("invalid warm-start mode or weights")
+    path = Path(checkpoint).resolve()
+    with path.open("rb") as handle:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: handle.read(1024*1024), b""):
+            digest.update(chunk)
+        handle.seek(0)
+        previous = torch.load(handle, map_location="cpu", weights_only=False)
+    if previous.get("checkpoint_version") != CHECKPOINT_VERSION:
+        raise ValueError("unsupported warm-start checkpoint")
+    for key in ("variant", "representation", "robot_hashes", "codec_contract", "world_contract"):
+        if previous.get(key) != contract[key]:
+            raise ValueError("warm-start contract mismatch: " + key)
+    if previous["model_config"].get("variant") != previous["variant"]:
+        raise ValueError("warm-start model variant disagrees with metadata")
+    old_options, new_options = _model_options(previous["model_config"]), _model_options(contract["model_config"])
+    if previous["diffusion_config"].get("num_diffusion_steps", 100) != model.num_diffusion_steps:
+        raise ValueError("warm-start diffusion schedule mismatch")
+    if mode == "strict" and old_options != new_options:
+        raise ValueError("warm-start architecture mismatch; use compatible mode for partial parameter transfer")
+    state = previous["ema_model_state_dict" if weights == "ema" else "model_state_dict"]
+    if not all(torch.isfinite(value).all() for value in state.values()):
+        raise ValueError("nonfinite warm-start parameters")
+    parameters = dict(model.named_parameters())
+    if mode == "strict":
+        model.load_state_dict(state, strict=True)
+        loaded = sorted(parameters)
+        skipped, missing = [], []
+    else:
+        changed_coordinates = old_options["architecture_version"] != new_options["architecture_version"]
+        selected = {}
+        for key, target in parameters.items():
+            # A new time PE changes the world MLP input semantics, even when some
+            # hidden layers have the same dimensions. Leave that encoder fresh.
+            if changed_coordinates and key.startswith("denoiser.world_encoder."):
+                continue
+            if key in state and state[key].shape == target.shape:
+                selected[key] = state[key]
+        if not selected:
+            raise ValueError("warm-start has no compatible parameters")
+        current = model.state_dict(); current.update(selected)
+        model.load_state_dict(current, strict=True)
+        loaded = sorted(selected)
+        skipped = sorted(set(state) - set(loaded))
+        missing = sorted(set(parameters) - set(loaded))
+    report = dict(checkpoint=str(path), sha256=digest.hexdigest(), source_step=int(previous["step"]),
+        mode=mode, weights=weights, loaded_parameter_keys=loaded, skipped_source_keys=skipped,
+        fresh_parameter_keys=missing, loaded_parameter_count=sum(parameters[key].numel() for key in loaded),
+        normalization_changed=previous["normalization"] != contract["normalization"],
+        dataset_changed=previous["dataset_snapshot_hash"] != contract["dataset_snapshot_hash"],
+        static_geometry_changed=previous["static_geometry_hashes"] != contract["static_geometry_hashes"])
+    return report
+
+
 class JointBatchSampler:
     """Family -> world; each microbatch is a pure function of seed and index."""
     def __init__(self, entries, batch_size, seed, start, stop):
@@ -59,7 +126,10 @@ class JointBatchSampler:
         return self.stop - self.start
 
 
-def train_jointdual(config, snapshot, output_dir, *, resume=None):
+def train_jointdual(config, snapshot, output_dir, *, resume=None, warm_start=None,
+                    warm_start_mode="strict", warm_start_weights="ema"):
+    if resume is not None and warm_start is not None:
+        raise ValueError("resume and warm-start are mutually exclusive")
     opts = config.get("training", {})
     cache = opts.get("tensor_cache", "auto")
     with ExitStack() as resources:
@@ -76,10 +146,12 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None):
             resources.callback(dataset.close)
             datasets.append(dataset)
         return _train_jointdual(config, snapshot, output_dir, *datasets, resume=resume, cache=path,
-                                resources=resources)
+                                resources=resources, warm_start=warm_start, warm_start_mode=warm_start_mode,
+                                warm_start_weights=warm_start_weights)
 
 
-def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None, resources):
+def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None, resources,
+                     warm_start=None, warm_start_mode="strict", warm_start_weights="ema"):
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
     variant, representation = config["variant"], config["representation"]
     opts = dict(config.get("training", {}))
@@ -109,6 +181,7 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         dataset_snapshot_hash=data.snapshot["identity"], robot_hashes=data.snapshot["robot_hashes"],
         static_geometry_hashes=data.snapshot["static_geometry_hashes"],
         codec_contract=CODEC_CONTRACT, world_contract=WORLD_CONTRACT)
+    warm_start_report = None
     if resume:
         previous = torch.load(resume, map_location="cpu", weights_only=False)
         if previous.get("checkpoint_version") != CHECKPOINT_VERSION or any(previous[k] != v for k, v in contract.items()):
@@ -124,10 +197,22 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         if device.type == "cuda" and previous["cuda_rng_state_all"] is not None:
             torch.cuda.set_rng_state_all(previous["cuda_rng_state_all"])
         step = previous["step"]
+        warm_start_report = previous.get("warm_start")
     elif (output / "last.pt").exists():
         raise FileExistsError("output already has a checkpoint; specify --resume")
+    elif warm_start is not None:
+        warm_start_report = _warm_start_model(model, warm_start, contract, mode=warm_start_mode,
+                                               weights=warm_start_weights)
+        ema.load_state_dict(model.state_dict(), strict=True)
+        atomic_json(output / "warm_start.json", warm_start_report)
+        print(json.dumps(dict(event="warm_start", mode=warm_start_mode, weights=warm_start_weights,
+            source_step=warm_start_report["source_step"],
+            loaded_parameters=warm_start_report["loaded_parameter_count"],
+            fresh_parameter_keys=len(warm_start_report["fresh_parameter_keys"]),
+            normalization_changed=warm_start_report["normalization_changed"],
+            dataset_changed=warm_start_report["dataset_changed"], report=str(output / "warm_start.json"))), flush=True)
     atomic_json(output / "config.json", dict(config, snapshot=str(Path(snapshot).resolve()),
-                tensor_cache_path=str(cache) if cache is not None else None))
+                tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report))
     writer = None
     if opts.get("tensorboard", True):
         from torch.utils.tensorboard import SummaryWriter
@@ -135,7 +220,7 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         resources.callback(writer.close)
         writer.add_text("run/config", json.dumps(dict(variant=variant, representation=representation,
             model=model_config, training=opts, dataset_snapshot_hash=data.snapshot["identity"],
-            tensor_cache_path=str(cache) if cache is not None else None), indent=2), step)
+            tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report), indent=2), step)
     workers = int(opts.get("num_workers", 0))
     pin_memory = bool(opts.get("pin_memory", True)) and device.type == "cuda"
     loader = DataLoader(data, batch_sampler=JointBatchSampler(data.entries, batch_size, seed,
@@ -147,6 +232,7 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
     iterator = iter(loader)
     def save():
         payload = dict(contract, checkpoint_version=CHECKPOINT_VERSION, step=step, training_config=opts,
+            warm_start=warm_start_report,
             model_state_dict=model.state_dict(), ema_model_state_dict=ema.state_dict(),
             optimizer_state_dict=optimizer.state_dict(), scaler_state_dict=scaler.state_dict(),
             torch_rng_state=torch.get_rng_state(),

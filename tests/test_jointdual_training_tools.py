@@ -1,3 +1,4 @@
+import copy
 import json
 
 import h5py
@@ -7,8 +8,8 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from torch.utils.tensorboard import SummaryWriter
 
 from mpd.datasets.warehouse_joint_dataset import build_snapshot
-from mpd.joint_training.trainer import train_jointdual
-from mpd.models.diffusion_models.jointdual import JointDiffusion
+from mpd.joint_training.trainer import train_jointdual, _warm_start_model
+from mpd.models.diffusion_models.jointdual import JointDiffusion, JointDualDenoiser
 from scripts.spacetime_data import refit_warehouse_eegoal as refit
 from test_jointdual_training import SMALL
 from test_warehouse_eegoal_refit import source_fixture, args_for, CollisionFixture
@@ -35,10 +36,11 @@ def snapshot(tmp_path):
 
 
 def config(variant="jd_world", representation="tau_r", **training):
+    options = dict(device="cpu", torch_threads=2, max_steps=2, batch_size=1,
+                   accumulate_steps=2, checkpoint_every=1, log_every=1, validate_every=1, seed=5)
+    options.update(training)
     return dict(variant=variant, representation=representation, model=dict(SMALL, architecture_version="v2"),
-                diffusion=dict(num_diffusion_steps=10), training=dict(device="cpu", torch_threads=2,
-                    max_steps=2, batch_size=1, accumulate_steps=2, checkpoint_every=1, log_every=1,
-                    validate_every=1, seed=5, **training))
+                diffusion=dict(num_diffusion_steps=10), training=options)
 
 
 def test_tensorboard_scalars_and_resume_purges_orphan_steps(snapshot, tmp_path):
@@ -84,3 +86,74 @@ def test_accumulated_metrics_are_microbatch_averages(snapshot, tmp_path, monkeyp
     assert record["loss"] == 6. and record["p"] == 2. and record["z"] == 4.
     assert "tau" not in record and "r" not in record
     assert not (run / "tensorboard").exists()
+
+
+@pytest.mark.parametrize("variant", ["jd_kin", "jd_world"])
+@pytest.mark.parametrize("representation", ["c", "tau_r"])
+def test_warm_start_weights_only_and_resume(snapshot, tmp_path, variant, representation):
+    cfg = config(variant, representation, tensorboard=False)
+    source = train_jointdual(cfg, snapshot, tmp_path / "source-run")
+    previous = torch.load(source, weights_only=False)
+    for weights in ("ema", "model"):
+        target = JointDiffusion(JointDualDenoiser(variant=variant, **cfg["model"]), num_diffusion_steps=10)
+        # New data/normalizers are allowed for fine-tuning, and explicitly reported.
+        contract = copy.deepcopy(previous)
+        contract["normalization"]["c"]["mean"][0] += 1.
+        contract["dataset_snapshot_hash"] = "new-dataset"
+        report = _warm_start_model(target, source, contract, weights=weights)
+        assert report["normalization_changed"] and report["dataset_changed"]
+        assert not report["fresh_parameter_keys"]
+        selected = previous["ema_model_state_dict" if weights == "ema" else "model_state_dict"]
+        for key, value in target.state_dict().items():
+            torch.testing.assert_close(value, selected[key], atol=0, rtol=0)
+    # LR=0 allows observing the initialized weights after a full real training step.
+    cfg["training"].update(max_steps=1, learning_rate=0., seed=23)
+    run = tmp_path / "warm"; path = train_jointdual(cfg, snapshot, run, warm_start=source)
+    warmed = torch.load(path, weights_only=False)
+    assert warmed["step"] == 1 and warmed["warm_start"]["source_step"] == 2
+    assert all(int(state["step"]) == 1 for state in warmed["optimizer_state_dict"]["state"].values())
+    for key, value in warmed["model_state_dict"].items():
+        torch.testing.assert_close(value, previous["ema_model_state_dict"][key], atol=0, rtol=0)
+    fresh = train_jointdual(cfg, snapshot, tmp_path / "fresh")
+    torch.testing.assert_close(warmed["torch_rng_state"], torch.load(fresh, weights_only=False)["torch_rng_state"],
+                               atol=0, rtol=0)
+    cfg["training"]["max_steps"] = 2
+    train_jointdual(cfg, snapshot, run, resume=path)
+    assert torch.load(path, weights_only=False)["warm_start"] == warmed["warm_start"]
+    with pytest.raises(FileExistsError):
+        train_jointdual(cfg, snapshot, run, warm_start=source)
+    wrong = dict(previous, representation="tau_r" if representation == "c" else "c")
+    with pytest.raises(ValueError, match="representation"):
+        _warm_start_model(target, source, wrong)
+
+
+def test_v1_to_v2_compatible_warm_start_preserves_new_coordinates(snapshot, tmp_path):
+    cfg = config(tensorboard=False)
+    cfg["model"].pop("architecture_version")  # historical checkpoint with implicit v1
+    source = train_jointdual(cfg, snapshot, tmp_path / "v1")
+    previous = torch.load(source, weights_only=False)
+    target = JointDiffusion(JointDualDenoiser(variant="jd_world", architecture_version="v2", **SMALL),
+                            num_diffusion_steps=10)
+    contract = dict(previous, model_config=dict(cfg["model"], variant="jd_world", architecture_version="v2"))
+    before = {key: value.clone() for key, value in target.state_dict().items()}
+    with pytest.raises(ValueError, match="architecture mismatch"):
+        _warm_start_model(target, source, contract)
+    report = _warm_start_model(target, source, contract, mode="compatible")
+    assert report["loaded_parameter_count"] > 0
+    assert "denoiser.world_encoder.encoder.2.weight" in report["fresh_parameter_keys"]
+    for key in ("denoiser.input.weight", "denoiser.task.0.weight", "denoiser.timing_head.0.weight"):
+        torch.testing.assert_close(target.state_dict()[key], previous["ema_model_state_dict"][key], atol=0, rtol=0)
+    for key in ("denoiser.position", "denoiser.spatial_phase", "denoiser.world_encoder.frequencies",
+                "denoiser.world_encoder.encoder.2.weight", "denoiser.fusion.projection.weight"):
+        torch.testing.assert_close(target.state_dict()[key], before[key], atol=0, rtol=0)
+    assert target.denoiser.timing_attention.gates[-1].weight.count_nonzero() == 0
+    assert target.denoiser.spatial_attention.gates[-1].weight.count_nonzero() == 0
+    cfg["model"]["architecture_version"] = "v2"
+    cfg["training"]["max_steps"] = 1
+    result = train_jointdual(cfg, snapshot, tmp_path / "v2", warm_start=source, warm_start_mode="compatible")
+    assert torch.load(result, weights_only=False)["step"] == 1
+
+
+def test_resume_and_warm_start_are_exclusive():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        train_jointdual({}, "unused.json", "unused", resume="old.pt", warm_start="other.pt")
