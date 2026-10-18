@@ -8,7 +8,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from torch.utils.tensorboard import SummaryWriter
 
 from mpd.datasets.warehouse_joint_dataset import build_snapshot
-from mpd.joint_training.trainer import train_jointdual, _warm_start_model
+from mpd.joint_training.trainer import train_jointdual, _warm_start_model, _validate_joint
 from mpd.models.diffusion_models.jointdual import JointDiffusion, JointDualDenoiser
 from scripts.spacetime_data import refit_warehouse_eegoal as refit
 from test_jointdual_training import SMALL
@@ -51,10 +51,12 @@ def test_tensorboard_scalars_and_resume_purges_orphan_steps(snapshot, tmp_path):
     assert {"train/loss", "train/p", "train/z", "train/tau", "train/r", "train/grad_norm",
             "train/learning_rate", "validation/loss", "validation/p", "validation/z",
             "validation/tau", "validation/r", "performance/samples_per_second"} <= set(tags)
+    assert {"validation/samples", "validation/total_samples", "validation/coverage", "validation/batches"} <= set(tags)
     records = [json.loads(row) for row in (run / "metrics.jsonl").read_text().splitlines()]
     for scalar, record in zip(events.Scalars("train/loss"), records):
         assert scalar.step == record["step"]
         assert scalar.value == pytest.approx(record["loss"])
+        assert record["validation_coverage"] == 1.
     # Simulate events written after the latest durable checkpoint, then restart.
     with SummaryWriter(str(run / "tensorboard")) as writer:
         writer.add_scalar("train/loss", 999., 9)
@@ -157,3 +159,47 @@ def test_v1_to_v2_compatible_warm_start_preserves_new_coordinates(snapshot, tmp_
 def test_resume_and_warm_start_are_exclusive():
     with pytest.raises(ValueError, match="mutually exclusive"):
         train_jointdual({}, "unused.json", "unused", resume="old.pt", warm_start="other.pt")
+
+
+class ValidationProbe:
+    def __init__(self):
+        self.seen = []
+
+    def training_loss(self, batch, *, generator):
+        assert not torch.is_grad_enabled()
+        self.seen.extend(batch["sample_index"].tolist())
+        torch.randn(len(batch["p"]), generator=generator)  # validation must not advance training RNG
+        value = batch["p"].float().mean()
+        return 2*value, dict(p=value, z=value, tau=value, r=value)
+
+
+def validation_rows(count):
+    # Sorted difficulties mimic snapshot shards: hard worlds occur after the old prefix cutoff.
+    return [dict(p=torch.tensor([1. if i < 40 else 9.]), sample_index=torch.tensor(i)) for i in range(count)]
+
+
+@pytest.mark.parametrize("representation", ["c", "tau_r"])
+def test_full_validation_covers_late_samples_and_weights_last_batch(representation):
+    model = ValidationProbe(); data = validation_rows(45)
+    before = torch.get_rng_state().clone()
+    result = _validate_joint(model, data, batch_size=2, device="cpu", representation=representation, seed=5)
+    assert model.seen == list(range(45))  # Includes all samples beyond the former 20-batch limit.
+    assert result["validation_samples"] == result["validation_total_samples"] == 45
+    assert result["validation_batches"] == 23 and result["validation_coverage"] == 1.
+    assert result["validation_loss"] == pytest.approx(2*(40 + 5*9)/45)
+    assert ("validation_tau" in result) == (representation == "tau_r")
+    torch.testing.assert_close(torch.get_rng_state(), before, atol=0, rtol=0)
+
+
+def test_limited_validation_is_fixed_uniform_subset():
+    data = validation_rows(100)
+    one, two = ValidationProbe(), ValidationProbe()
+    kwargs = dict(batch_size=2, device="cpu", representation="tau_r", seed=5, batch_limit=20)
+    first = _validate_joint(one, data, **kwargs)
+    assert _validate_joint(two, data, **kwargs) == first
+    assert one.seen == two.seen and len(set(one.seen)) == 40
+    assert max(one.seen) >= 40 and one.seen != list(range(40))
+    assert first["validation_samples"] == 40 and first["validation_coverage"] == .4
+    assert first["validation_total_samples"] == 100
+    with pytest.raises(ValueError, match="validation_batches"):
+        _validate_joint(one, data, **dict(kwargs, batch_limit=0))

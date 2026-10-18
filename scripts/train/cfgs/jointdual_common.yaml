@@ -26,4 +26,5 @@ training:
   use_amp: false
   log_every: 100
   validate_every: 1000
+  validation_batches: null  # Full validation split; a positive integer enables a fixed random subset.
   checkpoint_every: 1000

@@ -156,3 +156,4 @@ def test_four_cli_configurations():
         config=load_config(refit.base.REPOSITORY/f"scripts/train/cfgs/{name}.yaml")
         assert config["variant"] in ("jd_kin","jd_world") and config["representation"] in ("c","tau_r")
         assert config["model"]["architecture_version"] == "v2"
+        assert config["training"]["validation_batches"] is None

@@ -1116,7 +1116,7 @@ python -m scripts.train.train_jointdual \
 
 训练默认 `training.tensorboard: true`，event写入 `<output-dir>/tensorboard`，不影响原stdout和 `metrics.jsonl`。使用 `tensorboard --logdir data_trained_models/jointdual` 可同时比较四种run；CLI的 `--no-tensorboard` 或配置false可关闭。依赖已在本仓库 `environment.yml` 中声明。
 
-每 `log_every` 个optimizer step及最后一步写入 `train/loss,p,z,grad_norm,learning_rate`，tau_r额外写 `train/tau,r`；`performance/step_seconds,data_wait_seconds,samples_per_second`记录单个训练step耗时、组批等待与吞吐。step耗时包含读取/传输、前后向、优化和EMA，不包含之后的验证、checkpoint和日志写盘；data_wait只计等待DataLoader返回batch，不计GPU传输。验证按 `validate_every` 写 `validation/loss,p,z`，tau_r同样含tau/r；默认仍为最多20个batch的epsilon验证，不能当作规划成功率。
+每 `log_every` 个optimizer step及最后一步写入 `train/loss,p,z,grad_norm,learning_rate`，tau_r额外写 `train/tau,r`；`performance/step_seconds,data_wait_seconds,samples_per_second`记录单个训练step耗时、组批等待与吞吐。step耗时包含读取/传输、前后向、优化和EMA，不包含之后的验证、checkpoint和日志写盘；data_wait只计等待DataLoader返回batch，不计GPU传输。验证按 `validate_every` 写 `validation/loss,p,z`，tau_r同样含tau/r；默认覆盖完整验证split，另记samples/total_samples/batches/coverage，详见§22.5。epsilon验证不能当作规划成功率。
 
 所有训练loss分量按该optimizer step的全部microbatch求均值，修正旧实现仅记录最后一个microbatch分量的问题；验证按样本数加权。保存checkpoint时flush事件，结束或异常时关闭writer。resume使用 `purge_step=checkpoint_step+1`，TensorBoard可丢弃意外中断后超出持久checkpoint的孤立事件，继续原曲线。验证保持独立固定generator；切换缓存或开关TensorBoard均不改变精确resume的模型轨迹。
 
@@ -1160,3 +1160,13 @@ python -m scripts.train.train_jointdual \
 运行joint训练工具、v1/v2训练、张量缓存、data/codec与推理五组测试：**41项通过，2项因本地真实数据smoke文件缺失而跳过**。覆盖缓存/HDF5逐项一致、EMPTY/KNOWN及ragged world、无HDF5迭代、pickle和spawn进程重开memmap、缓存/来源变化拒绝、失败构建不发布、TensorBoard事件/续训purge、梯度累积指标、切换读取后精确resume，以及四种组合的EMA/model热启动、状态重置和v1→v2部分迁移。
 
 当前sandbox中原生torch DataLoader的spawn共享张量IPC对普通TensorDataset同样超时，因此多进程缓存读取用spawn+Pipe单独验证，没有把num_workers>0的端到端DataLoader列为已验证性能路径；默认num_workers=0。CUDA当前不可用，未启动正式全量缓存或长训练。缓存、TensorBoard、热启动按阶段独立commit，保留原四个训练入口和推理服务入口，未修改用户multiworld脚本改动。
+
+### 22.5 修正验证覆盖
+
+本地主snapshot的验证集有19,289条；原实现固定取前20个batch，batch64时前1,280条全部来自一障碍场景，不能代表完整验证分布。现将四个公共训练配置设为 `training.validation_batches: null`，省略该字段同样表示全量验证。自动遍历当前snapshot的完整validation split，保留最后不足batch_size的batch，并按样本数加权。无需固定写302，也无需为不同batch size或后续multiworld规模手工更新该数值。验证频率仍为每1,000个optimizer steps。
+
+若显式设置正整数 `validation_batches`，预算为该值乘物理batch_size，从整个验证集以独立固定种子无放回均匀抽取；不再取文件列表前缀。同一配置每次验证使用同一子集，预算覆盖全量时按全量处理。这是均匀子集，不保证稀少类别逐类覆盖；默认全量模式覆盖所有实际存在的障碍数量和family。
+
+JSON日志增加 `validation_samples`、`validation_total_samples`、`validation_batches`、`validation_coverage`；TensorBoard对应 `validation/samples,total_samples,batches,coverage`。完整非空验证集的coverage为1。使用独立generator，不推进训练RNG；本次不改变数据/normalizer、缓存身份、模型结构或optimizer，可从原checkpoint精确resume，无需重建snapshot或张量缓存。若旧run配置显式写了20，改为null后再resume；已启动的Python进程需重启并resume才能加载新逻辑。
+
+新验证曲线与历史“一障碍前缀”的loss口径不同，切换处的变化不能直接解释为模型退化。回归覆盖超过20个batch的尾部样本、最后小batch的正确加权、固定随机子集、覆盖率日志、训练RNG独立性及原四版保存/恢复。

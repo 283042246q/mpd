@@ -126,6 +126,33 @@ class JointBatchSampler:
         return self.stop - self.start
 
 
+@torch.no_grad()
+def _validate_joint(model, dataset, *, batch_size, device, representation, seed, batch_limit=None):
+    """Cover the full split by default; explicit budgets use a fixed uniform subset."""
+    if batch_limit is not None and (type(batch_limit) is not int or batch_limit < 1):
+        raise ValueError("validation_batches must be null (full split) or a positive integer")
+    total = len(dataset)
+    indices = None
+    if batch_limit is not None and batch_limit * batch_size < total:
+        indices = torch.randperm(total, generator=torch.Generator().manual_seed(seed + 115))[
+            :batch_limit * batch_size].tolist()
+    loader = DataLoader(dataset, batch_size=batch_size, sampler=indices, collate_fn=collate_joint,
+                        generator=torch.Generator().manual_seed(seed + 114))
+    generator = torch.Generator(device=device).manual_seed(seed + 917)
+    totals, samples, batches = {}, 0, 0
+    for batch in loader:
+        loss, metrics = model.training_loss({k: v.to(device) for k, v in batch.items()}, generator=generator)
+        if representation == "c":
+            metrics = {k: metrics[k] for k in ("p", "z")}
+        count = len(batch["p"]); samples += count; batches += 1
+        for key, value in dict(loss=loss, **metrics).items():
+            totals[key] = totals.get(key, 0.) + float(value)*count
+    result = {"validation_" + key: value/samples for key, value in totals.items()}
+    result.update(validation_samples=samples, validation_total_samples=total,
+                  validation_batches=batches, validation_coverage=samples/total if total else 0.)
+    return result
+
+
 def train_jointdual(config, snapshot, output_dir, *, resume=None, warm_start=None,
                     warm_start_mode="strict", warm_start_weights="ema"):
     if resume is not None and warm_start is not None:
@@ -174,8 +201,11 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
     if min(maximum, batch_size, accumulate) < 1:
         raise ValueError("training counts must be positive")
     if min(int(opts.get(k, default)) for k, default in
-           (("log_every", 100), ("validate_every", 1000), ("validation_batches", 20), ("checkpoint_every", 1000))) < 1:
+           (("log_every", 100), ("validate_every", 1000), ("checkpoint_every", 1000))) < 1:
         raise ValueError("logging/validation/checkpoint intervals must be positive")
+    validation_batches = opts.get("validation_batches")
+    if validation_batches is not None and (type(validation_batches) is not int or validation_batches < 1):
+        raise ValueError("validation_batches must be null (full split) or a positive integer")
     contract = dict(variant=variant, representation=representation, model_config=model_config,
         diffusion_config=diffusion_config, normalization=data.normalization,
         dataset_snapshot_hash=data.snapshot["identity"], robot_hashes=data.snapshot["robot_hashes"],
@@ -272,21 +302,8 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
                           learning_rate=optimizer.param_groups[0]["lr"], step_seconds=seconds,
                           data_wait_seconds=data_wait, samples_per_second=batch_size*accumulate/seconds)
             if len(validation) and step % int(opts.get("validate_every", 1000)) == 0:
-                gen = torch.Generator(device=device).manual_seed(seed + 917)
-                val_loader = DataLoader(validation, batch_size=batch_size, collate_fn=collate_joint,
-                    generator=torch.Generator().manual_seed(seed + 114))
-                totals, samples = {}, 0
-                with torch.no_grad():
-                    for i, b in enumerate(val_loader):
-                        if i >= int(opts.get("validation_batches", 20)):
-                            break
-                        loss, metrics = ema.training_loss({k: v.to(device) for k, v in b.items()}, generator=gen)
-                        if representation == "c":
-                            metrics = {k: metrics[k] for k in ("p", "z")}
-                        count = len(b["p"]); samples += count
-                        for key, value in dict(loss=loss, **metrics).items():
-                            totals[key] = totals.get(key, 0.) + float(value)*count
-                record.update({"validation_" + key: value/samples for key, value in totals.items()})
+                record.update(_validate_joint(ema, validation, batch_size=batch_size, device=device,
+                    representation=representation, seed=seed, batch_limit=validation_batches))
             with (output / "metrics.jsonl").open("a") as f:
                 f.write(json.dumps(record) + "\n")
             log_step = step == maximum or step % int(opts.get("log_every", 100)) == 0
