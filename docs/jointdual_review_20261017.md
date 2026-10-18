@@ -724,13 +724,13 @@ JointDualDenoiser.forward(
 ) -> (eps_p, eps_z)      # [B,16,7], [B,6]
 ```
 
-明确第一版计算图，避免结构描述留下两种不等价实现：
+当前四个训练配置采用 `model.architecture_version: v2`；省略此字段仍构造历史v1，保证旧checkpoint可加载。v2计算图如下：
 
 1. task MLP 输出128维，k embedding 输出128维；timing pre-encoder 从 z6 与 task/k 得到128维 `h_z`。c 与 tau_r 都使用同形状 MLP，分别训练参数；可额外记录 tau/r 分块误差，但第一版不另换 timing head 容量。
-2. P的7维输入投影到32通道并加CP位置编码；无需padding，编码通道32/64/128/256，长度16/8/4/2。task/k/h_z提供FiLM，沿用 `scale*h+bias` 语义。迁移公开权重逐层检查维度，不兼容的新投影单独初始化。
-3. 有序 `[B,256,2]` bottleneck flatten后投影到256维，与128维h_z及task/k融合为256维h_joint。
+2. P的7维输入投影到32通道并加CP位置编码；无需padding，编码通道32/64/128/256，长度16/8/4/2。前15个变量使用P21/degree5完整样条第3..17号控制点的Greville坐标，最后一个绑定第18..20号控制点的终点变量使用s=1；索引均从0开始。编码为 `sin/cos(s * pi * 2**linspace(0,3,16))`。这是样条顺序坐标，控制点不等于q(s)采样点，s也不等于物理执行时间。task/k/h_z提供FiLM，沿用 `scale*h+bias` 语义。迁移公开权重逐层检查维度，不兼容的新投影单独初始化。
+3. 有序 `[B,256,2]` bottleneck按channel-major flatten为512维，直接与128维h_z、task/k拼接；先投影为 `u=Linear(concat(flatten,h_z,k,task))` 的256维，再取 `h_joint=u+Linear(Mish(Linear(LayerNorm(u))))`。不做mean pooling，也没有单独的空间256维预投影。
 4. spatial decoder接收bottleneck、skips和h_joint调制，恢复16点输出eps_P；timing head从 `[h_joint,h_z]` 输出eps_z6。h_joint实际进入两路输出，最后一个空间点为生成的终点配置。
-5. WORLD：先以 h_z 为 query cross-attend W，再将更新后的 h_z 用于 spatial FiLM；在 spatial bottleneck 加一个 W cross-attention。query 依赖当前 noisy state，每步重算；W encoder 的 K/V 可在同一次推理请求内共享。KIN 跳过 world encoder 和这两个块，其余结构保持一致；报告因此产生的参数量和 forward 成本差异。
+5. WORLD：先以 h_z 为 query cross-attend W，再将更新后的 h_z 用于 spatial FiLM；在 spatial bottleneck 加第二个 W cross-attention。两处均为带独立attention/FFN门控的Pre-LN块，公式和初始化见§21。query依赖当前noisy state，每步重算；同请求缓存的是world encoder输出tokens，attention的K/V投影仍在每步计算。KIN跳过world encoder和这两个块，其余结构保持一致。本次没有增加中层attention。
 
 当前 TemporalUnet 未暴露完整 encoder/bottleneck/decoder 接口，建议复用其 residual/down/up block 编写 JointDual 子类或独立类，不靠 forward hook 拼接。当前 `BasicTransformerBlock.forward` 和 `SpatialTransformer.forward` 不传 mask；可在新 world attention 块直接使用底层带 mask 的 `CrossAttention`，或以可选参数向下透传，保证旧调用默认行为不变。不得把 `[B,M,D]` 塞入旧 `[B,D]` context 路径。
 
@@ -738,7 +738,7 @@ JointDualDenoiser.forward(
 
 ### 16.2 World encoder 的首版具体选择
 
-新增 `mpd/models/diffusion_models/world_encoder.py`。V1 固定 L=32 个 `0..14 s` 查询时间点，通过原 piecewise-linear world evaluator 得到 position；velocity 取所在分段斜率，端点与拐点的左右段约定固定并版本化。每个 token 包含 position3、velocity3、shape one-hot3、size3、秒制时间 PE；特征按保存的固定单位缩放或 train-only 统计归一化，不按 candidate duration 改时间轴。
+新增 `mpd/models/diffusion_models/world_encoder.py`。输入数据契约 `jointdual_world_v1` 固定 L=32 个 `0..14 s` 查询时间点，通过原 piecewise-linear world evaluator 得到 position；velocity 取所在分段斜率，端点与拐点的左右段约定固定并版本化。每个原始token包含position3（m）、velocity3（m/s）、shape one-hot3、size3（m）、相对规划起点的秒数。架构v2保留前12维的固定SI单位数值，时间编码为 `concat(t/14, sin/cos((t/14)*pi*2**linspace(0,3,8)))`，共17维，与前12维组成29维MLP输入。使用固定14秒尺度，不按candidate duration、当前batch或扩散步k缩放时间；输入HDF5、snapshot及world数据契约不变。历史架构v1仍使用原28维输入及原时间频率。
 
 V1 oracle 数据没有真实 uncertainty/observation-age 标签，因此先不把它们做成声称已学会的输入维度；prediction-conditioned 扩展再定义字段及数据。32点是起步超参，需要用更密 token 的对照检查短事件丢失；cost/validator 始终保留原高分辨率曲线。
 
@@ -1050,3 +1050,38 @@ python -m scripts.runtime.infer_jointdual_server \
 阶段3新增7项检查，含真实Panda的c/tau_r guidance与GT轨迹验收、错误EE目标/移动边界拒绝、旧dynamic服务dispatch及NPZ导出。GT候选被显式注入以验证解码/验收/协议，不计作学习模型的规划成功率。四个仅训练2步的checkpoint均已运行真实sampler＋guidance CLI，并正确以 `no_valid_trajectory` 结束；这验证失败路径，不代表模型已收敛。CPU链路已验证，CUDA与正式长训练/闭环性能尚未验证。
 
 最终相关回归范围包含joint数据/训练/推理、原P29拟合与multiworld、旧timing训练、factorized sampler/guide/CLI/server、Phase5 guidance/CLI、动态SDF与timing contract：**112项通过、1项CUDA检查因当前环境无GPU跳过**。不支持的移动边界等请求以可恢复的PLAN_FAILED返回，worker保留READY；未修改physical_ai_runtime、原multiworld启动脚本或storage guard。
+
+## 21. 网络v2：残差fusion、门控Pre-LN与坐标编码（2026-10-19）
+
+本次修改限定于JointDual网络、公共训练配置、对应测试及本文。保留原Conv1d骨干、16/8/4/2长度、FiLM、decoder skip、timing residual和有序flatten。四种 `jd_kin/jd_world × c/tau_r` 共享v2结构选择；表示方式仍由codec及normalizer区分。数据标签、数据加载、采样schedule、guidance和validator无须随本次网络更新重建。
+
+WORLD恰有两处门控Pre-LN块：early timing query（128维）和spatial bottleneck query（256维）。令 `d=concat(k_embedding,task_embedding)`，每处各自计算：
+
+```text
+alpha_attn, alpha_ffn = Linear(Mish(d)).chunk(2)
+h1 = h  + alpha_attn[:,None,:] * CrossAttention(LN_query(h), LN_world(W), LN_world(W))
+h2 = h1 + alpha_ffn[:,None,:] * Linear(Mish(Linear(LN_ffn(h1))))
+```
+
+两个门控各为每样本、每通道的可学习系数；不手工规定高噪声阶段关闭world，也不把它们解释为概率。FFN中间维度为query宽度的2倍。门控Linear的weight/bias初始化为0，attention/FFN输出层保留正常随机初始化：初始块为恒等映射，第一步梯度先打开门控，之后分支和world encoder开始学习。不能再把两条分支的输出层同时置零，否则会阻断门控启动。KIN无这两个world块。
+
+空间坐标、物理时间与扩散步使用独立编码：
+
+| 坐标 | v2含义与实现 | 不应混用的含义 |
+|---|---|---|
+| s | 前15个自由CP的Greville坐标与终点s=1，固定空间Fourier PE，详见§16.1 | 不声称CP位于q(s)，也不从CP序号计算秒数 |
+| t | 从本次规划handoff起算的秒数，固定除14，并保留归一化标量及8对Fourier分量 | 不除以候选duration，不用wall-clock绝对时间，不用batch min/max |
+| k | 保留原独立 `SinusoidalTimeEmbedding + MLP`，驱动FiLM、fusion和门控 | 不作为world预测时间，不改变world token的时间轴 |
+
+world时间频率为 `pi..8*pi`（作用于t/14），最高为14秒内4个周期，低于32点采样的Nyquist频率。此选择避免原最高1000 rad/s与稀疏token时间网格严重失配，但32点仍不能恢复未采样的短时事件；原高分辨率world继续用于cost/validator。空间PE的终点绑定规则与本仓库P21展开一致，不适用于任意CP基数。
+
+默认参数量如下；未测量GPU延迟，参数增长不能直接换算为运行时间：
+
+| 模型 | v1 | v2 |
+|---|---:|---:|
+| JD-KIN | 3,675,987 | 3,742,291 |
+| JD-WORLD | 3,960,275 | 4,554,963 |
+
+四个原训练YAML/入口不改名称，通过公共配置显式写入 `model.architecture_version: v2`，checkpoint将该字段保存在model_config中，推理自动构造对应结构。历史checkpoint没有此字段时严格按v1加载；直接调用构造函数而省略字段也保持v1。旧checkpoint续训应使用其保存的原始 `run/config.json`（CLI的YAML loader也接受JSON），保持原model_config及训练配方；不要用现已切到v2的公共配置去resume旧模型。v1→v2不是精确resume，本次不增加部分权重热启动，也不静默迁移权重。旧snapshot和已经转换的数据可直接用于v2新训练，无需重新refit。
+
+本次CPU验证覆盖v1/v2两套结构、四种组合的训练/保存/精确续训、跨架构resume拒绝、双向P/z梯度、门控首步启动与后续分支梯度、world排列/有效性mask/EMPTY、物理时间敏感性、缓存token等价性、CFG采样及坐标规则。运行 `tests/test_jointdual_training.py tests/test_jointdual_inference.py tests/test_jointdual_data_codec.py`：**28项通过，2项因本地真实数据smoke文件缺失而跳过**。额外对照修改前的v1网络，同seed下state_dict与forward输出逐位一致。门控为零时world暂不影响输出属于初始化设计，条件敏感性测试须先打开门控。未开展正式长训练，不能据此声称规划成功率提升；CUDA当前不可用。

@@ -25,8 +25,13 @@ def threads():
 
 
 @pytest.mark.parametrize("variant",["jd_kin","jd_world"])
-def test_joint_sampler_cfg_and_budgets(variant):
-    model=JointDiffusion(JointDualDenoiser(variant=variant,**SMALL),num_diffusion_steps=10)
+@pytest.mark.parametrize("architecture",["v1","v2"])
+def test_joint_sampler_cfg_and_budgets(variant,architecture):
+    model=JointDiffusion(JointDualDenoiser(variant=variant,architecture_version=architecture,**SMALL),num_diffusion_steps=10)
+    if variant == "jd_world" and architecture == "v2":
+        with torch.no_grad():
+            model.denoiser.timing_attention.gates[-1].bias.fill_(.3)
+            model.denoiser.spatial_attention.gates[-1].bias.fill_(.3)
     sampler=JointDualSampler(model,JointDualSettings(steps=4,refinement_steps=2,cfg_scale=1.5))
     class Guide:
         calls=0
