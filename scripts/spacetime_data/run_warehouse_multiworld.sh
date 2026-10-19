@@ -11,6 +11,9 @@ EDGES_PER_QUERY="${EDGES_PER_QUERY:-16}"
 GOAL_ROOTS="${GOAL_ROOTS:-4}"
 MAX_WORLD_ATTEMPTS="${MAX_WORLD_ATTEMPTS:-12}"
 SOLVE_SECONDS="${SOLVE_SECONDS:-10}"
+MIN_FREE_GIB="${MIN_FREE_GIB:-10}"
+MIN_FREE_INODES="${MIN_FREE_INODES:-1024}"
+DISK_SAFETY_FACTOR="${DISK_SAFETY_FACTOR:-2}"
 DEVICE="${DEVICE:-cuda:0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-data_trajectories_spacetime/Warehouse-TorchForest-Multiworld-f${NUM_FAMILIES}-${DIRECTION}-seed${SEED}}"
@@ -25,7 +28,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPOSITORY_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 cd -- "$REPOSITORY_ROOT"
 
-exec "$PYTHON_BIN" -m scripts.spacetime_data.generate_warehouse_multiworld \
+exec "$PYTHON_BIN" -m scripts.spacetime_data.generate_warehouse_multiworld_guarded \
+  --min-free-gib "$MIN_FREE_GIB" --min-free-inodes "$MIN_FREE_INODES" --disk-safety-factor "$DISK_SAFETY_FACTOR" \
   --output-root "$OUTPUT_ROOT" --num-families "$NUM_FAMILIES" \
   --direction "$DIRECTION" --seed "$SEED" --device "$DEVICE" \
   --query-batch-size "$QUERY_BATCH_SIZE" --max-world-attempts "$MAX_WORLD_ATTEMPTS" \
