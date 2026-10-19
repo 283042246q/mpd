@@ -203,3 +203,175 @@ def test_limited_validation_is_fixed_uniform_subset():
     assert first["validation_total_samples"] == 100
     with pytest.raises(ValueError, match="validation_batches"):
         _validate_joint(one, data, **dict(kwargs, batch_limit=0))
+
+
+def test_resume_overrides_preserve_state_progress_and_validation(snapshot, tmp_path, monkeypatch):
+    import mpd.joint_training.trainer as trainer
+    cfg = config(tensorboard=False)
+    source = train_jointdual(cfg, snapshot, tmp_path / "original")
+    saved = torch.load(source, weights_only=False)
+    # Exercise fallback for checkpoints produced before explicit progress/validation fields.
+    legacy = copy.deepcopy(saved)
+    for key in ("microbatches_seen", "samples_seen", "resume_history"):
+        legacy.pop(key)
+    legacy["training_config"] = dict(cfg["training"])
+    source = source.parent / "legacy.pt"
+    torch.save(legacy, source)
+    cfg["training"].update(max_steps=3, seed=999, validation_seed=999, validation_batch_size=9)
+    overrides = dict(learning_rate=3e-5, weight_decay=.002, gradient_clip_norm=.2,
+                     batch_size=2, accumulate_steps=3, use_amp=True, ema_decay=.98, world_dropout=.2)
+    observed = {}
+    original_step = torch.optim.AdamW.step
+    def optimizer_step(optimizer, *args, **kwargs):
+        before = optimizer.state_dict()
+        observed["optimizer"] = before["param_groups"][0].copy()
+        for key, state in before["state"].items():
+            for name in ("step", "exp_avg", "exp_avg_sq"):
+                torch.testing.assert_close(state[name], saved["optimizer_state_dict"]["state"][key][name], atol=0, rtol=0)
+        return original_step(optimizer, *args, **kwargs)
+    original_ema = trainer._update_ema
+    def update_ema(ema, model, decay):
+        observed["decay"] = decay
+        assert model.denoiser.world_dropout == ema.denoiser.world_dropout == .2
+        for key, value in ema.state_dict().items():
+            torch.testing.assert_close(value, saved["ema_model_state_dict"][key], atol=0, rtol=0)
+        original_ema(ema, model, decay)
+    original_clip = torch.nn.utils.clip_grad_norm_
+    def clip(parameters, max_norm, *args, **kwargs):
+        observed["clip"] = max_norm
+        return original_clip(parameters, max_norm, *args, **kwargs)
+    original_validate = trainer._validate_joint
+    def validate(*args, **kwargs):
+        observed["validation"] = (kwargs["batch_size"], kwargs["seed"])
+        return original_validate(*args, **kwargs)
+    original_iter = trainer.JointBatchSampler.__iter__
+    def sampler_iter(sampler):
+        observed["sampler"] = (sampler.start, sampler.stop, sampler.batch_size, sampler.seed)
+        return original_iter(sampler)
+    with monkeypatch.context() as patch:
+        patch.setattr(torch.optim.AdamW, "step", optimizer_step)
+        patch.setattr(trainer, "_update_ema", update_ema)
+        patch.setattr(torch.nn.utils, "clip_grad_norm_", clip)
+        patch.setattr(trainer, "_validate_joint", validate)
+        patch.setattr(trainer.JointBatchSampler, "__iter__", sampler_iter)
+        target = train_jointdual(cfg, snapshot, tmp_path / "changed", resume=source, resume_overrides=overrides)
+    current = torch.load(target, weights_only=False)
+    assert observed["optimizer"]["lr"] == 3e-5 and observed["optimizer"]["weight_decay"] == .002
+    assert observed["decay"] == .98 and observed["clip"] == .2
+    assert observed["validation"] == (1, 5)
+    assert observed["sampler"] == (4, 7, 2, 5)  # never recompute 2 * new accumulation=6
+    assert current["step"] == 3 and current["microbatches_seen"] == 7 and current["samples_seen"] == 10
+    assert all(int(state["step"]) == 3 for state in current["optimizer_state_dict"]["state"].values())
+    report = json.loads((target.parent / "resume.json").read_text())
+    assert report["source_step"] == 2 and len(report["changes"]) == 8
+    assert report["effective_batch_size"] == {"old": 2, "new": 6}
+    assert report["scaler_action"] == "disabled"  # CPU, even though AMP was requested
+    assert report["sha256"] and report == current["resume_history"][-1]
+    assert torch.load(source, weights_only=False)["step"] == 2
+    # Re-resume using stale YAML: prior overrides persist and the new cursor is restored.
+    cfg["training"]["max_steps"] = 4
+    train_jointdual(cfg, snapshot, target.parent, resume=target)
+    repeated = torch.load(target, weights_only=False)
+    assert repeated["microbatches_seen"] == 10 and repeated["samples_seen"] == 16
+    assert repeated["training_config"]["learning_rate"] == 3e-5
+    assert repeated["model_config"]["world_dropout"] == .2
+    assert len(repeated["resume_history"]) == 2
+    direct = train_jointdual(cfg, snapshot, tmp_path / "direct", resume=source, resume_overrides=overrides)
+    uninterrupted = torch.load(direct, weights_only=False)
+    for name in ("model_state_dict", "ema_model_state_dict"):
+        for key, value in repeated[name].items():
+            torch.testing.assert_close(value, uninterrupted[name][key], atol=0, rtol=0)
+
+
+def test_resume_recipe_priority_and_output_protection(snapshot, tmp_path):
+    cfg = config(tensorboard=False)
+    source = train_jointdual(cfg, snapshot, tmp_path / "original")
+    saved = torch.load(source, weights_only=False)
+    stale = copy.deepcopy(cfg)
+    stale["training"].update(max_steps=3, learning_rate=.5, weight_decay=.7, gradient_clip_norm=10.,
+                             batch_size=9, accumulate_steps=3, use_amp=True, ema_decay=.2, seed=999)
+    stale["model"]["world_dropout"] = .7
+    result = train_jointdual(stale, snapshot, tmp_path / "stale", resume=source)
+    current = torch.load(result, weights_only=False)
+    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "batch_size", "accumulate_steps", "use_amp", "ema_decay", "seed"):
+        assert current["training_config"][key] == saved["training_config"][key]
+    assert current["model_config"]["world_dropout"] == saved["model_config"]["world_dropout"]
+    assert not current["resume_history"][-1]["changes"]
+    cfg["training"]["max_steps"] = 3
+    with pytest.raises(ValueError, match="new output-dir"):
+        train_jointdual(cfg, snapshot, source.parent, resume=source, resume_overrides={"learning_rate": 3e-5})
+    with pytest.raises(ValueError, match="older checkpoint"):
+        train_jointdual(cfg, snapshot, source.parent, resume=source.parent / "step-00000001.pt")
+    with pytest.raises(FileExistsError, match="not empty"):
+        train_jointdual(cfg, snapshot, result.parent, resume=source)
+    with pytest.raises(ValueError, match="unsupported resume overrides"):
+        train_jointdual(cfg, snapshot, tmp_path / "bad", resume=source, resume_overrides={"seed": 1})
+    cfg["training"]["max_steps"] = 2
+    with pytest.raises(ValueError, match="cumulative target"):
+        train_jointdual(cfg, snapshot, tmp_path / "no-progress", resume=source)
+    assert torch.load(source, weights_only=False)["step"] == 2
+
+
+def test_amp_scaler_transition_rules():
+    from mpd.joint_training.trainer import _restore_scaler
+    class Scaler:
+        loaded = None
+        def __init__(self, enabled): self.enabled = enabled
+        def is_enabled(self): return self.enabled
+        def load_state_dict(self, state): self.loaded = state
+    old = {"scale": 1024.}
+    disabled = Scaler(False)
+    assert _restore_scaler(disabled, old) == "disabled" and disabled.loaded is None
+    enabled = Scaler(True)
+    assert _restore_scaler(enabled, {}) == "initialized" and enabled.loaded is None
+    assert _restore_scaler(enabled, old) == "restored" and enabled.loaded == old
+
+
+@pytest.mark.parametrize("key,value", [("learning_rate", float("nan")), ("weight_decay", -1.),
+    ("gradient_clip_norm", 0.), ("batch_size", 0), ("accumulate_steps", 1.5), ("ema_decay", 1.), ("use_amp", "false")])
+def test_invalid_resume_recipe_rejected(key, value):
+    from mpd.joint_training.trainer import RESUME_DEFAULTS, _validate_recipe
+    opts = dict(RESUME_DEFAULTS, validation_batch_size=64, max_steps=10)
+    opts[key] = value
+    with pytest.raises(ValueError, match=key):
+        _validate_recipe(opts)
+
+
+@pytest.mark.parametrize("amp_flag,expected", [(None, None), ("--amp", True), ("--no-amp", False)])
+def test_cli_explicit_resume_flags(tmp_path, monkeypatch, amp_flag, expected):
+    from scripts.train import train_jointdual as cli
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config()))
+    calls = []
+    monkeypatch.setattr(cli, "train_jointdual", lambda *args, **kwargs: calls.append((args, kwargs)))
+    argv = ["--config", str(path), "--snapshot", "snapshot.json", "--output-dir", "new", "--resume", "old.pt",
+            "--learning-rate", "0.00003", "--weight-decay", "0.002", "--gradient-clip-norm", "0.2",
+            "--batch-size", "32", "--accumulate-steps", "8", "--ema-decay", "0.98", "--world-dropout", "0.2"]
+    if amp_flag: argv.append(amp_flag)
+    cli.main(argv)
+    overrides = calls[0][1]["resume_overrides"]
+    assert overrides == dict(learning_rate=3e-5, weight_decay=.002, gradient_clip_norm=.2, batch_size=32,
+                            accumulate_steps=8, ema_decay=.98, world_dropout=.2,
+                            **({"use_amp": expected} if expected is not None else {}))
+    assert calls[0][0][0]["training"]["batch_size"] == 1  # YAML values are not mistaken for explicit overrides
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for actual AMP scaler transitions")
+def test_resume_amp_transitions_on_cuda(snapshot, tmp_path):
+    cfg = config(device="cuda:0", tensorboard=False, max_steps=1)
+    source = train_jointdual(cfg, snapshot, tmp_path / "fp32")
+    cfg["training"]["max_steps"] = 2
+    target = train_jointdual(cfg, snapshot, tmp_path / "amp", resume=source, resume_overrides={"use_amp": True})
+    state = torch.load(target, map_location="cpu", weights_only=False)
+    assert state["resume_history"][-1]["scaler_action"] == "initialized"
+    assert state["scaler_state_dict"]
+    cfg["training"]["max_steps"] = 3
+    train_jointdual(cfg, snapshot, target.parent, resume=target)
+    assert torch.load(target, map_location="cpu", weights_only=False)["resume_history"][-1]["scaler_action"] == "restored"
+    cfg["training"]["max_steps"] = 4
+    target = train_jointdual(cfg, snapshot, tmp_path / "fp32-again", resume=target, resume_overrides={"use_amp": False})
+    state = torch.load(target, map_location="cpu", weights_only=False)
+    assert state["resume_history"][-1]["scaler_action"] == "disabled" and not state["scaler_state_dict"]
+    cfg["training"]["max_steps"] = 5
+    target = train_jointdual(cfg, snapshot, tmp_path / "amp-again", resume=target, resume_overrides={"use_amp": True})
+    assert torch.load(target, map_location="cpu", weights_only=False)["resume_history"][-1]["scaler_action"] == "initialized"

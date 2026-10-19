@@ -4,6 +4,7 @@ from contextlib import ExitStack
 import hashlib
 import inspect
 import json
+import math
 from pathlib import Path
 import time
 
@@ -18,6 +19,80 @@ from mpd.parametric_trajectory.joint_timing_codec import CODEC_CONTRACT
 from mpd.timing_training.trainer import _atomic_torch_save, _update_ema, _set_seed
 
 CHECKPOINT_VERSION = "jointdual_checkpoint_v1"
+
+# On resume, YAML defaults must not silently reset an earlier training recipe.
+RESUME_DEFAULTS = dict(learning_rate=1e-4, weight_decay=1e-4, gradient_clip_norm=.5,
+                       batch_size=64, accumulate_steps=4, use_amp=False, ema_decay=.999)
+
+
+def _resolve_resume_config(config, previous, overrides):
+    unknown = set(overrides) - (set(RESUME_DEFAULTS) | {"world_dropout"})
+    if unknown:
+        raise ValueError("unsupported resume overrides: " + ", ".join(sorted(unknown)))
+    config = copy.deepcopy(config)
+    opts = config.setdefault("training", {})
+    saved = previous["training_config"]
+    changes, ignored = {}, {}
+    for key, default in dict(RESUME_DEFAULTS, seed=1726484688).items():
+        old = saved.get(key, default)
+        if key in opts and opts[key] != old:
+            ignored["training." + key] = opts[key]
+        opts[key] = overrides.get(key, old)
+        if opts[key] != old:
+            changes["training." + key] = dict(old=old, new=opts[key])
+    # Historical checkpoints used the training batch size and seed for validation.
+    for key, default in (("validation_batch_size", saved.get("batch_size", 64)),
+                         ("validation_seed", saved.get("seed", 1726484688))):
+        old = saved.get(key, default)
+        if key in opts and opts[key] != old:
+            ignored["training." + key] = opts[key]
+        opts[key] = old
+    old = _model_options(previous["model_config"])["world_dropout"]
+    model = config.setdefault("model", {})
+    if model.get("world_dropout", old) != old:
+        ignored["model.world_dropout"] = model["world_dropout"]
+    model["world_dropout"] = overrides.get("world_dropout", old)
+    if model["world_dropout"] != old:
+        if config["variant"] != "jd_world":
+            raise ValueError("world_dropout only applies to jd_world")
+        changes["model.world_dropout"] = dict(old=old, new=model["world_dropout"])
+    return config, changes, ignored
+
+
+def _validate_recipe(opts):
+    for key in ("batch_size", "accumulate_steps", "validation_batch_size", "max_steps"):
+        if type(opts[key]) is not int or opts[key] < 1:
+            raise ValueError(key + " must be a positive integer")
+    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "ema_decay"):
+        value = opts[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(key + " must be finite")
+        if value < 0 or (key == "gradient_clip_norm" and value == 0) or (key == "ema_decay" and value >= 1):
+            raise ValueError("invalid " + key)
+    if type(opts["use_amp"]) is not bool:
+        raise ValueError("use_amp must be boolean")
+
+
+def _restore_scaler(scaler, saved):
+    if not scaler.is_enabled():
+        return "disabled"
+    if saved:
+        scaler.load_state_dict(saved)
+        return "restored"
+    return "initialized"  # FP32 -> AMP, or a checkpoint produced on CPU.
+
+
+def _check_resume_output(output, source, step, changes):
+    if not output.exists() or not any(output.iterdir()):
+        return
+    if output.resolve() != source.parent.resolve():
+        raise FileExistsError("resume target is not empty; choose a new output-dir")
+    if changes:
+        raise ValueError("resume recipe changed; choose a new output-dir")
+    latest = output / "last.pt"
+    if latest.exists() and latest.resolve() != source.resolve():
+        if torch.load(latest, map_location="cpu", weights_only=False)["step"] > step:
+            raise ValueError("resuming an older checkpoint requires a new output-dir")
 
 
 def load_joint_checkpoint(path, device="cpu", *, use_ema=True, variant=None, representation=None):
@@ -154,9 +229,11 @@ def _validate_joint(model, dataset, *, batch_size, device, representation, seed,
 
 
 def train_jointdual(config, snapshot, output_dir, *, resume=None, warm_start=None,
-                    warm_start_mode="strict", warm_start_weights="ema"):
+                    warm_start_mode="strict", warm_start_weights="ema", resume_overrides=None):
     if resume is not None and warm_start is not None:
         raise ValueError("resume and warm-start are mutually exclusive")
+    if resume_overrides and resume is None:
+        raise ValueError("resume_overrides requires resume")
     opts = config.get("training", {})
     cache = opts.get("tensor_cache", "auto")
     with ExitStack() as resources:
@@ -174,14 +251,37 @@ def train_jointdual(config, snapshot, output_dir, *, resume=None, warm_start=Non
             datasets.append(dataset)
         return _train_jointdual(config, snapshot, output_dir, *datasets, resume=resume, cache=path,
                                 resources=resources, warm_start=warm_start, warm_start_mode=warm_start_mode,
-                                warm_start_weights=warm_start_weights)
+                                warm_start_weights=warm_start_weights, resume_overrides=resume_overrides)
 
 
 def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=None, cache=None, resources,
-                     warm_start=None, warm_start_mode="strict", warm_start_weights="ema"):
-    output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
+                     warm_start=None, warm_start_mode="strict", warm_start_weights="ema", resume_overrides=None):
+    output = Path(output_dir)
+    previous, resume_report = None, None
+    resume_history = []
+    if resume is not None:
+        source = Path(resume).resolve()
+        with source.open("rb") as handle:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(1024*1024), b""):
+                digest.update(chunk)
+            handle.seek(0)
+            previous = torch.load(handle, map_location="cpu", weights_only=False)
+        if previous.get("checkpoint_version") != CHECKPOINT_VERSION:
+            raise ValueError("unsupported JointDual resume checkpoint")
+        config, changes, ignored = _resolve_resume_config(config, previous, resume_overrides or {})
+        _check_resume_output(output, source, previous["step"], changes)
+        resume_report = dict(checkpoint=str(source), sha256=digest.hexdigest(),
+                             source_step=int(previous["step"]), changes=changes,
+                             requested_overrides=dict(resume_overrides or {}), ignored_yaml_recipe=ignored)
+        resume_history = list(previous.get("resume_history", []))
     variant, representation = config["variant"], config["representation"]
-    opts = dict(config.get("training", {}))
+    opts = dict(RESUME_DEFAULTS, max_steps=100000)
+    opts.update(config.get("training", {}))
+    opts.setdefault("validation_batch_size", opts["batch_size"])
+    opts.setdefault("validation_seed", opts.get("seed", 1726484688))
+    _validate_recipe(opts)
+    config = dict(config, training=opts)
     seed = int(opts.get("seed", 1726484688)); _set_seed(seed)
     torch.set_num_threads(int(opts.get("torch_threads", 4)))
     device_name = opts.get("device", "auto")
@@ -212,21 +312,38 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         static_geometry_hashes=data.snapshot["static_geometry_hashes"],
         codec_contract=CODEC_CONTRACT, world_contract=WORLD_CONTRACT)
     warm_start_report = None
-    if resume:
-        previous = torch.load(resume, map_location="cpu", weights_only=False)
-        if previous.get("checkpoint_version") != CHECKPOINT_VERSION or any(previous[k] != v for k, v in contract.items()):
+    microbatches_seen, samples_seen = 0, 0
+    if previous is not None:
+        old_model, new_model = _model_options(previous["model_config"]), _model_options(model_config)
+        old_model.pop("world_dropout"); new_model.pop("world_dropout")
+        if old_model != new_model or any(previous[k] != v for k, v in contract.items() if k != "model_config"):
             raise ValueError("resume model/data/representation contract mismatch")
-        for key in ("seed", "batch_size", "accumulate_steps", "learning_rate", "weight_decay", "use_amp", "ema_decay"):
-            if previous["training_config"].get(key) != opts.get(key):
-                raise ValueError("resume training recipe mismatch: " + key)
+        if maximum <= previous["step"]:
+            raise ValueError("max_steps must exceed the resumed checkpoint step (it is a cumulative target)")
         model.load_state_dict(previous["model_state_dict"], strict=True)
         ema.load_state_dict(previous["ema_model_state_dict"], strict=True)
         optimizer.load_state_dict(previous["optimizer_state_dict"])
-        scaler.load_state_dict(previous["scaler_state_dict"])
+        # load_state_dict restores the old LR/decay as well as moments. Override last.
+        for group in optimizer.param_groups:
+            group["lr"] = float(opts["learning_rate"])
+            group["weight_decay"] = float(opts["weight_decay"])
+        resume_report["scaler_action"] = _restore_scaler(scaler, previous["scaler_state_dict"])
         torch.set_rng_state(previous["torch_rng_state"])
         if device.type == "cuda" and previous["cuda_rng_state_all"] is not None:
             torch.cuda.set_rng_state_all(previous["cuda_rng_state_all"])
         step = previous["step"]
+        old_opts = previous["training_config"]
+        microbatches_seen = int(previous.get("microbatches_seen", step*old_opts.get("accumulate_steps", 4)))
+        samples_seen = int(previous.get("samples_seen", microbatches_seen*old_opts.get("batch_size", 64)))
+        resume_report.update(effective_batch_size=dict(
+            old=old_opts.get("batch_size", 64)*old_opts.get("accumulate_steps", 4), new=batch_size*accumulate),
+            microbatches_seen=microbatches_seen, samples_seen=samples_seen,
+            validation_batch_size=opts["validation_batch_size"], validation_seed=opts["validation_seed"],
+            amp_enabled=amp)
+        resume_report["operational_changes"] = {key: dict(old=old_opts.get(key), new=value)
+            for key, value in opts.items() if key not in RESUME_DEFAULTS and key not in
+            ("seed", "validation_batch_size", "validation_seed") and old_opts.get(key) != value}
+        resume_history.append(resume_report)
         warm_start_report = previous.get("warm_start")
     elif (output / "last.pt").exists():
         raise FileExistsError("output already has a checkpoint; specify --resume")
@@ -241,8 +358,13 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
             fresh_parameter_keys=len(warm_start_report["fresh_parameter_keys"]),
             normalization_changed=warm_start_report["normalization_changed"],
             dataset_changed=warm_start_report["dataset_changed"], report=str(output / "warm_start.json"))), flush=True)
+    output.mkdir(parents=True, exist_ok=True)
+    if resume_report is not None:
+        atomic_json(output / "resume.json", resume_report)
+        print(json.dumps(dict(event="resume", **resume_report)), flush=True)
     atomic_json(output / "config.json", dict(config, snapshot=str(Path(snapshot).resolve()),
-                tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report))
+                tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report,
+                resume_history=resume_history))
     writer = None
     if opts.get("tensorboard", True):
         from torch.utils.tensorboard import SummaryWriter
@@ -250,11 +372,12 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
         resources.callback(writer.close)
         writer.add_text("run/config", json.dumps(dict(variant=variant, representation=representation,
             model=model_config, training=opts, dataset_snapshot_hash=data.snapshot["identity"],
-            tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report), indent=2), step)
+            tensor_cache_path=str(cache) if cache is not None else None, warm_start=warm_start_report,
+            resume=resume_report), indent=2), step)
     workers = int(opts.get("num_workers", 0))
     pin_memory = bool(opts.get("pin_memory", True)) and device.type == "cuda"
     loader = DataLoader(data, batch_sampler=JointBatchSampler(data.entries, batch_size, seed,
-        step*accumulate, maximum*accumulate), collate_fn=collate_joint, num_workers=workers,
+        microbatches_seen, microbatches_seen+(maximum-step)*accumulate), collate_fn=collate_joint, num_workers=workers,
         multiprocessing_context="spawn" if workers else None, persistent_workers=bool(workers),
         timeout=float(opts.get("worker_timeout", 60)) if workers else 0,
         pin_memory=pin_memory,
@@ -262,7 +385,8 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
     iterator = iter(loader)
     def save():
         payload = dict(contract, checkpoint_version=CHECKPOINT_VERSION, step=step, training_config=opts,
-            warm_start=warm_start_report,
+            warm_start=warm_start_report, resume_history=resume_history,
+            microbatches_seen=microbatches_seen, samples_seen=samples_seen,
             model_state_dict=model.state_dict(), ema_model_state_dict=ema.state_dict(),
             optimizer_state_dict=optimizer.state_dict(), scaler_state_dict=scaler.state_dict(),
             torch_rng_state=torch.get_rng_state(),
@@ -296,14 +420,17 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
             scaler.step(optimizer); scaler.update()
             _update_ema(ema, model, float(opts.get("ema_decay", .999)))
             step += 1
+            microbatches_seen += accumulate
+            samples_seen += batch_size*accumulate
             grad_norm = float(norm)
             seconds = time.perf_counter() - started
             record = dict(step=step, loss=loss_total, **metrics_total, grad_norm=grad_norm,
+                          microbatches_seen=microbatches_seen, samples_seen=samples_seen,
                           learning_rate=optimizer.param_groups[0]["lr"], step_seconds=seconds,
                           data_wait_seconds=data_wait, samples_per_second=batch_size*accumulate/seconds)
             if len(validation) and step % int(opts.get("validate_every", 1000)) == 0:
-                record.update(_validate_joint(ema, validation, batch_size=batch_size, device=device,
-                    representation=representation, seed=seed, batch_limit=validation_batches))
+                record.update(_validate_joint(ema, validation, batch_size=opts["validation_batch_size"], device=device,
+                    representation=representation, seed=opts["validation_seed"], batch_limit=validation_batches))
             with (output / "metrics.jsonl").open("a") as f:
                 f.write(json.dumps(record) + "\n")
             log_step = step == maximum or step % int(opts.get("log_every", 100)) == 0

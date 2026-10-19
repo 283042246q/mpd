@@ -1007,7 +1007,7 @@ python -m scripts.train.train_jointdual \
   --output-dir data_trained_models/jointdual/jdworld_tau_r
 ```
 
-另三份配置为 `jdkin_c.yaml`、`jdkin_tau_r.yaml`、`jdworld_c.yaml`。`--device`、`--max-steps`可覆盖配置；`--resume path/to/last.pt`恢复，数据、表示、结构与训练配方不一致会拒绝。最后checkpoint和周期性step checkpoint均包含normalizer、codec/world/static/robot身份，不依赖旧公开checkpoint或原训练HDF5才能加载模型。训练默认100,000 optimizer steps，未在本次自动启动正式长训练。
+另三份配置为 `jdkin_c.yaml`、`jdkin_tau_r.yaml`、`jdworld_c.yaml`。`--device`、`--max-steps`可覆盖配置；`--resume path/to/last.pt`恢复，数据、表示、结构不一致会拒绝，训练配方默认继承checkpoint，显式超参覆盖见§22.6。最后checkpoint和周期性step checkpoint均包含normalizer、codec/world/static/robot身份，不依赖旧公开checkpoint或原训练HDF5才能加载模型。训练默认100,000 optimizer steps，未在本次自动启动正式长训练。
 
 阶段2新增7项测试，覆盖双向梯度、WORLD对象顺序不变性、空mask和四组合保存/恢复；实际3条P21动态样本上，四组合各训练2步完成并保存至 `/tmp/jointdual_four_smoke`。这些是训练链路检查，不是收敛或规划性能结论。
 
@@ -1126,7 +1126,7 @@ python -m scripts.train.train_jointdual \
 
 | 方式 | 参数与状态 | 数据/结构要求 |
 |---|---|---|
-| `--resume` | 恢复model、EMA、optimizer、scaler、RNG、step | 保持既有模型/表示、snapshot/normalizer及训练配方契约 |
+| `--resume` | 恢复model、EMA、optimizer、RNG、step、采样进度；按AMP状态恢复或初始化scaler | 保持模型结构/表示、snapshot/normalizer契约；默认继承训练配方，支持§22.6显式覆盖 |
 | `--warm-start`（默认strict） | 严格加载所选完整模型权重，重置训练状态 | 构造参数按默认值补齐后相同；允许新snapshot、normalizer、静态场景和训练超参 |
 | `--warm-start --warm-start-mode compatible` | 只复制同名同shape的可学习参数，其余保持新模型初始化 | 显式允许部分结构迁移，例如v1→v2；报告全部保留/跳过项 |
 
@@ -1165,8 +1165,48 @@ python -m scripts.train.train_jointdual \
 
 本地主snapshot的验证集有19,289条；原实现固定取前20个batch，batch64时前1,280条全部来自一障碍场景，不能代表完整验证分布。现将四个公共训练配置设为 `training.validation_batches: null`，省略该字段同样表示全量验证。自动遍历当前snapshot的完整validation split，保留最后不足batch_size的batch，并按样本数加权。无需固定写302，也无需为不同batch size或后续multiworld规模手工更新该数值。验证频率仍为每1,000个optimizer steps。
 
-若显式设置正整数 `validation_batches`，预算为该值乘物理batch_size，从整个验证集以独立固定种子无放回均匀抽取；不再取文件列表前缀。同一配置每次验证使用同一子集，预算覆盖全量时按全量处理。这是均匀子集，不保证稀少类别逐类覆盖；默认全量模式覆盖所有实际存在的障碍数量和family。
+若显式设置正整数 `validation_batches`，预算为该值乘验证batch_size（§22.6将其与训练batch_size分离），从整个验证集以独立固定种子无放回均匀抽取；不再取文件列表前缀。同一配置每次验证使用同一子集，预算覆盖全量时按全量处理。这是均匀子集，不保证稀少类别逐类覆盖；默认全量模式覆盖所有实际存在的障碍数量和family。
 
 JSON日志增加 `validation_samples`、`validation_total_samples`、`validation_batches`、`validation_coverage`；TensorBoard对应 `validation/samples,total_samples,batches,coverage`。完整非空验证集的coverage为1。使用独立generator，不推进训练RNG；本次不改变数据/normalizer、缓存身份、模型结构或optimizer，可从原checkpoint精确resume，无需重建snapshot或张量缓存。若旧run配置显式写了20，改为null后再resume；已启动的Python进程需重启并resume才能加载新逻辑。
 
 新验证曲线与历史“一障碍前缀”的loss口径不同，切换处的变化不能直接解释为模型退化。回归覆盖超过20个batch的尾部样本、最后小batch的正确加权、固定随机子集、覆盖率日志、训练RNG独立性及原四版保存/恢复。
+
+### 22.6 Resume显式超参覆盖
+
+五项实现原则采用如下规则：
+
+1. **训练配方以checkpoint为准，显式参数覆盖。** resume时，YAML里的学习率、weight decay、裁剪、batch size、累积、AMP、EMA decay、world dropout和seed不会静默覆盖checkpoint；不一致的YAML值记录为`ignored_yaml_recipe`。设备、workers、缓存、日志/验证/保存频率、验证预算和`max_steps`等运行配置仍按原入口读取YAML/CLI。`max_steps`是累计目标且必须大于恢复步数。结构、表示、扩散配置、数据snapshot、normalizer、robot/codec/world/static契约仍严格检查。
+2. **先恢复状态，再覆盖。** AdamW加载后再设置各参数组的LR和weight decay，保留动量；EMA加载旧权重，再按新decay更新。AMP→AMP恢复非空scaler，FP32→AMP初始化scaler，AMP→FP32不加载scaler；CPU上AMP实际关闭，报告中同时记录实际状态。当前没有LR scheduler，因此未引入新的调度策略。
+3. **采样进度独立于梯度累积次数。** checkpoint保存`microbatches_seen`及`samples_seen`；下一轮从已消费microbatch游标开始，不再用`step × 新accumulate_steps`推导。旧checkpoint按旧配方推导初值。游标只在训练实际消费后推进，不将DataLoader预取算作完成。batch size改变后每个microbatch内容和噪声调用会改变，不承诺样本序列或训练轨迹逐位等价；累计样本数记录实际训练暴露量，不是去重样本数。
+4. **固定验证口径。** 新训练保存独立`validation_batch_size`和`validation_seed`，默认取初始训练batch size和seed；resume固定继承，旧checkpoint回退至旧训练值。调整训练batch/累积不改变验证分批、固定噪声分配或子集预算。仍可通过运行配置显式改变`validation_batches`，但此时验证覆盖口径会变化；跨CPU/CUDA也不保证随机噪声逐位一致。
+5. **保护实验与记录变更。** 修改配方时使用新空output-dir；从旧step回退、源目录已有更晚last checkpoint时同样要求新目录。精确续训最新checkpoint可沿用原目录。`resume.json`记录源checkpoint绝对路径/SHA256、源step、旧/新值、被忽略的YAML值、有效batch变化、采样游标和AMP处理；完整`resume_history`写入config及checkpoint，当前恢复记录也写入TensorBoard文本。新实验保留累计step，便于直接比较原曲线。
+
+支持以下显式选项；这些选项也可用于新训练和warm-start：
+
+| 选项 | 含义 |
+|---|---|
+| `--learning-rate` | AdamW学习率，允许0 |
+| `--weight-decay` | AdamW衰减系数，非负 |
+| `--gradient-clip-norm` | 正的梯度裁剪阈值，日志grad_norm仍为裁剪前值 |
+| `--batch-size` / `--accumulate-steps` | 正整数，乘积为有效batch；不自动缩放LR、EMA或验证频率 |
+| `--amp` / `--no-amp` | 显式开启/关闭AMP，省略时继承checkpoint |
+| `--ema-decay` | `[0,1)`，保留旧EMA历史，仅改变后续更新速度 |
+| `--world-dropout` | `[0,1)`，仅用于jd_world的world条件丢弃；不是网络隐藏层dropout |
+
+Python API使用`train_jointdual(..., resume=path, resume_overrides={"learning_rate": 3e-5, ...})`；字典键对应`learning_rate/weight_decay/gradient_clip_norm/batch_size/accumulate_steps/use_amp/ema_decay/world_dropout`。未知覆盖键拒绝，seed和验证随机性不开放为resume覆盖参数。未显式覆盖的配方继承最近checkpoint，因此已调低学习率的实验再次resume不会被公共YAML重置为1e-4。
+
+例如从`jdworld_tau_r_1`的61k checkpoint降学习率，继续到累计81k（新增20k），保留其原始训练权重、独立EMA和优化器状态：
+
+```bash
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+python -m scripts.train.train_jointdual \
+  --config scripts/train/cfgs/jdworld_tau_r.yaml \
+  --snapshot data_trajectories_spacetime/jointdual-main-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_tau_r_resume61k_lr3e5 \
+  --resume data_trained_models/jointdual/jdworld_tau_r_1/step-00061000.pt \
+  --learning-rate 3e-5 --max-steps 81000
+```
+
+新增回归覆盖：旧checkpoint恢复、八项显式覆盖、AdamW动量/step及EMA保留、真实生效的裁剪与dropout、累积修改后的采样游标、多次resume继承、固定验证batch/seed、源目录保护、CLI省略/显式AMP语义及非法参数拒绝。CUDA AMP切换另有条件执行的集成测试；CPU测试验证scaler分支规则，不能替代实际CUDA数值验证。
+
+本次五组JointDual回归结果为 **57项通过、3项跳过**（CUDA不可用1项、缺少本地真实数据2项）。测试使用`MPLCONFIGDIR=/tmp/mpd-jointdual-resume-mpl`；首次运行在测试收集前的Matplotlib字体初始化中发生原生段错误，设置可写缓存后重跑通过。真实`jdworld_tau_r_1/step-00061000.pt`的只读解析确认：LR覆盖为3e-5，验证batch64和原seed保留，旧checkpoint推导出的microbatch游标为244,000。未启动正式续训。
