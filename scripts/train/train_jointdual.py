@@ -25,7 +25,8 @@ def main(argv=None):
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--device")
     p.add_argument("--max-steps", type=int)
-    for flag in ("learning-rate", "weight-decay", "gradient-clip-norm", "ema-decay"):
+    for flag in ("learning-rate", "weight-decay", "gradient-clip-norm", "ema-decay",
+                 "loss-weight-p", "loss-weight-z"):
         p.add_argument("--" + flag, type=float, help="Explicit training recipe override (also on resume)")
     p.add_argument("--batch-size", type=int)
     p.add_argument("--accumulate-steps", type=int)

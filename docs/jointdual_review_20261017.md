@@ -1175,7 +1175,7 @@ JSON日志增加 `validation_samples`、`validation_total_samples`、`validation
 
 五项实现原则采用如下规则：
 
-1. **训练配方以checkpoint为准，显式参数覆盖。** resume时，YAML里的学习率、weight decay、裁剪、batch size、累积、AMP、EMA decay、world dropout和seed不会静默覆盖checkpoint；不一致的YAML值记录为`ignored_yaml_recipe`。设备、workers、缓存、日志/验证/保存频率、验证预算和`max_steps`等运行配置仍按原入口读取YAML/CLI。`max_steps`是累计目标且必须大于恢复步数。结构、表示、扩散配置、数据snapshot、normalizer、robot/codec/world/static契约仍严格检查。
+1. **训练配方以checkpoint为准，显式参数覆盖。** resume时，YAML里的学习率、weight decay、裁剪、batch size、累积、AMP、EMA decay、world dropout、空间/时间loss权重和seed不会静默覆盖checkpoint；不一致的YAML值记录为`ignored_yaml_recipe`。设备、workers、缓存、日志/验证/保存频率、验证预算和`max_steps`等运行配置仍按原入口读取YAML/CLI。`max_steps`是累计目标且必须大于恢复步数。结构、表示、扩散配置、数据snapshot、normalizer、robot/codec/world/static契约仍严格检查。
 2. **先恢复状态，再覆盖。** AdamW加载后再设置各参数组的LR和weight decay，保留动量；EMA加载旧权重，再按新decay更新。AMP→AMP恢复非空scaler，FP32→AMP初始化scaler，AMP→FP32不加载scaler；CPU上AMP实际关闭，报告中同时记录实际状态。当前没有LR scheduler，因此未引入新的调度策略。
 3. **采样进度独立于梯度累积次数。** checkpoint保存`microbatches_seen`及`samples_seen`；下一轮从已消费microbatch游标开始，不再用`step × 新accumulate_steps`推导。旧checkpoint按旧配方推导初值。游标只在训练实际消费后推进，不将DataLoader预取算作完成。batch size改变后每个microbatch内容和噪声调用会改变，不承诺样本序列或训练轨迹逐位等价；累计样本数记录实际训练暴露量，不是去重样本数。
 4. **固定验证口径。** 新训练保存独立`validation_batch_size`和`validation_seed`，默认取初始训练batch size和seed；resume固定继承，旧checkpoint回退至旧训练值。调整训练batch/累积不改变验证分批、固定噪声分配或子集预算。仍可通过运行配置显式改变`validation_batches`，但此时验证覆盖口径会变化；跨CPU/CUDA也不保证随机噪声逐位一致。
@@ -1192,8 +1192,9 @@ JSON日志增加 `validation_samples`、`validation_total_samples`、`validation
 | `--amp` / `--no-amp` | 显式开启/关闭AMP，省略时继承checkpoint |
 | `--ema-decay` | `[0,1)`，保留旧EMA历史，仅改变后续更新速度 |
 | `--world-dropout` | `[0,1)`，仅用于jd_world的world条件丢弃；不是网络隐藏层dropout |
+| `--loss-weight-p` / `--loss-weight-z` | 空间/时间噪声MSE的非负权重，不能同时为0；默认各为1 |
 
-Python API使用`train_jointdual(..., resume=path, resume_overrides={"learning_rate": 3e-5, ...})`；字典键对应`learning_rate/weight_decay/gradient_clip_norm/batch_size/accumulate_steps/use_amp/ema_decay/world_dropout`。未知覆盖键拒绝，seed和验证随机性不开放为resume覆盖参数。未显式覆盖的配方继承最近checkpoint，因此已调低学习率的实验再次resume不会被公共YAML重置为1e-4。
+Python API使用`train_jointdual(..., resume=path, resume_overrides={"learning_rate": 3e-5, ...})`；字典键对应`learning_rate/weight_decay/gradient_clip_norm/batch_size/accumulate_steps/use_amp/ema_decay/world_dropout/loss_weight_p/loss_weight_z`。未知覆盖键拒绝，seed和验证随机性不开放为resume覆盖参数。未显式覆盖的配方继承最近checkpoint，因此已调低学习率的实验再次resume不会被公共YAML重置为1e-4。
 
 例如从`jdworld_tau_r_1`的61k checkpoint降学习率，继续到累计81k（新增20k），保留其原始训练权重、独立EMA和优化器状态：
 
@@ -1207,6 +1208,40 @@ python -m scripts.train.train_jointdual \
   --learning-rate 3e-5 --max-steps 81000
 ```
 
-新增回归覆盖：旧checkpoint恢复、八项显式覆盖、AdamW动量/step及EMA保留、真实生效的裁剪与dropout、累积修改后的采样游标、多次resume继承、固定验证batch/seed、源目录保护、CLI省略/显式AMP语义及非法参数拒绝。CUDA AMP切换另有条件执行的集成测试；CPU测试验证scaler分支规则，不能替代实际CUDA数值验证。
+当时新增回归覆盖：旧checkpoint恢复、八项显式覆盖、AdamW动量/step及EMA保留、真实生效的裁剪与dropout、累积修改后的采样游标、多次resume继承、固定验证batch/seed、源目录保护、CLI省略/显式AMP语义及非法参数拒绝。CUDA AMP切换另有条件执行的集成测试；CPU测试验证scaler分支规则，不能替代实际CUDA数值验证。loss权重的新增覆盖见下一节。
+
+### 22.7 空间与时间损失权重（2026-10-22）
+
+训练目标现为 `loss_weight_p × Lp + loss_weight_z × Lz`，两项仍各自按元素求均值；`tau_r` 表达下 `Lz=(Ltau+5Lr)/6`。公共YAML默认为1/1，旧checkpoint没有这两个字段时也按1/1恢复。`--loss-weight-p`和`--loss-weight-z`可用于新训练、warm-start和resume。resume时只有显式命令行参数能改变checkpoint配方；修改权重需使用新的空output-dir，变更写入`resume.json`、`config.json`和checkpoint。两项必须为有限非负数，不能同时为0。
+
+`metrics.jsonl`和TensorBoard的`train/loss`表示实际加权优化目标；新增`train/unweighted_loss`表示未加权的`Lp+Lz`。原有`train/p`、`train/z`、`validation/loss`、`validation/p`、`validation/z`保持未加权，其中验证仍覆盖完整split。跨权重实验比较相同step时，应使用未加权验证的P/Z和规划指标；加权`train/loss`的数值不能直接比较。权重也会改变总梯度的绝对尺度，可能改变全局裁剪比例，不能只看加权loss。默认1/1保持旧数值行为。
+
+八模型各自的**第一轮对照**如下。每行从同一源checkpoint复制两个分支，`P=1,Z=1`为控制，另一分支只修改Z；两支都用同一新学习率（例如3e-5）、相同额外步数、有效batch和EMA。这里的权重是验证假设的起始值，不是已验证最优值；不宜用200k的已过拟合main WORLD checkpoint做源点。
+
+| 数据 | 模型 | 源checkpoint | 对照Z权重（P均为1） | 优先级与依据 |
+|---|---|---:|---:|---|
+| main | KIN c | 91k | 1 vs 0.75 | 中；200k相对最佳总loss恶化4.4%，先小幅调整 |
+| main | KIN tau_r | 89k | 1 vs 0.75 | 中；200k恶化7.2%，留意tau/r各自变化 |
+| main | WORLD c | 65k | 1 vs 0.5 | 中；后期时间项明显反弹，较强对照可检验降权是否有效 |
+| main | WORLD tau_r | `jdworld_tau_r_1` 61k | 1 vs 0.5 | 中；保留原61k基准，特别检查tau的物理时间表现 |
+| multiworld | KIN c | 200k | 1 vs 0.75 | 低；200k仍近最优，优先验证物理效果 |
+| multiworld | KIN tau_r | 200k | 1 vs 0.75 | 低；200k仍近最优，别把tau恶化换来的P小收益当改进 |
+| multiworld | WORLD c | 153k | 1 vs 0.75 | 高；时间开始轻微反弹，保持环境时间收益 |
+| multiworld | WORLD tau_r | 132k | 1 vs 0.75 | 高；WORLD对tau帮助较大，先做保守降权 |
+
+main WORLD最适合检验“降权能否抑制明显过拟合”，multiworld WORLD最适合检验“降权能否改善Pareto折中而不损害环境时间收益”。当前按实际有效batch256的梯度诊断显示最佳点的共享参数时间梯度约为空间的3.5–3.9倍，但multiworld在这一比例下泛化正常；这不是把Z权重设为其倒数的理由。所有组合都先比较控制和一个改权重分支；只有确认未加权验证P/Z、动态障碍分桶及规划指标改善后，才扩展到`Z=0.25/0.5/0.75`等细网格。[GradNorm](https://proceedings.mlr.press/v80/chen18a.html)适合后续探索动态梯度平衡，当前无需引入。
+
+例如multiworld WORLD c从153k开始做Z=0.75对照，累计训练至173k；控制分支改用另一个空输出目录并传`--loss-weight-z 1`，其余参数完全相同：
+
+```bash
+cd /home/eric/Projects/MotionPlanningDiffusion/mpd
+python -m scripts.train.train_jointdual \
+  --config scripts/train/cfgs/jdworld_c.yaml \
+  --snapshot data_trajectories_spacetime/jointdual-multiworld-snapshot.json \
+  --output-dir data_trained_models/jointdual/jdworld_c_multi_from153k_z075 \
+  --resume data_trained_models/jointdual/jdworld_c_multi/step-00153000.pt \
+  --max-steps 173000 --learning-rate 3e-5 \
+  --loss-weight-p 1 --loss-weight-z 0.75
+```
 
 本次五组JointDual回归结果为 **57项通过、3项跳过**（CUDA不可用1项、缺少本地真实数据2项）。测试使用`MPLCONFIGDIR=/tmp/mpd-jointdual-resume-mpl`；首次运行在测试收集前的Matplotlib字体初始化中发生原生段错误，设置可写缓存后重跑通过。真实`jdworld_tau_r_1/step-00061000.pt`的只读解析确认：LR覆盖为3e-5，验证batch64和原seed保留，旧checkpoint推导出的microbatch游标为244,000。未启动正式续训。

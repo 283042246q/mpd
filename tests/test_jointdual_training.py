@@ -64,6 +64,23 @@ def test_joint_gradients_masks_and_permutation(variant, architecture):
     assert torch.isfinite(loss)
 
 
+def test_training_loss_weights_scale_only_the_selected_branch():
+    model = JointDiffusion(JointDualDenoiser(variant="jd_kin", **SMALL)).eval()
+    batch = inputs()
+    spatial = model.denoiser.spatial_head.weight
+    timing = model.denoiser.timing_residual.weight
+    original, metrics = model.training_loss(batch, generator=torch.Generator().manual_seed(17))
+    gp, gz = torch.autograd.grad(original, (spatial, timing))
+    weighted, weighted_metrics = model.training_loss(batch, generator=torch.Generator().manual_seed(17),
+                                                     loss_weight_p=2., loss_weight_z=.5)
+    wp, wz = torch.autograd.grad(weighted, (spatial, timing))
+    torch.testing.assert_close(weighted, 2*metrics["p"] + .5*metrics["z"])
+    for key in metrics:
+        torch.testing.assert_close(weighted_metrics[key], metrics[key])
+    torch.testing.assert_close(wp, 2*gp)
+    torch.testing.assert_close(wz, .5*gz)
+
+
 @pytest.mark.parametrize("variant", ["jd_kin", "jd_world"])
 @pytest.mark.parametrize("representation", ["c", "tau_r"])
 @pytest.mark.parametrize("architecture", [None, "v2"])

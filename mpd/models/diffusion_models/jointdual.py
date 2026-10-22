@@ -167,7 +167,7 @@ class JointDiffusion(nn.Module):
         betas = cosine_beta_schedule(num_diffusion_steps)
         self.register_buffer("alphas_cumprod", torch.cumprod(1 - betas.float(), 0))
 
-    def training_loss(self, batch, *, generator=None):
+    def training_loss(self, batch, *, generator=None, loss_weight_p=1., loss_weight_z=1.):
         p, z = batch["p"], batch["z"]
         step = torch.randint(self.num_diffusion_steps, (len(p),), device=p.device, generator=generator)
         ep = torch.randn(p.shape, device=p.device, dtype=p.dtype, generator=generator)
@@ -178,5 +178,5 @@ class JointDiffusion(nn.Module):
         pp, pz = self.denoiser(pk, zk, step, batch["task"],
             batch.get("world_features"), batch.get("world_mask"), batch.get("world_state"))
         lp, lz = (pp-ep).square().mean(), (pz-ez).square().mean()
-        return lp + lz, dict(p=lp.detach(), z=lz.detach(), tau=(pz[:, 0]-ez[:, 0]).square().mean().detach(),
+        return loss_weight_p*lp + loss_weight_z*lz, dict(p=lp.detach(), z=lz.detach(), tau=(pz[:, 0]-ez[:, 0]).square().mean().detach(),
                              r=(pz[:, 1:]-ez[:, 1:]).square().mean().detach())

@@ -49,7 +49,7 @@ def test_tensorboard_scalars_and_resume_purges_orphan_steps(snapshot, tmp_path):
     events = EventAccumulator(str(run / "tensorboard")).Reload()
     tags = events.Tags()["scalars"]
     assert {"train/loss", "train/p", "train/z", "train/tau", "train/r", "train/grad_norm",
-            "train/learning_rate", "validation/loss", "validation/p", "validation/z",
+            "train/unweighted_loss", "train/learning_rate", "validation/loss", "validation/p", "validation/z",
             "validation/tau", "validation/r", "performance/samples_per_second"} <= set(tags)
     assert {"validation/samples", "validation/total_samples", "validation/coverage", "validation/batches"} <= set(tags)
     records = [json.loads(row) for row in (run / "metrics.jsonl").read_text().splitlines()]
@@ -86,8 +86,41 @@ def test_accumulated_metrics_are_microbatch_averages(snapshot, tmp_path, monkeyp
     run = tmp_path / "averages"; train_jointdual(cfg, snapshot, run)
     record = json.loads((run / "metrics.jsonl").read_text())
     assert record["loss"] == 6. and record["p"] == 2. and record["z"] == 4.
+    assert record["unweighted_loss"] == 6.
     assert "tau" not in record and "r" not in record
     assert not (run / "tensorboard").exists()
+
+
+def test_weighted_resume_logs_unweighted_validation(snapshot, tmp_path):
+    cfg = config(representation="c")
+    source = train_jointdual(cfg, snapshot, tmp_path / "source")
+    legacy = torch.load(source, weights_only=False)
+    legacy["training_config"].pop("loss_weight_p")
+    legacy["training_config"].pop("loss_weight_z")
+    legacy_path = tmp_path / "legacy.pt"
+    torch.save(legacy, legacy_path)
+    cfg["training"]["max_steps"] = 3
+    overrides = dict(loss_weight_p=1., loss_weight_z=.5)
+    with pytest.raises(ValueError, match="new output-dir"):
+        train_jointdual(cfg, snapshot, source.parent, resume=source, resume_overrides=overrides)
+    target = train_jointdual(cfg, snapshot, tmp_path / "weighted", resume=source,
+                             resume_overrides=overrides)
+    saved = torch.load(target, weights_only=False)
+    assert saved["training_config"]["loss_weight_p"] == 1.
+    assert saved["training_config"]["loss_weight_z"] == .5
+    assert saved["resume_history"][-1]["changes"]["training.loss_weight_z"] == dict(old=1., new=.5)
+    record = json.loads((target.parent / "metrics.jsonl").read_text().splitlines()[-1])
+    assert record["loss"] == pytest.approx(record["p"] + .5*record["z"])
+    assert record["unweighted_loss"] == pytest.approx(record["p"] + record["z"])
+    assert record["validation_loss"] == pytest.approx(record["validation_p"] + record["validation_z"])
+    events = EventAccumulator(str(target.parent / "tensorboard")).Reload()
+    assert events.Scalars("train/unweighted_loss")[-1].value == pytest.approx(record["unweighted_loss"])
+    legacy_target = train_jointdual(cfg, snapshot, tmp_path / "legacy-resumed", resume=legacy_path)
+    legacy_config = torch.load(legacy_target, weights_only=False)["training_config"]
+    assert legacy_config["loss_weight_p"] == legacy_config["loss_weight_z"] == 1.
+    cfg["training"]["max_steps"] = 4
+    train_jointdual(cfg, snapshot, target.parent, resume=target)
+    assert torch.load(target, weights_only=False)["training_config"]["loss_weight_z"] == .5
 
 
 @pytest.mark.parametrize("variant", ["jd_kin", "jd_world"])
@@ -219,7 +252,8 @@ def test_resume_overrides_preserve_state_progress_and_validation(snapshot, tmp_p
     torch.save(legacy, source)
     cfg["training"].update(max_steps=3, seed=999, validation_seed=999, validation_batch_size=9)
     overrides = dict(learning_rate=3e-5, weight_decay=.002, gradient_clip_norm=.2,
-                     batch_size=2, accumulate_steps=3, use_amp=True, ema_decay=.98, world_dropout=.2)
+                     batch_size=2, accumulate_steps=3, use_amp=True, ema_decay=.98, world_dropout=.2,
+                     loss_weight_p=1.25, loss_weight_z=.75)
     observed = {}
     original_step = torch.optim.AdamW.step
     def optimizer_step(optimizer, *args, **kwargs):
@@ -263,7 +297,7 @@ def test_resume_overrides_preserve_state_progress_and_validation(snapshot, tmp_p
     assert current["step"] == 3 and current["microbatches_seen"] == 7 and current["samples_seen"] == 10
     assert all(int(state["step"]) == 3 for state in current["optimizer_state_dict"]["state"].values())
     report = json.loads((target.parent / "resume.json").read_text())
-    assert report["source_step"] == 2 and len(report["changes"]) == 8
+    assert report["source_step"] == 2 and len(report["changes"]) == 10
     assert report["effective_batch_size"] == {"old": 2, "new": 6}
     assert report["scaler_action"] == "disabled"  # CPU, even though AMP was requested
     assert report["sha256"] and report == current["resume_history"][-1]
@@ -274,6 +308,8 @@ def test_resume_overrides_preserve_state_progress_and_validation(snapshot, tmp_p
     repeated = torch.load(target, weights_only=False)
     assert repeated["microbatches_seen"] == 10 and repeated["samples_seen"] == 16
     assert repeated["training_config"]["learning_rate"] == 3e-5
+    assert repeated["training_config"]["loss_weight_p"] == 1.25
+    assert repeated["training_config"]["loss_weight_z"] == .75
     assert repeated["model_config"]["world_dropout"] == .2
     assert len(repeated["resume_history"]) == 2
     direct = train_jointdual(cfg, snapshot, tmp_path / "direct", resume=source, resume_overrides=overrides)
@@ -289,12 +325,13 @@ def test_resume_recipe_priority_and_output_protection(snapshot, tmp_path):
     saved = torch.load(source, weights_only=False)
     stale = copy.deepcopy(cfg)
     stale["training"].update(max_steps=3, learning_rate=.5, weight_decay=.7, gradient_clip_norm=10.,
-                             batch_size=9, accumulate_steps=3, use_amp=True, ema_decay=.2, seed=999)
+                             batch_size=9, accumulate_steps=3, use_amp=True, ema_decay=.2, seed=999,
+                             loss_weight_p=2., loss_weight_z=.25)
     stale["model"]["world_dropout"] = .7
     result = train_jointdual(stale, snapshot, tmp_path / "stale", resume=source)
     current = torch.load(result, weights_only=False)
-    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "batch_size", "accumulate_steps", "use_amp", "ema_decay", "seed"):
-        assert current["training_config"][key] == saved["training_config"][key]
+    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "batch_size", "accumulate_steps", "use_amp", "ema_decay", "seed", "loss_weight_p", "loss_weight_z"):
+        assert current["training_config"][key] == saved["training_config"].get(key, 1.)
     assert current["model_config"]["world_dropout"] == saved["model_config"]["world_dropout"]
     assert not current["resume_history"][-1]["changes"]
     cfg["training"]["max_steps"] = 3
@@ -328,12 +365,21 @@ def test_amp_scaler_transition_rules():
 
 
 @pytest.mark.parametrize("key,value", [("learning_rate", float("nan")), ("weight_decay", -1.),
-    ("gradient_clip_norm", 0.), ("batch_size", 0), ("accumulate_steps", 1.5), ("ema_decay", 1.), ("use_amp", "false")])
+    ("gradient_clip_norm", 0.), ("batch_size", 0), ("accumulate_steps", 1.5), ("ema_decay", 1.), ("use_amp", "false"),
+    ("loss_weight_p", float("nan")), ("loss_weight_z", -1.)])
 def test_invalid_resume_recipe_rejected(key, value):
     from mpd.joint_training.trainer import RESUME_DEFAULTS, _validate_recipe
     opts = dict(RESUME_DEFAULTS, validation_batch_size=64, max_steps=10)
     opts[key] = value
     with pytest.raises(ValueError, match=key):
+        _validate_recipe(opts)
+
+
+def test_both_loss_weights_zero_rejected():
+    from mpd.joint_training.trainer import RESUME_DEFAULTS, _validate_recipe
+    opts = dict(RESUME_DEFAULTS, validation_batch_size=64, max_steps=10,
+                loss_weight_p=0., loss_weight_z=0.)
+    with pytest.raises(ValueError, match="loss_weight_p and loss_weight_z"):
         _validate_recipe(opts)
 
 
@@ -346,12 +392,14 @@ def test_cli_explicit_resume_flags(tmp_path, monkeypatch, amp_flag, expected):
     monkeypatch.setattr(cli, "train_jointdual", lambda *args, **kwargs: calls.append((args, kwargs)))
     argv = ["--config", str(path), "--snapshot", "snapshot.json", "--output-dir", "new", "--resume", "old.pt",
             "--learning-rate", "0.00003", "--weight-decay", "0.002", "--gradient-clip-norm", "0.2",
-            "--batch-size", "32", "--accumulate-steps", "8", "--ema-decay", "0.98", "--world-dropout", "0.2"]
+            "--batch-size", "32", "--accumulate-steps", "8", "--ema-decay", "0.98", "--world-dropout", "0.2",
+            "--loss-weight-p", "1.25", "--loss-weight-z", "0.75"]
     if amp_flag: argv.append(amp_flag)
     cli.main(argv)
     overrides = calls[0][1]["resume_overrides"]
     assert overrides == dict(learning_rate=3e-5, weight_decay=.002, gradient_clip_norm=.2, batch_size=32,
                             accumulate_steps=8, ema_decay=.98, world_dropout=.2,
+                            loss_weight_p=1.25, loss_weight_z=.75,
                             **({"use_amp": expected} if expected is not None else {}))
     assert calls[0][0][0]["training"]["batch_size"] == 1  # YAML values are not mistaken for explicit overrides
 

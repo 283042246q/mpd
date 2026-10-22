@@ -22,7 +22,8 @@ CHECKPOINT_VERSION = "jointdual_checkpoint_v1"
 
 # On resume, YAML defaults must not silently reset an earlier training recipe.
 RESUME_DEFAULTS = dict(learning_rate=1e-4, weight_decay=1e-4, gradient_clip_norm=.5,
-                       batch_size=64, accumulate_steps=4, use_amp=False, ema_decay=.999)
+                       batch_size=64, accumulate_steps=4, use_amp=False, ema_decay=.999,
+                       loss_weight_p=1., loss_weight_z=1.)
 
 
 def _resolve_resume_config(config, previous, overrides):
@@ -63,12 +64,15 @@ def _validate_recipe(opts):
     for key in ("batch_size", "accumulate_steps", "validation_batch_size", "max_steps"):
         if type(opts[key]) is not int or opts[key] < 1:
             raise ValueError(key + " must be a positive integer")
-    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "ema_decay"):
+    for key in ("learning_rate", "weight_decay", "gradient_clip_norm", "ema_decay",
+                "loss_weight_p", "loss_weight_z"):
         value = opts[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValueError(key + " must be finite")
         if value < 0 or (key == "gradient_clip_norm" and value == 0) or (key == "ema_decay" and value >= 1):
             raise ValueError("invalid " + key)
+    if opts["loss_weight_p"] == 0 and opts["loss_weight_z"] == 0:
+        raise ValueError("loss_weight_p and loss_weight_z cannot both be zero")
     if type(opts["use_amp"]) is not bool:
         raise ValueError("use_amp must be boolean")
 
@@ -405,12 +409,15 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
                 data_wait += time.perf_counter() - waiting
                 batch = {k: v.to(device, non_blocking=pin_memory) for k, v in batch.items()}
                 with torch.autocast(device_type=device.type, enabled=amp):
-                    loss, metrics = model.training_loss(batch)
+                    loss, metrics = model.training_loss(batch,
+                        loss_weight_p=opts["loss_weight_p"], loss_weight_z=opts["loss_weight_z"])
+                unweighted_loss = float(metrics["p"] + metrics["z"])
                 if representation == "c":
                     metrics = {k: metrics[k] for k in ("p", "z")}
                 if not torch.isfinite(loss):
                     raise ValueError("nonfinite training loss")
                 scaler.scale(loss / accumulate).backward(); loss_total += float(loss.detach()) / accumulate
+                metrics_total["unweighted_loss"] = metrics_total.get("unweighted_loss", 0.) + unweighted_loss / accumulate
                 for key, value in metrics.items():
                     metrics_total[key] = metrics_total.get(key, 0.) + float(value) / accumulate
             scaler.unscale_(optimizer)
@@ -436,7 +443,7 @@ def _train_jointdual(config, snapshot, output_dir, data, validation, *, resume=N
             log_step = step == maximum or step % int(opts.get("log_every", 100)) == 0
             if writer is not None:
                 if log_step:
-                    for key in ("loss", "p", "z", "tau", "r", "grad_norm", "learning_rate"):
+                    for key in ("loss", "unweighted_loss", "p", "z", "tau", "r", "grad_norm", "learning_rate"):
                         if key in record:
                             writer.add_scalar("train/" + key, record[key], step)
                     for key in ("step_seconds", "data_wait_seconds", "samples_per_second"):
