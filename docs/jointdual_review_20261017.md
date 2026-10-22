@@ -1210,6 +1210,8 @@ python -m scripts.train.train_jointdual \
 
 当时新增回归覆盖：旧checkpoint恢复、八项显式覆盖、AdamW动量/step及EMA保留、真实生效的裁剪与dropout、累积修改后的采样游标、多次resume继承、固定验证batch/seed、源目录保护、CLI省略/显式AMP语义及非法参数拒绝。CUDA AMP切换另有条件执行的集成测试；CPU测试验证scaler分支规则，不能替代实际CUDA数值验证。loss权重的新增覆盖见下一节。
 
+当时五组JointDual回归结果为 **57项通过、3项跳过**（CUDA不可用1项、缺少本地真实数据2项）。测试使用`MPLCONFIGDIR=/tmp/mpd-jointdual-resume-mpl`；首次运行在测试收集前的Matplotlib字体初始化中发生原生段错误，设置可写缓存后重跑通过。真实`jdworld_tau_r_1/step-00061000.pt`的只读解析确认：LR覆盖为3e-5，验证batch64和原seed保留，旧checkpoint推导出的microbatch游标为244,000。未启动正式续训。
+
 ### 22.7 空间与时间损失权重（2026-10-22）
 
 训练目标现为 `loss_weight_p × Lp + loss_weight_z × Lz`，两项仍各自按元素求均值；`tau_r` 表达下 `Lz=(Ltau+5Lr)/6`。公共YAML默认为1/1，旧checkpoint没有这两个字段时也按1/1恢复。`--loss-weight-p`和`--loss-weight-z`可用于新训练、warm-start和resume。resume时只有显式命令行参数能改变checkpoint配方；修改权重需使用新的空output-dir，变更写入`resume.json`、`config.json`和checkpoint。两项必须为有限非负数，不能同时为0。
@@ -1244,4 +1246,4 @@ python -m scripts.train.train_jointdual \
   --loss-weight-p 1 --loss-weight-z 0.75
 ```
 
-本次五组JointDual回归结果为 **57项通过、3项跳过**（CUDA不可用1项、缺少本地真实数据2项）。测试使用`MPLCONFIGDIR=/tmp/mpd-jointdual-resume-mpl`；首次运行在测试收集前的Matplotlib字体初始化中发生原生段错误，设置可写缓存后重跑通过。真实`jdworld_tau_r_1/step-00061000.pt`的只读解析确认：LR覆盖为3e-5，验证batch64和原seed保留，旧checkpoint推导出的microbatch游标为244,000。未启动正式续训。
+本次权重功能的五组JointDual回归为 **62项通过、3项跳过**；新增验证了两分支梯度缩放、实际加权训练与未加权验证、历史checkpoint缺省权重、resume配方继承和CLI覆盖。未启动正式权重训练。
