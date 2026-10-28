@@ -1,0 +1,37 @@
+{
+  "_dynamic_world_version": 19,
+  "_trajectory_start_unix_ns": 1,
+  "ee_pose_goal": [
+    -0.22890907526016235,
+    0.5279179811477661,
+    0.2940891683101654,
+    0.5100410671563108,
+    -0.5035003700230981,
+    -0.48726166341530747,
+    -0.49892039301516095
+  ],
+  "goal_type": "cartesian",
+  "ik_candidates": 0,
+  "joint_names": [
+    "fr3_joint1",
+    "fr3_joint2",
+    "fr3_joint3",
+    "fr3_joint4",
+    "fr3_joint5",
+    "fr3_joint6",
+    "fr3_joint7"
+  ],
+  "q_pos_start": [
+    1.9448469877243042,
+    -0.601853609085083,
+    0.03851030021905899,
+    -2.2437314987182617,
+    0.0150129534304142,
+    1.7575205564498901,
+    -2.0949554443359375
+  ],
+  "request_id": "todrawer-0018",
+  "scene_id": "EnvOpenDrawerShelf",
+  "schema_version": 1,
+  "seed": 21278974
+}

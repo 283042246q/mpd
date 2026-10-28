@@ -1,0 +1,121 @@
+{
+  "case_limit": null,
+  "completed_workers": [
+    {
+      "exit_code": 1,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/phase5joint/worker.log",
+      "model": "phase5joint",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/phase4/worker.log",
+      "model": "phase4",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/phase4_aligned/worker.log",
+      "model": "phase4_aligned",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f1c/worker.log",
+      "model": "f1c",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f1taur/worker.log",
+      "model": "f1taur",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f3c/worker.log",
+      "model": "f3c",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f2c/worker.log",
+      "model": "f2c",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f2taur/worker.log",
+      "model": "f2taur",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/f3taur/worker.log",
+      "model": "f3taur",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/jdkin_c-00091000/worker.log",
+      "model": "jdkin_c-00091000",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/jdkin_c_multi-00199000/worker.log",
+      "model": "jdkin_c_multi-00199000",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/jdkin_c-00123000/worker.log",
+      "model": "jdkin_c-00123000",
+      "scene": "todrawer"
+    },
+    {
+      "exit_code": 0,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/jdkin_tau_r-00089000/worker.log",
+      "model": "jdkin_tau_r-00089000",
+      "scene": "todrawer"
+    }
+  ],
+  "jobs": 4,
+  "repeats": 1,
+  "requested_models": [
+    "phase4",
+    "phase5joint",
+    "phase4_aligned",
+    "f1c",
+    "f1taur",
+    "f2c",
+    "f2taur",
+    "f3c",
+    "f3taur",
+    "jdkin_c-00091000",
+    "jdkin_c_multi-00199000",
+    "jdkin_c-00123000",
+    "jdkin_tau_r-00089000",
+    "jdkin_tau_r_multi-00196000",
+    "jdkin_tau_r-00114000",
+    "jdworld_c-00065000",
+    "jdworld_c_multi-00153000",
+    "jdworld_c_multi_from135k_z010-00215000",
+    "jdworld_tau_r_1-00061000",
+    "jdworld_tau_r_multi-00132000",
+    "jdworld_tau_r_1-00082000"
+  ],
+  "requested_scenes": [
+    "todrawer",
+    "warehouse"
+  ],
+  "status": "running",
+  "worker_failures": [
+    {
+      "exit_code": 1,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/phase5joint/worker.log",
+      "model": "phase5joint",
+      "scene": "todrawer"
+    }
+  ]
+}

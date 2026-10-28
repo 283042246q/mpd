@@ -1,0 +1,213 @@
+best_trajectory_metric_scales:
+  acceleration_limit_utilization: 0.15
+  ee_orientation: 1.5
+  ee_position: 0.015
+  path_length: null
+  smoothness: null
+  velocity_limit_utilization: 0.3
+best_trajectory_selection: weighted_metrics
+best_trajectory_weights:
+  acceleration_limit_utilization: 0.075
+  ee_orientation: 0.2
+  ee_position: 0.35
+  path_length: 0.15
+  smoothness: 0.15
+  velocity_limit_utilization: 0.075
+compute_costs_with_xrecon: false
+costs:
+  CostJointSpaceAcceleration:
+    weight: 0.005
+  CostJointSpaceJointLimits:
+    weight: 1.0
+  CostJointSpacePathLength:
+    weight: 0.0
+  CostJointSpaceVelocity:
+    weight: 0.02
+  CostTaskSpaceCollisionObjects:
+    use_only_on_extra_objects: false
+    weight: 10.0
+  CostTaskSpaceCollisionSelf:
+    weight: 1.0
+  CostTaskSpaceEEGoalOrientation:
+    weight: 1.0
+  CostTaskSpaceEEGoalPosition:
+    weight: 1.0
+cvae_prior_then_guide:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 12
+ddim:
+  clip_grad: true
+  clip_grad_rule: value
+  ddim_eta: 0.0
+  ddim_sampling_timesteps: 32
+  ddim_scale_grad_prior: 0.5
+  ddim_skip_type: quadratic
+  ee_goal_orientation_weight_end: 3.0
+  ee_goal_orientation_weight_start: 1.0
+  ee_goal_position_weight_end: 3.0
+  ee_goal_position_weight_start: 1.0
+  guide_lr: 1.0
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 1
+  t_start_guide_steps_fraction: 0.3
+ddpm:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 2
+  noise_std: 0.7
+  prior_weight_with_guide: 0.95
+  t_start_guide_steps_fraction: 0.2
+dense_validation:
+  benchmark_points: 128
+  check_environment: true
+  check_joint_acceleration: true
+  check_joint_limits: true
+  check_joint_position: true
+  check_joint_velocity: true
+  check_self_collision: true
+  enabled: true
+  ranked_early_exit:
+    batch_buckets:
+    - 8
+    - 16
+    - 32
+    - 64
+    cuda_graph: false
+    enabled: false
+    preallocate_buffers: true
+  reject_invalid: true
+  runtime_points: 128
+diffusion_prior_then_guide:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 12
+diffusion_sampling_method: ddim
+env_id_replace: null
+extra_mp_steps: 0
+gp_prior_then_guide:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 12
+gradient_pruning:
+  candidate:
+    enabled: false
+  enabled: true
+  endpoint:
+    ee_only_last_point: true
+  force_all_active: false
+  mapping:
+    fused_bspline_integration: false
+    sparse_bspline_support: false
+  preselection:
+    parent_bounds_scan: false
+  profile: false
+  profile_per_guide_call: false
+  record_active_statistics: false
+  scheduling:
+    enabled: false
+    promote_on_stalled_cost: true
+    skip_safe_candidates: false
+  span_certificate:
+    enabled: false
+    environment_safe_margin: 0.08
+    exact_sdf_for_certificate: true
+    grid_error_scale: 1.0
+    jacobian_bound_mode: componentwise
+    max_subdivision_depth: 3
+    profile_stages: false
+    self_safe_margin: 0.06
+  spatial:
+    active_link_pruning: true
+    dense_parent_fast_path: true
+    environment_link_broad_phase: false
+    link_broad_phase:
+      enabled: false
+      environment_margin: 0.2
+      full_scan: true
+      reuse_scan_cache: false
+      scan_geometry: fine_spheres
+      self_margin: 0.1
+    parent_link_kinematics: true
+    self_link_pair_broad_phase: false
+  temporal:
+    always_keep_endpoints: true
+    buckets:
+    - 32
+    - 64
+    - 128
+    coarse_points: 32
+    conditional_active_ratio_threshold: 0.35
+    conditional_enabled: false
+    enabled: false
+    environment_refine_margin: 0.08
+    neighbor_dilation: 2
+    probe_midpoints: true
+    q_delta_threshold: null
+    reuse_selection_within_ddim_step: false
+    self_refine_margin: 0.06
+grasped_object: null
+knn_prior_then_guide:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 12
+margin_for_dense_collision_checking: 0.005
+model_dir_cvae_bspline: ${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_cvae_models-v04_2024-09-18_08-14-47/generative_model_class___CVAEModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0
+model_dir_ddpm_bspline: ${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0
+model_dir_ddpm_waypoints: ${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-11-11_10-27-59/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryWaypoints/0
+model_selection: bspline
+n_diffusion_steps_without_noise: 0
+n_trajectory_samples: 64
+num_T_pts: 128
+obstacle_cutoff_margin_extra: 0.05
+phase_time_class: PhaseTimeLinear
+planner_alg: mpd
+planning_env_id: EnvOpenDrawerShelf
+project_gradient_hierarchy: false
+rotation_z_axis_deg: 0.0
+rrtconnect_then_guide:
+  clip_grad: true
+  clip_grad_rule: value
+  guide_lr: 0.01
+  max_grad_norm: 1.0
+  max_grad_value: 1.0
+  max_perturb_x: 0.15
+  n_guide_steps: 12
+runtime:
+  joint_names:
+  - fr3_joint1
+  - fr3_joint2
+  - fr3_joint3
+  - fr3_joint4
+  - fr3_joint5
+  - fr3_joint6
+  - fr3_joint7
+  planning_frame: fr3_link0
+  robot_model: franka_fr3
+  scene_id: EnvOpenDrawerShelf
+  schema_version: 1
+  runtime_top_k_valid_trajectories: 8
+start_goal_source: states_file
+trajectory_duration: 10.0

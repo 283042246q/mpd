@@ -1,0 +1,66 @@
+{
+  "device": "cpu",
+  "health": {
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "config_sha256": "b82e94725dcb1e32a0d9593a0c8f1d831b250b1c9341a80a546bf837ca02e041",
+    "dense_validation": {
+      "enabled": true,
+      "full_batch": true,
+      "fully_warmed": true,
+      "pruning_used": false,
+      "ranked_batch_buckets": [
+        8,
+        16,
+        32,
+        64
+      ],
+      "runtime_points": 128
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "active_capacity": 0,
+      "active_objects": 0,
+      "frame_id": "fr3_link0",
+      "max_objects": 16,
+      "motion_model": "constant_velocity",
+      "optimizations": {
+        "capacity_buckets": true,
+        "collision_spheres_float32": true,
+        "deduplicate_best_trajectory": true,
+        "dynamic_guide_pruning": true,
+        "fused_local_sdf_reduction": true,
+        "shape_and_inflation_grouping": true,
+        "time_table_cache": true
+      },
+      "orientation_model": "constant",
+      "stamp_unix_ns": 1,
+      "trajectory_schema_version": 2,
+      "valid_until_unix_ns": 9223372036854775807,
+      "world_version": 0
+    },
+    "instance_id": "a16f9e06-126c-42e8-8191-db788d5d201e",
+    "phase4_aligned": {
+      "dynamic_collision_alpha": null,
+      "dynamic_collision_cvar_fraction": null,
+      "enabled": false,
+      "guidance_enabled": false,
+      "selection": "legacy",
+      "selection_enabled": false
+    },
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "started_unix_time": 1792931265.0316305,
+    "warmup_elapsed_sec": 0.5097099599952344
+  },
+  "inflation": false,
+  "load_and_warmup_s": 2.842116348008858,
+  "model": {
+    "id": "phase4",
+    "kind": "legacy",
+    "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "d7602b4f0a9d403c801ad6e832b3f211e4454258b3a78a1b501f9e312390d43e"
+}

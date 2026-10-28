@@ -1,0 +1,70 @@
+{
+  "arrival_mode": "sequential",
+  "candidates": {
+    "colliding": 60,
+    "dense_batches_evaluated": 1,
+    "dense_bucket_capacities": [
+      64
+    ],
+    "dense_checked": 64,
+    "dense_complete": true,
+    "dense_padding_slots": 0,
+    "dense_unchecked": 0,
+    "generated": 64,
+    "joint_acceleration_violations": 0,
+    "joint_position_violations": 9,
+    "joint_velocity_violations": 9,
+    "requested_top_k": 8,
+    "returned_top_k": 2,
+    "valid": 2
+  },
+  "case_id": "todrawer-0014",
+  "common_validation_wall_s": 0.06803294399287552,
+  "device": "cpu",
+  "execution_contract_sha256": "c38d24b42afaf58698696218fa6b36e988e3e85cb4be2b2815458a516a21cf35",
+  "model_id": "phase5joint",
+  "motion_modes": [
+    "speed_variation",
+    "speed_variation",
+    "shuttle"
+  ],
+  "object_count": 3,
+  "plan_wall_s": 6.905059171986068,
+  "repeat": 0,
+  "request_sha256": "5bfda2bd6d503ec9f178b70f5fba936a0ed10fd0bfef10436e57bb644c16a88e",
+  "scene": "todrawer",
+  "schema": "oracle_single_plan_result_v1",
+  "seed": 21274986,
+  "status": "common_validation_failed",
+  "success": false,
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae",
+  "timing": {
+    "dense_validation_sec": 0.13021852500969544,
+    "generator_sec": 0.677564903977327,
+    "guide_sec": 5.253985483024735,
+    "inference_total_sec": 5.941423911979655,
+    "request_total_sec": 6.259827333997237,
+    "trajectory_ranking_sec": 0.0
+  },
+  "total_wall_s": 6.9932083110034,
+  "validation": {
+    "acceleration_utilization": 0.385332840238887,
+    "boundary_error": 1.220703143189894e-05,
+    "duration_s": 10.639846801757812,
+    "ee_orientation_error_deg": 2.915759693140044,
+    "ee_position_error_m": 0.10986989370081406,
+    "interpolant": "quintic_hermite_from_exported_q_dq_ddq",
+    "minimum_dynamic_clearance_m": 0.1600874364376068,
+    "minimum_self_clearance_m": 0.14283987879753113,
+    "minimum_static_clearance_m": 0.04891514405608177,
+    "path_length_rad": 9.250603299729775,
+    "reasons": [
+      "ee_position",
+      "ee_orientation"
+    ],
+    "valid": false,
+    "validation_points": 1725,
+    "velocity_utilization": 0.6009260421024916
+  },
+  "world_sha256": "bd8f5f292490e221f8175483ea8dc4e6914cd8345876a22d0e2a2b7b57fe99a3"
+}

@@ -1,0 +1,24 @@
+{
+  "arrival_mode": "single",
+  "case_id": "todrawer-0006",
+  "device": "cpu",
+  "error_message": "Top-K acceleration start boundary error 5.06727e-05 exceeds 5e-05.",
+  "error_type": "ResultValidationError",
+  "execution_contract_sha256": "c38d24b42afaf58698696218fa6b36e988e3e85cb4be2b2815458a516a21cf35",
+  "model_id": "f2taur",
+  "motion_modes": [
+    "shuttle"
+  ],
+  "object_count": 1,
+  "plan_wall_s": 15.460252404998755,
+  "repeat": 0,
+  "request_sha256": "aca5e77271bd6d0b4c765158bf447523b4dfe6af6a0145c28882c31556d1407f",
+  "scene": "todrawer",
+  "schema": "oracle_single_plan_result_v1",
+  "seed": 21267010,
+  "status": "native_validation_failed",
+  "success": false,
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae",
+  "total_wall_s": 15.46027012099512,
+  "world_sha256": "7672e9e32a2b03d48c604f168df48ed48b4797fc230b71e73287659a7e7268ac"
+}

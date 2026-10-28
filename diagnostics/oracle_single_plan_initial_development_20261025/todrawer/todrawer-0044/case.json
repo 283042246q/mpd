@@ -1,0 +1,118 @@
+{
+  "anchors": [
+    [
+      -0.3038671910762787,
+      0.4145664870738983,
+      0.5393837690353394
+    ]
+  ],
+  "arrival_mode": "single",
+  "directory": "todrawer/todrawer-0044",
+  "event_times": [
+    3.053341507459585
+  ],
+  "generation_rejections": {},
+  "id": "todrawer-0044",
+  "inflation": "none",
+  "interpolation": "piecewise_linear",
+  "motion_modes": [
+    "shuttle"
+  ],
+  "motion_parameters": [
+    {
+      "direction": [
+        -0.20963519504934341,
+        -0.9659981044632656,
+        -0.15132992820325186
+      ],
+      "lateral": [
+        -0.9772528229283448,
+        0.21207762748244147,
+        0.0
+      ],
+      "reference_sphere": 31,
+      "speed": 0.31457109926639026,
+      "vertical": [
+        0.03209369214043386,
+        0.14788759953017164,
+        -0.9884833093330401
+      ]
+    }
+  ],
+  "object_count": 1,
+  "obstacle_obstacle_collision": "allowed",
+  "obstacle_static_collision": "allowed",
+  "phases": [
+    0.3053341507459585
+  ],
+  "reference_nominal_duration_s": 10.0,
+  "reference_sha256": "0903bf623056e0c755d2155b1bc4d6d307fdf9649e5812649d733dcb27d8e752",
+  "reference_used_for": "anchors_and_event_times_only",
+  "request_sha256": "75babb6239536c63d583b4b0369ec470fbd58221ed808b806abdbac75c466834",
+  "scene": "todrawer",
+  "seed": 21304896,
+  "start_goal_metadata": {
+    "ee_pose_goal": [
+      [
+        0.0028141726743367013,
+        -0.9994294760181772,
+        0.03365713740339804,
+        -0.24947282003223725
+      ],
+      [
+        -0.024405572467319836,
+        0.03357860257922626,
+        0.9991380512628718,
+        0.5215309632973234
+      ],
+      [
+        -0.9996981786842976,
+        -0.0036331687076951447,
+        -0.024297152517116283,
+        0.30280133593994996
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "ee_pose_start": [
+      [
+        -0.021118662372818307,
+        -0.9923557730105975,
+        -0.12158956317103314,
+        -0.19443411962623422
+      ],
+      [
+        -0.9996862400932071,
+        0.01932153561393838,
+        0.015940502809707893,
+        0.3547334697451142
+      ],
+      [
+        -0.013469352912812947,
+        0.12188805533791679,
+        -0.9924524565429074,
+        0.5870258220663668
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "goal_region_id": "bottom_drawer_reachable_corner",
+    "rotate_with_environment": false,
+    "rotation_z_axis_deg": 0.0,
+    "sampling_attempt": 1,
+    "source": "regions",
+    "start_region_id": "free_in_front"
+  },
+  "static_reference_planner": "OMPL RRTConnect",
+  "time_origin": "execution_start",
+  "world_attempts": 1,
+  "world_sha256": "18743beff679e5b4cb0e0cd0446c4e1263d5f46776554c16c6f0d5ac94ca3be2"
+}

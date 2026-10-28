@@ -1,0 +1,71 @@
+{
+  "arrival_mode": "sequential",
+  "candidates": {
+    "colliding": 63,
+    "dense_batches_evaluated": 1,
+    "dense_bucket_capacities": [
+      64
+    ],
+    "dense_checked": 64,
+    "dense_complete": true,
+    "dense_padding_slots": 0,
+    "dense_unchecked": 0,
+    "generated": 64,
+    "joint_acceleration_violations": 0,
+    "joint_position_violations": 5,
+    "joint_velocity_violations": 0,
+    "requested_top_k": 8,
+    "returned_top_k": 1,
+    "valid": 1
+  },
+  "case_id": "todrawer-0002",
+  "common_validation_wall_s": 0.10988600601558574,
+  "device": "cpu",
+  "execution_contract_sha256": "c38d24b42afaf58698696218fa6b36e988e3e85cb4be2b2815458a516a21cf35",
+  "model_id": "phase5joint",
+  "motion_modes": [
+    "zigzag",
+    "curved",
+    "helix",
+    "stop_go"
+  ],
+  "object_count": 4,
+  "plan_wall_s": 9.410078914981568,
+  "repeat": 0,
+  "request_sha256": "7e8ed7461e8c2e8943b630e3de3436c9e9428a951d22aa2914534d48af9be319",
+  "scene": "todrawer",
+  "schema": "oracle_single_plan_result_v1",
+  "seed": 21263022,
+  "status": "common_validation_failed",
+  "success": false,
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae",
+  "timing": {
+    "dense_validation_sec": 0.19204486897797324,
+    "generator_sec": 0.7769485889584757,
+    "guide_sec": 7.556215699994937,
+    "inference_total_sec": 8.343585147988051,
+    "request_total_sec": 8.719170687982114,
+    "trajectory_ranking_sec": 0.0
+  },
+  "total_wall_s": 9.533108761999756,
+  "validation": {
+    "acceleration_utilization": 0.29430281860601737,
+    "boundary_error": 1.9531249563442543e-05,
+    "duration_s": 10.566442489624023,
+    "ee_orientation_error_deg": 0.5795614431840146,
+    "ee_position_error_m": 0.06250346866568766,
+    "interpolant": "quintic_hermite_from_exported_q_dq_ddq",
+    "minimum_dynamic_clearance_m": 0.00470762699842453,
+    "minimum_self_clearance_m": 0.1677013486623764,
+    "minimum_static_clearance_m": 0.03457195684313774,
+    "path_length_rad": 10.747486791723126,
+    "reasons": [
+      "dynamic_collision",
+      "ee_position"
+    ],
+    "valid": false,
+    "validation_points": 1716,
+    "velocity_utilization": 0.5873054128945707
+  },
+  "world_sha256": "d72784b9f54972008b3b927b2f602c6c342533e19f0e33b58a6f3fcd373e6c6b"
+}

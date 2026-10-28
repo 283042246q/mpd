@@ -1,0 +1,82 @@
+{
+  "device": "cpu",
+  "health": {
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "config_sha256": "8d6001cee770a444c10dba6b5699c2a6d5054015c3e8f5caf4a6e1036f233c91",
+    "dense_validation": {
+      "enabled": true,
+      "full_batch": true,
+      "fully_warmed": true,
+      "pruning_used": false,
+      "ranked_batch_buckets": [
+        8,
+        16,
+        32,
+        64
+      ],
+      "runtime_points": 128
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "active_capacity": 0,
+      "active_objects": 0,
+      "frame_id": "fr3_link0",
+      "max_objects": 16,
+      "motion_model": "constant_velocity",
+      "optimizations": {
+        "capacity_buckets": true,
+        "collision_spheres_float32": true,
+        "deduplicate_best_trajectory": true,
+        "dynamic_guide_pruning": false,
+        "fused_local_sdf_reduction": true,
+        "shape_and_inflation_grouping": true,
+        "time_table_cache": false
+      },
+      "orientation_model": "constant",
+      "stamp_unix_ns": 1,
+      "trajectory_schema_version": 3,
+      "valid_until_unix_ns": 9223372036854775807,
+      "world_version": 0
+    },
+    "instance_id": "ef7cffc7-b465-484a-91b7-d4cc6926eee6",
+    "phase4_aligned": {
+      "dynamic_collision_alpha": null,
+      "dynamic_collision_cvar_fraction": null,
+      "enabled": false,
+      "guidance_enabled": false,
+      "selection": "legacy",
+      "selection_enabled": false
+    },
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "corridor_a_enabled": false,
+      "duration_max_s": 14.0,
+      "duration_min_s": 2.0,
+      "enabled": true,
+      "mode": "phase5_joint",
+      "phase4_entry_unchanged": true,
+      "pruning": {
+        "dynamic_space_time": false,
+        "static_spatial": true
+      },
+      "reuse_spatial_kinematics": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "started_unix_time": 1792931062.2632694,
+    "warmup_elapsed_sec": 0.08413636300247163
+  },
+  "inflation": false,
+  "load_and_warmup_s": 2.3841082520084456,
+  "model": {
+    "id": "phase5joint",
+    "kind": "legacy",
+    "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "a514df08544d9f5e8f2bc69324b7fbd4a10b261ed2206b695a03277ff7dbff4f"
+}

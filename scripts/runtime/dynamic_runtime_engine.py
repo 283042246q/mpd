@@ -68,6 +68,8 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
         aligned: bool = False,
         aligned_guidance_enabled: bool | None = None,
         aligned_selection_enabled: bool | None = None,
+        dynamic_world_factory=FixedCapacityDynamicWorld,
+        allow_benchmark_budgets: bool = False,
     ) -> None:
         import torch
 
@@ -100,11 +102,12 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             runtime_output_root=runtime_output_root,
             device_text=device_text,
             state_callback=state_callback,
+            allow_benchmark_budgets=allow_benchmark_budgets,
         )
         static_field = self.planning_task.get_collision_objects_field()
         if static_field is None:
             raise DynamicWorldError("dynamic runtime requires the resident static collision field")
-        self.dynamic_world = FixedCapacityDynamicWorld(
+        self.dynamic_world = dynamic_world_factory(
             max_dynamic_objects,
             trajectory_duration_s=float(self.args_inference.trajectory_duration),
             tensor_args=self.tensor_args,
@@ -209,7 +212,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             "stamp_unix_ns": self.dynamic_world.stamp_unix_ns,
             "valid_until_unix_ns": self.dynamic_world.valid_until_unix_ns,
             "orientation_model": "constant",
-            "motion_model": "constant_velocity",
+            "motion_model": getattr(self.dynamic_world, "motion_model", "constant_velocity"),
             "active_capacity": self.dynamic_world._active_capacity(),
             "optimizations": {
                 "capacity_buckets": self.dynamic_world.capacity_buckets_enabled,
@@ -445,7 +448,7 @@ class DynamicMpdRuntimeEngine(MpdRuntimeEngine):
             "active_object_ids": [object_id for object_id in self.dynamic_world.object_ids if object_id],
             "fixed_timing": True,
             "orientation_model": "constant",
-            "motion_model": "constant_velocity",
+            "motion_model": getattr(self.dynamic_world, "motion_model", "constant_velocity"),
             "dense_check_pruning_used": False,
         }
         return artifacts

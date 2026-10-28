@@ -1,0 +1,49 @@
+{
+  "case_limit": null,
+  "completed_workers": [
+    {
+      "exit_code": -11,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/benchmark_results/oracle_single_plan_20261025/experiments/cpu_round1/results/todrawer/phase4/worker.log",
+      "model": "phase4",
+      "scene": "todrawer"
+    }
+  ],
+  "jobs": 8,
+  "repeats": 1,
+  "requested_models": [
+    "phase4",
+    "phase5joint",
+    "phase4_aligned",
+    "f1c",
+    "f1taur",
+    "f2c",
+    "f2taur",
+    "f3c",
+    "f3taur",
+    "jdkin_c-00091000",
+    "jdkin_c_multi-00199000",
+    "jdkin_c-00123000",
+    "jdkin_tau_r-00089000",
+    "jdkin_tau_r_multi-00196000",
+    "jdkin_tau_r-00114000",
+    "jdworld_c-00065000",
+    "jdworld_c_multi-00153000",
+    "jdworld_c_multi_from135k_z010-00215000",
+    "jdworld_tau_r_1-00061000",
+    "jdworld_tau_r_multi-00132000",
+    "jdworld_tau_r_1-00082000"
+  ],
+  "requested_scenes": [
+    "todrawer",
+    "warehouse"
+  ],
+  "status": "running",
+  "worker_failures": [
+    {
+      "exit_code": -11,
+      "log": "/home/eric/Projects/MotionPlanningDiffusion/mpd/benchmark_results/oracle_single_plan_20261025/experiments/cpu_round1/results/todrawer/phase4/worker.log",
+      "model": "phase4",
+      "scene": "todrawer"
+    }
+  ]
+}

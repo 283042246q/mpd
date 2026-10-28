@@ -38,7 +38,8 @@ DEFAULT_CONFIG = REPO / "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-j
 
 class JointDualMpdRuntimeEngine:
     def __init__(self, *, joint_checkpoint, config_path=DEFAULT_CONFIG, runtime_output_root=None,
-                 device_text="cpu", state_callback=None, sampler_settings=None):
+                 device_text="cpu", state_callback=None, sampler_settings=None,
+                 collision_backend=None, allow_static_scene_transfer=False):
         started=time.perf_counter()
         notify=state_callback or (lambda _:None);notify("LOADING")
         self.instance_id=str(uuid.uuid4());self.device=torch.device(device_text)
@@ -61,9 +62,15 @@ class JointDualMpdRuntimeEngine:
         for name,value in self.payload["static_geometry_hashes"].items():
             if sha256_file(REPO/"mpd/torch_robotics/torch_robotics/environments"/name)!=value:
                 raise ConfigurationError("checkpoint static geometry differs from runtime")
-        if self.config.get("scene_id","EnvWarehouse")!="EnvWarehouse":
+        requested_scene=self.config.get("scene_id","EnvWarehouse")
+        if requested_scene!="EnvWarehouse" and not (allow_static_scene_transfer and collision_backend is not None):
             raise ConfigurationError("JointDual v1 is trained for EnvWarehouse static geometry")
-        self.collision=WarehouseCollision(device_text,margin=float(self.config.get("collision_margin",.005)))
+        self.collision=collision_backend if collision_backend is not None else WarehouseCollision(
+            device_text,margin=float(self.config.get("collision_margin",.005)))
+        actual_scene=getattr(self.collision.environment,"name",type(self.collision.environment).__name__)
+        if actual_scene!=requested_scene:
+            raise ConfigurationError("collision backend scene differs from configured scene")
+        self.static_scene_transfer=requested_scene!="EnvWarehouse"
         self.robot=self.collision.robot
         self.codec=JointTimingCodec(self.payload["normalization"],self.payload["representation"],
                                    self.robot.dq_max,self.robot.ddq_max).to(self.device)
@@ -80,7 +87,7 @@ class JointDualMpdRuntimeEngine:
             capacity_buckets_enabled=True,shape_grouping_enabled=True,fused_reduction_enabled=True)
         self.dense_validator=DenseTrajectoryValidator(self.planning_task,config={"chunking":{"enabled":True,
                                                        "time_chunk_size":256}})
-        self.actual_scene_id="EnvWarehouse"
+        self.actual_scene_id=requested_scene
         self.scene_payload=export_isaaclab_scene_payload(self.collision.environment,include_boxes=True)
         self.scene_sha256=_canonical_json_sha256(self.scene_payload)
         notify("WARMING")
@@ -96,6 +103,7 @@ class JointDualMpdRuntimeEngine:
 
     def health(self):
         return dict(instance_id=self.instance_id,device=str(self.device),scene_id=self.actual_scene_id,
+            static_scene_transfer=self.static_scene_transfer,training_scene_id="EnvWarehouse",
             scene_sha256=self.scene_sha256,checkpoint_sha256=self.checkpoint_sha256,
             warmup_elapsed_sec=self.warmup_elapsed_sec,
             space_time=dict(enabled=True,mode=self.payload["variant"],representation=self.payload["representation"],
@@ -153,7 +161,7 @@ class JointDualMpdRuntimeEngine:
         started=time.perf_counter();request=validate_request(raw_request)
         if any(raw_request.get(k) is not None for k in ("initial_x","initial_noise_timestep","initial_state")):
             raise RequestValidationError("JointDual v1 does not support warm-start")
-        if request["scene_id"]!=self.actual_scene_id:raise ConfigurationError("scene_id must be EnvWarehouse")
+        if request["scene_id"]!=self.actual_scene_id:raise ConfigurationError("scene_id differs from configured scene")
         for k in ("q_vel_start","q_vel_goal","q_acc_start","q_acc_goal"):
             if np.any(request[k]!=0):raise RequestValidationError("JointDual v1 requires rest-to-rest boundaries")
         qs=torch.as_tensor(request["q_pos_start"],**self.tensor_args)

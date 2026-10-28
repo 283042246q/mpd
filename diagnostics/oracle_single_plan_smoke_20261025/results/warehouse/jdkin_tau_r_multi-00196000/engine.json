@@ -1,0 +1,69 @@
+{
+  "device": "cpu",
+  "health": {
+    "checkpoint_sha256": "7d066d3632391b21041698c6f049228beff27c98d3efd745205d25c5d5f8e128",
+    "dense_validation": {
+      "enabled": true,
+      "fully_warmed": false
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "world_version": 0
+    },
+    "instance_id": "cdda8b67-7e69-4b64-909e-8761a6bb733f",
+    "scene_id": "EnvWarehouseExtraObjectsV00",
+    "scene_sha256": "056fb191aff56a457308e0b43b2d8cd87095ba338b1c5ccf7c68a4b9e2381442",
+    "space_time": {
+      "candidate_specific_time": true,
+      "codec_contract": {
+        "codec_grid_size": 2049,
+        "density_floor": 0.001,
+        "duration_max": 14.0,
+        "duration_min": 2.0,
+        "integration": "trapezoid_linear_cumulative",
+        "spatial_degree": 5,
+        "spatial_points": 21,
+        "timing_degree": 3,
+        "timing_points": 8,
+        "u_min": 0.05,
+        "version": "joint_timing_v1"
+      },
+      "enabled": true,
+      "mode": "jd_kin",
+      "representation": "tau_r",
+      "rest_to_rest_only": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "static_scene_transfer": true,
+    "training_scene_id": "EnvWarehouse",
+    "warmup_elapsed_sec": 0.2875495329790283
+  },
+  "inflation": false,
+  "load_and_warmup_s": 0.7990432349906769,
+  "model": {
+    "architecture_version": "v2",
+    "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r_multi/step-00196000.pt",
+    "checkpoint_sha256": "7d066d3632391b21041698c6f049228beff27c98d3efd745205d25c5d5f8e128",
+    "dataset": "multiworld",
+    "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+    "ema_load_verified": true,
+    "id": "jdkin_tau_r_multi-00196000",
+    "kind": "jointdual",
+    "representation": "tau_r",
+    "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r_multi/step-00196000.pt",
+    "role": "multiworld_best",
+    "run": "jdkin_tau_r_multi",
+    "step": 196000,
+    "training_learning_rate": 0.0001,
+    "training_loss_weight_p": 1.0,
+    "training_loss_weight_z": 1.0,
+    "validation_p": 0.04556160113005228,
+    "validation_unweighted_sum": 0.396438758911672,
+    "validation_z": 0.3508771577816197,
+    "variant": "jd_kin",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "d7602b4f0a9d403c801ad6e832b3f211e4454258b3a78a1b501f9e312390d43e"
+}

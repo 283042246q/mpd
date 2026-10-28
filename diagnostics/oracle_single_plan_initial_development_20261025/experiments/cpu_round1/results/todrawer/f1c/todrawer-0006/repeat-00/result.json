@@ -1,0 +1,703 @@
+{
+  "best_trajectory_diagnostics": {
+    "ee_orientation_error_deg": 3.595431327819824,
+    "ee_position_error_m": 0.02906232886016369,
+    "path_length": 3.0956201553344727,
+    "selection": {
+      "components": {
+        "normalized_duration": {
+          "value": 0.2555431127548218,
+          "weight": 0.1
+        },
+        "normalized_dynamic_risk": {
+          "value": 1.0,
+          "weight": 0.2
+        },
+        "normalized_timing_smoothness": {
+          "value": 0.09218758344650269,
+          "weight": 0.1
+        },
+        "spatial_weighted_metrics": {
+          "value": 2.6125378608703613,
+          "weight": 1.0
+        }
+      },
+      "duration_s": 5.066517353057861,
+      "method": "phase5_spatial_space_time_cost",
+      "score": 2.847311019897461,
+      "selected_candidate_index": 16,
+      "selected_valid_index": 5
+    },
+    "smoothness": 64.9581298828125,
+    "terminal_cartesian_pose_xyzw": [
+      -0.2252478301525116,
+      0.5507954955101013,
+      0.2961926758289337,
+      0.5273246169090271,
+      -0.49956652522087097,
+      -0.5108664631843567,
+      -0.45975813269615173
+    ]
+  },
+  "candidates": {
+    "colliding": 37,
+    "dense_batches_evaluated": 1,
+    "dense_bucket_capacities": [
+      64
+    ],
+    "dense_checked": 64,
+    "dense_complete": true,
+    "dense_padding_slots": 0,
+    "dense_unchecked": 0,
+    "generated": 64,
+    "joint_acceleration_violations": 6,
+    "joint_position_violations": 9,
+    "joint_velocity_violations": 3,
+    "requested_top_k": 8,
+    "returned_top_k": 8,
+    "valid": 15
+  },
+  "config": {
+    "path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/benchmark_results/oracle_single_plan_20261025/experiments/cpu_round1/results/todrawer/f1c/runtime.yaml",
+    "sha256": "664929660d9dfff621b81232026f97fdb8f41d2153ff2adb527729469ad81088"
+  },
+  "created_unix_time": 1792932089.83665,
+  "dynamic_world": {
+    "active_object_ids": [
+      "obstacle-0"
+    ],
+    "candidate_specific_time": true,
+    "dense_check_pruning_used": false,
+    "fixed_timing": false,
+    "frame_id": "fr3_link0",
+    "motion_model": "prescribed_piecewise_linear",
+    "orientation_model": "constant",
+    "snapshot_stamp_unix_ns": 1,
+    "timing_schema_version": 1,
+    "trajectory_start_unix_ns": 1,
+    "valid_until_unix_ns": 14000000001,
+    "world_version": 7
+  },
+  "factorized": {
+    "denoiser_evaluations": {
+      "space": 32,
+      "timing": 32
+    },
+    "f3_rollout_finetuning_verified": false,
+    "representation": "c",
+    "rest_to_rest_only": true,
+    "runtime_spatial_control_points": 21,
+    "settings": {
+      "alternating_rounds": 1,
+      "eta": 0.0,
+      "fixed_path_cache": true,
+      "method": "f1",
+      "path_encoding_cache": true,
+      "refinement_steps": 5,
+      "space_guide_fraction": 0.3,
+      "space_lr": 0.01,
+      "space_steps": 32,
+      "timing_grad_only": true,
+      "timing_guide_fraction": 0.3,
+      "timing_lr": 0.02,
+      "timing_steps": 32,
+      "timing_steps_per_space_step": 1,
+      "weak_dynamic_scale": 0.2
+    },
+    "spatial_basis_adapted": true,
+    "steps": [
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 99
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 96
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 93
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 89
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 86
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 83
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 80
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 77
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 73
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 70
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 67
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 64
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 61
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 57
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 54
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 51
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 48
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 45
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 42
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 38
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 35
+      },
+      {
+        "branch": "space",
+        "guided": false,
+        "stage": "space",
+        "timestep": 32
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 29
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 26
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 22
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 19
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 16
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 13
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 10
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 6
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 3
+      },
+      {
+        "branch": "space",
+        "guided": true,
+        "stage": "space",
+        "timestep": 0
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 99
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 96
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 93
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 89
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 86
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 83
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 80
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 77
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 73
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 70
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 67
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 64
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 61
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 57
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 54
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 51
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 48
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 45
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 42
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 38
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 35
+      },
+      {
+        "branch": "timing",
+        "guided": false,
+        "stage": "timing",
+        "timestep": 32
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 29
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 26
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 22
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 19
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 16
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 13
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 10
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 6
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 3
+      },
+      {
+        "branch": "timing",
+        "guided": true,
+        "stage": "timing",
+        "timestep": 0
+      }
+    ],
+    "timing_checkpoint": "/home/eric/data/mpd/data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt",
+    "timing_checkpoint_sha256": "3a9f05036eea284ec532882f19efb373c71f84d20cb49a58e0471575ba535980",
+    "timing_checkpoint_step": 500000,
+    "timing_environment": "EnvWarehouse",
+    "training_spatial_control_points": 29
+  },
+  "goal": {
+    "end_effector_frame": "fr3_hand",
+    "ik": {
+      "candidates_generated": 0,
+      "candidates_valid": 0,
+      "elapsed_sec": 0.0,
+      "max_iters": 300,
+      "selected_index": null,
+      "selected_orientation_error_deg": null,
+      "selected_position_error_m": null,
+      "skip_reason": "ik_candidates=0; q_pos_goal uses q_pos_start as the legacy planner API placeholder.",
+      "skipped": true
+    },
+    "input_type": "cartesian",
+    "q_pos_goal_condition": [
+      -2.592987537384033,
+      -1.3275169134140015,
+      -0.7361698746681213,
+      -2.2477188110351562,
+      -0.8487459421157837,
+      1.0401382446289062,
+      -1.1513147354125977
+    ],
+    "target_pose_xyzw": [
+      -0.2203451693058014,
+      0.5340428948402405,
+      0.31477272510528564,
+      0.5105749368667603,
+      -0.5030264258384705,
+      -0.5016409158706665,
+      -0.48439037799835205
+    ]
+  },
+  "joint_names": [
+    "fr3_joint1",
+    "fr3_joint2",
+    "fr3_joint3",
+    "fr3_joint4",
+    "fr3_joint5",
+    "fr3_joint6",
+    "fr3_joint7"
+  ],
+  "model": {
+    "args_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/args.yaml",
+    "args_sha256": "a8d6847bd58ff29eb30785882b0fa2a838609f88ed90bec35f439500a21547b2",
+    "checkpoint_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "model_dir": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0"
+  },
+  "mpd_source": {
+    "commit": "14abe51e4d3af20c468b40ff62176eb0c3c502c4",
+    "dirty": true
+  },
+  "request": {
+    "joint_state_stamp": null,
+    "planning_frame": "fr3_link0",
+    "robot_model": "franka_fr3",
+    "schema_version": 1,
+    "seed": 21267010,
+    "sha256": "7aaeb76b8326fdaff0caabf3acceb8711bae17856a6daa3d2b1cf4a42dbed5ec"
+  },
+  "request_id": "todrawer-0006",
+  "resident_runtime": {
+    "instance_id": "2de5d0f9-811e-484d-a056-8b4f6b698813",
+    "started_unix_time": 1792932033.6357942,
+    "warmup_elapsed_sec": 1.0494469749974087
+  },
+  "scene": {
+    "mpd_scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "request_scene_hash": null,
+    "scene_id": "EnvOpenDrawerShelf"
+  },
+  "schema_version": 1,
+  "space_time_guidance": {
+    "corridor_a": {
+      "enabled": false
+    },
+    "full_candidate_specific_dense_check": true,
+    "learned_timing": true,
+    "representation": "c",
+    "settings": {
+      "acceleration_weight": 0.005,
+      "collision_power": 2.0,
+      "corridor_a_backend": "serial",
+      "corridor_a_branch_fallback": false,
+      "corridor_a_chunk_size": 8,
+      "corridor_a_clearance_m": 0.0,
+      "corridor_a_dense_branch_budget": 64,
+      "corridor_a_dp_init": false,
+      "corridor_a_early_stop": false,
+      "corridor_a_enabled": false,
+      "corridor_a_k_best": 0,
+      "corridor_a_learning_rate": 0.04,
+      "corridor_a_phase_points": 32,
+      "corridor_a_selective_k": false,
+      "corridor_a_steps": 20,
+      "corridor_a_time_margin_s": 0.05,
+      "corridor_a_time_step_s": 0.2,
+      "corridor_a_weight": 0.1,
+      "duration_max": 14.0,
+      "duration_min": 2.0,
+      "duration_weight": 0.2,
+      "dynamic_collision_alpha": 0.5,
+      "dynamic_collision_cvar_fraction": 0.1,
+      "dynamic_collision_weight": 10.0,
+      "dynamic_guidance_enabled": true,
+      "mode": "f1",
+      "nominal_duration": 10.0,
+      "num_timing_control_points": 8,
+      "spatial_dynamic_max_grad_norm": 2.0,
+      "spatial_dynamic_scale": 1.0,
+      "timing_beta1": 0.9,
+      "timing_beta2": 0.999,
+      "timing_degree": 3,
+      "timing_epsilon": 1e-08,
+      "timing_learning_rate": 0.08,
+      "timing_max_grad_norm": 1.0,
+      "timing_smoothness_weight": 0.02,
+      "u_min": 0.05,
+      "velocity_weight": 0.02
+    },
+    "status": "full_candidate_specific_dense_validated",
+    "steps": []
+  },
+  "status": "success",
+  "timing": {
+    "dense_validation_sec": 0.2874214250186924,
+    "generator_sec": 0.8692627651034854,
+    "guide_sec": 5.557487547892379,
+    "inference_total_sec": 6.426850841002306,
+    "request_total_sec": 6.718860149994725,
+    "trajectory_ranking_sec": 0.0
+  },
+  "top_k_timing": {
+    "candidate_specific_time": true,
+    "durations_s": [
+      5.066517353057861,
+      3.098423957824707,
+      2.0513648986816406,
+      2.406446933746338,
+      3.116011142730713,
+      2.146775722503662,
+      3.3981778621673584,
+      2.946035385131836
+    ]
+  },
+  "top_k_trajectory_diagnostics": {
+    "scores": [
+      2.847311019897461,
+      4.76194953918457,
+      5.98896598815918,
+      6.340110778808594,
+      10.777080535888672,
+      11.176697731018066,
+      12.265636444091797,
+      21.05654525756836
+    ],
+    "selection_method": "phase5_spatial_space_time_cost",
+    "source_candidate_indices": [
+      16,
+      36,
+      43,
+      38,
+      10,
+      11,
+      34,
+      55
+    ],
+    "start_acceleration_max_abs_error_rad_s2": 4.833408092963509e-05,
+    "start_position_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 1.959910150617361e-06
+  },
+  "trajectory": {
+    "acceleration_limit_utilization": 0.11974555253982544,
+    "acceleration_unit": "rad/s^2",
+    "cartesian_pose_format": "[x, y, z, qx, qy, qz, qw]",
+    "cartesian_position_unit": "m",
+    "cartesian_reference_frame": "fr3_link0",
+    "duration_max_s": 14.0,
+    "duration_min_s": 2.0,
+    "duration_s": 5.066517353057861,
+    "horizon": 128,
+    "minimum_environment_clearance_m": 0.003688354045152664,
+    "minimum_self_clearance_m": 0.15902777016162872,
+    "position_unit": "rad",
+    "start_acceleration_max_abs_error_rad_s2": 6.837518412794452e-06,
+    "start_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 7.371547781076515e-07,
+    "timing_mode": "f1",
+    "timing_representation": "c",
+    "timing_schema_version": 1,
+    "velocity_limit_utilization": 0.22833144664764404,
+    "velocity_unit": "rad/s"
+  },
+  "trajectory_artifact": {
+    "best_trajectory_deduplicated": true,
+    "best_trajectory_topk_index": 0,
+    "candidate_specific_time": true,
+    "collision_sphere_dtype": "float32",
+    "schema_version": 3,
+    "timing_schema_version": 1
+  },
+  "trajectory_file": "trajectory.npz"
+}

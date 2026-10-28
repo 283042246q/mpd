@@ -194,7 +194,7 @@ class ForecastBatch:
 class WarehouseCollision:
     """One persistent Panda/static Warehouse; dynamic worlds indexed per sample."""
 
-    def __init__(self, device="cpu", *, margin=0.005, chunk_size=512):
+    def __init__(self, device="cpu", *, margin=0.005, chunk_size=512, environment=None, robot=None):
         from torch_robotics.robots import RobotPanda
         from torch_robotics.environments.env_warehouse import EnvWarehouse
         from torch_robotics.torch_planning_objectives.fields.distance_fields import CollisionObjectDistanceField
@@ -202,9 +202,9 @@ class WarehouseCollision:
         if margin < 0 or chunk_size < 1:
             raise ValueError("invalid collision margin or chunk size")
         self.tensor_args = {"device": torch.device(device), "dtype": torch.float32}
-        self.robot = RobotPanda(tensor_args=self.tensor_args)
-        self.environment = EnvWarehouse(precompute_sdf_obj_fixed=False, precompute_sdf_obj_extra=False,
-                                        tensor_args=self.tensor_args)
+        self.robot = robot if robot is not None else RobotPanda(tensor_args=self.tensor_args)
+        self.environment = environment if environment is not None else EnvWarehouse(
+            precompute_sdf_obj_fixed=False, precompute_sdf_obj_extra=False, tensor_args=self.tensor_args)
         self.field = CollisionObjectDistanceField(
             self.robot, df_obj_list_fn=self.environment.get_df_obj_list,
             link_margins_for_object_collision_checking_tensor=self.robot.link_collision_spheres_radii,

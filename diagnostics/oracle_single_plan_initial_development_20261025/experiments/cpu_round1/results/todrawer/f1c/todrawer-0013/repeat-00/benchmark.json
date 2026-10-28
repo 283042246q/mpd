@@ -1,0 +1,22 @@
+{
+  "arrival_mode": "empty",
+  "case_id": "todrawer-0013",
+  "device": "cpu",
+  "error_message": "MPD produced no valid trajectory for this request.",
+  "error_type": "NoValidTrajectoryError",
+  "execution_contract_sha256": "c38d24b42afaf58698696218fa6b36e988e3e85cb4be2b2815458a516a21cf35",
+  "model_id": "f1c",
+  "motion_modes": [],
+  "object_count": 0,
+  "plan_wall_s": 5.540766397985863,
+  "repeat": 0,
+  "request_sha256": "d79ea141bbe248586154c068638035617bb4d2bc5a1798b44055dee88da535c6",
+  "scene": "todrawer",
+  "schema": "oracle_single_plan_result_v1",
+  "seed": 21273989,
+  "status": "no_valid_trajectory",
+  "success": false,
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae",
+  "total_wall_s": 5.54078995299642,
+  "world_sha256": "0e6955fb553ee6bedb3a58ac58c06735f06afcb002c6285d94876ace7676cb86"
+}

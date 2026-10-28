@@ -1,0 +1,2532 @@
+{
+  "devices": [
+    "cpu"
+  ],
+  "expected_cases": 2,
+  "expected_models": 21,
+  "groups": {
+    "todrawer/f1c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.1729709439969156,
+      "mean_success_duration_s": null,
+      "model_id": "f1c",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/f1taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.163683688995661,
+      "mean_success_duration_s": null,
+      "model_id": "f1taur",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/f2c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.100974343018606,
+      "mean_success_duration_s": null,
+      "model_id": "f2c",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/f2taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.234376945008989,
+      "mean_success_duration_s": null,
+      "model_id": "f2taur",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/f3c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.285255071998108,
+      "mean_success_duration_s": null,
+      "model_id": "f3c",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/f3taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.395270934997825,
+      "mean_success_duration_s": null,
+      "model_id": "f3taur",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_c-00091000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.4143999720108695,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c-00091000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_c-00123000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.000684924016241,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c-00123000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_c_multi-00199000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.350558148988057,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c_multi-00199000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r-00089000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 9.242685058998177,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r-00089000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r-00114000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 9.17809236800531,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r-00114000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r_multi-00196000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 9.723566928994842,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r_multi-00196000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_c-00065000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.29884721399867,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c-00065000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_c_multi-00153000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.806044372991892,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c_multi-00153000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_c_multi_from135k_z010-00215000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.117302887985716,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c_multi_from135k_z010-00215000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_1-00061000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.314829620998353,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_1-00061000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_1-00082000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.729040176986018,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_1-00082000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_multi-00132000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 9.716489037004067,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_multi-00132000",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/phase4": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 1.9829457499727141,
+      "mean_success_duration_s": null,
+      "model_id": "phase4",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/phase4_aligned": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 2.741710288973991,
+      "mean_success_duration_s": null,
+      "model_id": "phase4_aligned",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "todrawer/phase5joint": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 2.317022620001808,
+      "mean_success_duration_s": null,
+      "model_id": "phase5joint",
+      "scene": "todrawer",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f1c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.1513797840161715,
+      "mean_success_duration_s": null,
+      "model_id": "f1c",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f1taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.2696322179981507,
+      "mean_success_duration_s": null,
+      "model_id": "f1taur",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f2c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.2635648919967934,
+      "mean_success_duration_s": null,
+      "model_id": "f2c",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f2taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 5.169484084995929,
+      "mean_success_duration_s": null,
+      "model_id": "f2taur",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f3c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.3525306210212875,
+      "mean_success_duration_s": null,
+      "model_id": "f3c",
+      "scene": "warehouse",
+      "status_counts": {
+        "inference_error": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/f3taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 3.45848448300967,
+      "mean_success_duration_s": null,
+      "model_id": "f3taur",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_c-00091000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.181264463986736,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c-00091000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_c-00123000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.533066042000428,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c-00123000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_c_multi-00199000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.431974748003995,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_c_multi-00199000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r-00089000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.107227347994922,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r-00089000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r-00114000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.860566891991766,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r-00114000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r_multi-00196000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.8182998270203825,
+      "mean_success_duration_s": null,
+      "model_id": "jdkin_tau_r_multi-00196000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_c-00065000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.277165284001967,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c-00065000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_c_multi-00153000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.999392065015854,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c_multi-00153000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_c_multi_from135k_z010-00215000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.857423811976332,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_c_multi_from135k_z010-00215000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_1-00061000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 7.657370236993302,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_1-00061000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_1-00082000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.011388660001103,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_1-00082000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_multi-00132000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 8.32139278500108,
+      "mean_success_duration_s": null,
+      "model_id": "jdworld_tau_r_multi-00132000",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/phase4": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 2.092810920003103,
+      "mean_success_duration_s": null,
+      "model_id": "phase4",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/phase4_aligned": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 2.7768469220027328,
+      "mean_success_duration_s": null,
+      "model_id": "phase4_aligned",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    },
+    "warehouse/phase5joint": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 1
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 1
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 1,
+      "mean_plan_wall_s": 2.67143536900403,
+      "mean_success_duration_s": null,
+      "model_id": "phase5joint",
+      "scene": "warehouse",
+      "status_counts": {
+        "no_valid_trajectory": 1
+      },
+      "success_rate": 0.0,
+      "successes": 0
+    }
+  },
+  "result_count": 42,
+  "schema": "oracle_single_plan_report_v1",
+  "suite_hash": "d7602b4f0a9d403c801ad6e832b3f211e4454258b3a78a1b501f9e312390d43e"
+}

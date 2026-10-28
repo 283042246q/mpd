@@ -368,7 +368,7 @@ def _runtime_config_value(args_inference: Any, key: str, default: Any) -> Any:
     return default
 
 
-def _validate_runtime_config(args_inference: Any) -> None:
+def _validate_runtime_config(args_inference: Any, *, allow_benchmark_budgets: bool = False) -> None:
     required_values = {
         "start_goal_source": "states_file",
         "model_selection": "bspline",
@@ -377,6 +377,12 @@ def _validate_runtime_config(args_inference: Any) -> None:
         "num_T_pts": 128,
         "n_trajectory_samples": 100,
     }
+    if allow_benchmark_budgets:
+        for key, minimum in (("num_T_pts", 3), ("n_trajectory_samples", 1)):
+            value = args_inference.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ConfigurationError(f"{key} must be an integer >= {minimum}.")
+            required_values.pop(key)
     for key, expected in required_values.items():
         actual = args_inference.get(key)
         if actual != expected:

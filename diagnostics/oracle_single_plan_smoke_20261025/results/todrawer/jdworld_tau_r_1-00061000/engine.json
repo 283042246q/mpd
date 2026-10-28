@@ -1,0 +1,69 @@
+{
+  "device": "cpu",
+  "health": {
+    "checkpoint_sha256": "3f63b797f35bbf78a05b16c89841ff8768397a65507d6f6d12ceaa92297d213f",
+    "dense_validation": {
+      "enabled": true,
+      "fully_warmed": false
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "world_version": 0
+    },
+    "instance_id": "1976f008-f456-45b3-a2f7-7ebec32ef174",
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "codec_contract": {
+        "codec_grid_size": 2049,
+        "density_floor": 0.001,
+        "duration_max": 14.0,
+        "duration_min": 2.0,
+        "integration": "trapezoid_linear_cumulative",
+        "spatial_degree": 5,
+        "spatial_points": 21,
+        "timing_degree": 3,
+        "timing_points": 8,
+        "u_min": 0.05,
+        "version": "joint_timing_v1"
+      },
+      "enabled": true,
+      "mode": "jd_world",
+      "representation": "tau_r",
+      "rest_to_rest_only": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "static_scene_transfer": true,
+    "training_scene_id": "EnvWarehouse",
+    "warmup_elapsed_sec": 0.30698979599401355
+  },
+  "inflation": false,
+  "load_and_warmup_s": 0.8156467739900108,
+  "model": {
+    "architecture_version": "v2",
+    "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00061000.pt",
+    "checkpoint_sha256": "3f63b797f35bbf78a05b16c89841ff8768397a65507d6f6d12ceaa92297d213f",
+    "dataset": "main",
+    "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+    "ema_load_verified": true,
+    "id": "jdworld_tau_r_1-00061000",
+    "kind": "jointdual",
+    "representation": "tau_r",
+    "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00061000.pt",
+    "role": "main_best",
+    "run": "jdworld_tau_r_1",
+    "step": 61000,
+    "training_learning_rate": 0.0001,
+    "training_loss_weight_p": 1.0,
+    "training_loss_weight_z": 1.0,
+    "validation_p": 0.05438784455859375,
+    "validation_unweighted_sum": 0.4250070357121528,
+    "validation_z": 0.37061919115355907,
+    "variant": "jd_world",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "d7602b4f0a9d403c801ad6e832b3f211e4454258b3a78a1b501f9e312390d43e"
+}

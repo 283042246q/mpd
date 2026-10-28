@@ -1,0 +1,558 @@
+{
+  "device": "cpu",
+  "implementation_hashes": {
+    "mpd/inference/prescribed_world.py": "fa44b808d23263e7c12db7f22627f98c3aba97c0877a627c1da1cbfb5c02ea36",
+    "scripts/benchmarks/oracle_sampling.py": "4bd705019e7eb36e08dcb722b8bdf3c7550c948099d7910b14f35b647bc991de",
+    "scripts/benchmarks/oracle_single_plan.py": "75fb829dfff7eead5f8f9ed6261872fda308d0a30e66b49d011c541c23d303c0",
+    "scripts/runtime/dynamic_runtime_engine.py": "74e1a8841de397c3220b74a9d33c4e5460cca8de71ec1f9f873a3d0998d849e1",
+    "scripts/runtime/factorized_runtime_engine.py": "93b69d415ad6153a668a1cc4c806b3bd08e023942a7f07b85fa0b969c1f1c680",
+    "scripts/runtime/infer_once.py": "557a9f3e2f489937f5696b1fd18d5089481827986f4e81bdc507f90cda078085",
+    "scripts/runtime/jointdual_runtime_engine.py": "b67b14770f725e2bffc60ea3445c58a6261f86f917f7ab4c0249fca18656e5e4",
+    "scripts/runtime/runtime_engine.py": "dc2617e84dc0de5a7437a51557b71ac518dd1fc52bfc02e9465be446c7ce4b26",
+    "scripts/runtime/space_time_runtime_engine.py": "34134e2698769fc6143cf67bf06e6d5cb5205460d90030dcff96a4b99eb14dad",
+    "scripts/spacetime_data/warehouse_world.py": "3f8ff2840b66f4b3148fd6648355047f969bf0473aa701357c6ca45dc04e9d55"
+  },
+  "jointdual_runtime_config": {
+    "candidates": 64,
+    "collision_margin": 0.005,
+    "cost_points": 128,
+    "ee_orientation_tolerance_deg": 1.5,
+    "ee_position_tolerance": 0.015,
+    "guidance": true,
+    "max_dynamic_objects": 16,
+    "output_points": 128,
+    "sampler": {
+      "cfg_scale": 1.0,
+      "eta": 0.0,
+      "guide_fraction": 0.3,
+      "refinement_steps": 5,
+      "space_lr": 0.01,
+      "steps": 32,
+      "timing_lr": 0.02
+    },
+    "scene_id": "EnvWarehouse",
+    "top_k": 8
+  },
+  "resources": {
+    "cpu_partitions": [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7
+      ]
+    ],
+    "jobs": 4,
+    "latency_protocol": "disjoint_cpu_core_groups_shared_memory",
+    "threads": 1
+  },
+  "runtime_configs": {
+    "todrawer": {
+      "best_trajectory_metric_scales": {
+        "acceleration_limit_utilization": 0.15,
+        "ee_orientation": 1.5,
+        "ee_position": 0.015,
+        "path_length": null,
+        "smoothness": null,
+        "velocity_limit_utilization": 0.3
+      },
+      "best_trajectory_selection": "weighted_metrics",
+      "best_trajectory_weights": {
+        "acceleration_limit_utilization": 0.075,
+        "ee_orientation": 0.2,
+        "ee_position": 0.35,
+        "path_length": 0.15,
+        "smoothness": 0.15,
+        "velocity_limit_utilization": 0.075
+      },
+      "compute_costs_with_xrecon": false,
+      "costs": {
+        "CostJointSpaceAcceleration": {
+          "weight": 0.005
+        },
+        "CostJointSpaceJointLimits": {
+          "weight": 1.0
+        },
+        "CostJointSpacePathLength": {
+          "weight": 0.0
+        },
+        "CostJointSpaceVelocity": {
+          "weight": 0.02
+        },
+        "CostTaskSpaceCollisionObjects": {
+          "use_only_on_extra_objects": false,
+          "weight": 10.0
+        },
+        "CostTaskSpaceCollisionSelf": {
+          "weight": 1.0
+        },
+        "CostTaskSpaceEEGoalOrientation": {
+          "weight": 1.0
+        },
+        "CostTaskSpaceEEGoalPosition": {
+          "weight": 1.0
+        }
+      },
+      "cvae_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "ddim": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "ddim_eta": 0.5,
+        "ddim_sampling_timesteps": 15,
+        "ddim_scale_grad_prior": 0.5,
+        "ddim_skip_type": "quadratic",
+        "ee_goal_orientation_weight_end": 3.0,
+        "ee_goal_orientation_weight_start": 1.0,
+        "ee_goal_position_weight_end": 3.0,
+        "ee_goal_position_weight_start": 1.0,
+        "guide_lr": 1.0,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 6,
+        "t_start_guide_steps_fraction": 0.2
+      },
+      "ddpm": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 2,
+        "noise_std": 0.7,
+        "prior_weight_with_guide": 0.95,
+        "t_start_guide_steps_fraction": 0.2
+      },
+      "dense_validation": {
+        "benchmark_points": 128,
+        "check_environment": true,
+        "check_joint_acceleration": true,
+        "check_joint_limits": true,
+        "check_joint_position": true,
+        "check_joint_velocity": true,
+        "check_self_collision": true,
+        "enabled": true,
+        "ranked_early_exit": {
+          "batch_buckets": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "cuda_graph": false,
+          "enabled": true,
+          "preallocate_buffers": true
+        },
+        "reject_invalid": true,
+        "runtime_points": 128
+      },
+      "diffusion_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "diffusion_sampling_method": "ddim",
+      "env_id_replace": null,
+      "extra_mp_steps": 0,
+      "gp_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "gradient_pruning": {
+        "candidate": {
+          "enabled": false
+        },
+        "enabled": true,
+        "endpoint": {
+          "ee_only_last_point": true
+        },
+        "force_all_active": false,
+        "mapping": {
+          "fused_bspline_integration": false,
+          "sparse_bspline_support": false
+        },
+        "preselection": {
+          "parent_bounds_scan": false
+        },
+        "profile": false,
+        "profile_per_guide_call": false,
+        "record_active_statistics": false,
+        "scheduling": {
+          "enabled": false,
+          "promote_on_stalled_cost": true,
+          "skip_safe_candidates": false
+        },
+        "span_certificate": {
+          "enabled": false,
+          "environment_safe_margin": 0.08,
+          "exact_sdf_for_certificate": true,
+          "grid_error_scale": 1.0,
+          "jacobian_bound_mode": "componentwise",
+          "max_subdivision_depth": 3,
+          "profile_stages": false,
+          "self_safe_margin": 0.06
+        },
+        "spatial": {
+          "active_link_pruning": true,
+          "dense_parent_fast_path": true,
+          "environment_link_broad_phase": false,
+          "link_broad_phase": {
+            "enabled": false,
+            "environment_margin": 0.2,
+            "full_scan": true,
+            "reuse_scan_cache": false,
+            "scan_geometry": "fine_spheres",
+            "self_margin": 0.1
+          },
+          "parent_link_kinematics": true,
+          "self_link_pair_broad_phase": false
+        },
+        "temporal": {
+          "always_keep_endpoints": true,
+          "buckets": [
+            32,
+            64,
+            128
+          ],
+          "coarse_points": 32,
+          "conditional_active_ratio_threshold": 0.35,
+          "conditional_enabled": false,
+          "enabled": false,
+          "environment_refine_margin": 0.08,
+          "neighbor_dilation": 2,
+          "probe_midpoints": true,
+          "q_delta_threshold": null,
+          "reuse_selection_within_ddim_step": false,
+          "self_refine_margin": 0.06
+        }
+      },
+      "grasped_object": null,
+      "knn_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "margin_for_dense_collision_checking": 0.0,
+      "model_dir_cvae_bspline": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_cvae_models-v04_2024-09-18_08-14-47/generative_model_class___CVAEModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0",
+      "model_dir_ddpm_bspline": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0",
+      "model_dir_ddpm_waypoints": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-11-11_10-27-59/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryWaypoints/0",
+      "model_selection": "bspline",
+      "n_diffusion_steps_without_noise": 0,
+      "n_trajectory_samples": 100,
+      "num_T_pts": 128,
+      "obstacle_cutoff_margin_extra": 0.05,
+      "phase_time_class": "PhaseTimeLinear",
+      "planner_alg": "mpd",
+      "planning_env_id": "EnvOpenDrawerShelf",
+      "project_gradient_hierarchy": false,
+      "rotation_z_axis_deg": 0.0,
+      "rrtconnect_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "runtime": {
+        "joint_names": [
+          "fr3_joint1",
+          "fr3_joint2",
+          "fr3_joint3",
+          "fr3_joint4",
+          "fr3_joint5",
+          "fr3_joint6",
+          "fr3_joint7"
+        ],
+        "planning_frame": "fr3_link0",
+        "robot_model": "franka_fr3",
+        "scene_id": "EnvOpenDrawerShelf",
+        "schema_version": 1
+      },
+      "start_goal_source": "states_file",
+      "trajectory_duration": 10.0
+    },
+    "warehouse": {
+      "best_trajectory_metric_scales": {
+        "acceleration_limit_utilization": 0.15,
+        "ee_orientation": 1.5,
+        "ee_position": 0.015,
+        "path_length": null,
+        "smoothness": null,
+        "velocity_limit_utilization": 0.3
+      },
+      "best_trajectory_selection": "weighted_metrics",
+      "best_trajectory_weights": {
+        "acceleration_limit_utilization": 0.075,
+        "ee_orientation": 0.2,
+        "ee_position": 0.35,
+        "path_length": 0.15,
+        "smoothness": 0.15,
+        "velocity_limit_utilization": 0.075
+      },
+      "compute_costs_with_xrecon": false,
+      "costs": {
+        "CostJointSpaceAcceleration": {
+          "weight": 0.005
+        },
+        "CostJointSpaceJointLimits": {
+          "weight": 1.0
+        },
+        "CostJointSpacePathLength": {
+          "weight": 0.0
+        },
+        "CostJointSpaceVelocity": {
+          "weight": 0.02
+        },
+        "CostTaskSpaceCollisionObjects": {
+          "use_only_on_extra_objects": false,
+          "weight": 10.0
+        },
+        "CostTaskSpaceCollisionSelf": {
+          "weight": 1.0
+        },
+        "CostTaskSpaceEEGoalOrientation": {
+          "weight": 1.0
+        },
+        "CostTaskSpaceEEGoalPosition": {
+          "weight": 1.0
+        }
+      },
+      "cvae_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "ddim": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "ddim_eta": 0.5,
+        "ddim_sampling_timesteps": 15,
+        "ddim_scale_grad_prior": 0.5,
+        "ddim_skip_type": "quadratic",
+        "ee_goal_orientation_weight_end": 3.0,
+        "ee_goal_orientation_weight_start": 1.0,
+        "ee_goal_position_weight_end": 3.0,
+        "ee_goal_position_weight_start": 1.0,
+        "guide_lr": 1.0,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 6,
+        "t_start_guide_steps_fraction": 0.2
+      },
+      "ddpm": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 2,
+        "noise_std": 0.7,
+        "prior_weight_with_guide": 0.95,
+        "t_start_guide_steps_fraction": 0.2
+      },
+      "dense_validation": {
+        "benchmark_points": 128,
+        "check_environment": true,
+        "check_joint_acceleration": true,
+        "check_joint_limits": true,
+        "check_joint_position": true,
+        "check_joint_velocity": true,
+        "check_self_collision": true,
+        "enabled": true,
+        "ranked_early_exit": {
+          "batch_buckets": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "cuda_graph": false,
+          "enabled": true,
+          "preallocate_buffers": true
+        },
+        "reject_invalid": true,
+        "runtime_points": 128
+      },
+      "diffusion_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "diffusion_sampling_method": "ddim",
+      "env_id_replace": "EnvWarehouseExtraObjectsV00",
+      "extra_mp_steps": 0,
+      "gp_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "gradient_pruning": {
+        "candidate": {
+          "enabled": false
+        },
+        "enabled": true,
+        "endpoint": {
+          "ee_only_last_point": true
+        },
+        "force_all_active": false,
+        "mapping": {
+          "fused_bspline_integration": false,
+          "sparse_bspline_support": false
+        },
+        "preselection": {
+          "parent_bounds_scan": false
+        },
+        "profile": false,
+        "profile_per_guide_call": false,
+        "record_active_statistics": false,
+        "scheduling": {
+          "enabled": false,
+          "promote_on_stalled_cost": true,
+          "skip_safe_candidates": false
+        },
+        "span_certificate": {
+          "enabled": false,
+          "environment_safe_margin": 0.08,
+          "exact_sdf_for_certificate": true,
+          "grid_error_scale": 1.0,
+          "jacobian_bound_mode": "componentwise",
+          "max_subdivision_depth": 3,
+          "profile_stages": false,
+          "self_safe_margin": 0.06
+        },
+        "spatial": {
+          "active_link_pruning": true,
+          "dense_parent_fast_path": true,
+          "environment_link_broad_phase": false,
+          "link_broad_phase": {
+            "enabled": false,
+            "environment_margin": 0.2,
+            "full_scan": true,
+            "reuse_scan_cache": false,
+            "scan_geometry": "fine_spheres",
+            "self_margin": 0.1
+          },
+          "parent_link_kinematics": true,
+          "self_link_pair_broad_phase": false
+        },
+        "temporal": {
+          "always_keep_endpoints": true,
+          "buckets": [
+            32,
+            64,
+            128
+          ],
+          "coarse_points": 32,
+          "conditional_active_ratio_threshold": 0.35,
+          "conditional_enabled": false,
+          "enabled": false,
+          "environment_refine_margin": 0.08,
+          "neighbor_dilation": 2,
+          "probe_midpoints": true,
+          "q_delta_threshold": null,
+          "reuse_selection_within_ddim_step": false,
+          "self_refine_margin": 0.06
+        }
+      },
+      "grasped_object": null,
+      "knn_prior_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "margin_for_dense_collision_checking": 0.0,
+      "model_dir_cvae_bspline": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_cvae_models-v04_2024-09-18_08-14-47/generative_model_class___CVAEModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0",
+      "model_dir_ddpm_bspline": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0",
+      "model_dir_ddpm_waypoints": "${HOME}/Projects/MotionPlanningDiffusion/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-11-11_10-27-59/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryWaypoints/0",
+      "model_selection": "bspline",
+      "n_diffusion_steps_without_noise": 0,
+      "n_trajectory_samples": 100,
+      "num_T_pts": 128,
+      "obstacle_cutoff_margin_extra": 0.05,
+      "phase_time_class": "PhaseTimeLinear",
+      "planner_alg": "mpd",
+      "project_gradient_hierarchy": false,
+      "rotation_z_axis_deg": 0.0,
+      "rrtconnect_then_guide": {
+        "clip_grad": true,
+        "clip_grad_rule": "value",
+        "guide_lr": 0.01,
+        "max_grad_norm": 1.0,
+        "max_grad_value": 1.0,
+        "max_perturb_x": 0.15,
+        "n_guide_steps": 12
+      },
+      "runtime": {
+        "joint_names": [
+          "fr3_joint1",
+          "fr3_joint2",
+          "fr3_joint3",
+          "fr3_joint4",
+          "fr3_joint5",
+          "fr3_joint6",
+          "fr3_joint7"
+        ],
+        "planning_frame": "fr3_link0",
+        "robot_model": "franka_fr3",
+        "scene_id": "EnvWarehouseExtraObjectsV00",
+        "schema_version": 1
+      },
+      "start_goal_source": "states_file",
+      "trajectory_duration": 10.0
+    }
+  },
+  "schema": "oracle_single_plan_execution_v1",
+  "suite_hash": "57f5aec38883f6df6b96fb6cd75cc238a62b731b9ccdae48ce14af3190b396d4"
+}

@@ -1,0 +1,77 @@
+{
+  "cpu_affinity": [
+    2,
+    3
+  ],
+  "device": "cpu",
+  "execution_contract_sha256": "91a9b13384cadb0adee403ebce74c6aa0218f55ca67524682b3c6f1c45cdec64",
+  "gpu_name": null,
+  "health": {
+    "checkpoint_sha256": "36f9a2c3cdd482052199bf71ca30bec508a9e6310432f0a3737bd6256f3acf89",
+    "dense_validation": {
+      "enabled": true,
+      "fully_warmed": false
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "world_version": 0
+    },
+    "instance_id": "e6575598-2a98-47e9-bad0-5f9f1cf97088",
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "codec_contract": {
+        "codec_grid_size": 2049,
+        "density_floor": 0.001,
+        "duration_max": 14.0,
+        "duration_min": 2.0,
+        "integration": "trapezoid_linear_cumulative",
+        "spatial_degree": 5,
+        "spatial_points": 21,
+        "timing_degree": 3,
+        "timing_points": 8,
+        "u_min": 0.05,
+        "version": "joint_timing_v1"
+      },
+      "enabled": true,
+      "mode": "jd_kin",
+      "representation": "tau_r",
+      "rest_to_rest_only": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "static_scene_transfer": true,
+    "training_scene_id": "EnvWarehouse",
+    "warmup_elapsed_sec": 0.3288389500003177
+  },
+  "inflation": false,
+  "load_and_warmup_s": 0.9250663539996822,
+  "model": {
+    "architecture_version": "v2",
+    "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+    "checkpoint_sha256": "36f9a2c3cdd482052199bf71ca30bec508a9e6310432f0a3737bd6256f3acf89",
+    "dataset": "main",
+    "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+    "ema_load_verified": true,
+    "id": "jdkin_tau_r-00089000",
+    "kind": "jointdual",
+    "representation": "tau_r",
+    "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+    "role": "main_best",
+    "run": "jdkin_tau_r",
+    "step": 89000,
+    "training_learning_rate": 0.0001,
+    "training_loss_weight_p": 1.0,
+    "training_loss_weight_z": 1.0,
+    "validation_p": 0.05457348613579967,
+    "validation_unweighted_sum": 0.439629197481627,
+    "validation_z": 0.38505571134582733,
+    "variant": "jd_kin",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "57f5aec38883f6df6b96fb6cd75cc238a62b731b9ccdae48ce14af3190b396d4",
+  "torch_threads": 4,
+  "torch_version": "2.0.0+cu118"
+}

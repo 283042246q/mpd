@@ -1,0 +1,611 @@
+{
+  "best_trajectory_diagnostics": {
+    "ee_orientation_error_deg": 2.9157557487487793,
+    "ee_position_error_m": 0.07847651839256287,
+    "path_length": 9.240840911865234,
+    "selection": {
+      "components": {
+        "normalized_duration": {
+          "value": 0.7199872136116028,
+          "weight": 0.1
+        },
+        "normalized_dynamic_risk": {
+          "value": 0.0,
+          "weight": 0.2
+        },
+        "normalized_timing_smoothness": {
+          "value": 1.0,
+          "weight": 0.1
+        },
+        "spatial_weighted_metrics": {
+          "value": 11.287654876708984,
+          "weight": 1.0
+        }
+      },
+      "duration_s": 10.639846801757812,
+      "method": "phase5_spatial_space_time_cost",
+      "score": 11.459653854370117,
+      "selected_candidate_index": 35,
+      "selected_valid_index": 1
+    },
+    "smoothness": 236.76394653320312,
+    "terminal_cartesian_pose_xyzw": [
+      -0.2648550868034363,
+      0.462068647146225,
+      0.39539405703544617,
+      -0.49986281991004944,
+      0.469539076089859,
+      0.5200808644294739,
+      0.5091031193733215
+    ]
+  },
+  "candidates": {
+    "colliding": 60,
+    "dense_batches_evaluated": 1,
+    "dense_bucket_capacities": [
+      64
+    ],
+    "dense_checked": 64,
+    "dense_complete": true,
+    "dense_padding_slots": 0,
+    "dense_unchecked": 0,
+    "generated": 64,
+    "joint_acceleration_violations": 0,
+    "joint_position_violations": 9,
+    "joint_velocity_violations": 9,
+    "requested_top_k": 8,
+    "returned_top_k": 2,
+    "valid": 2
+  },
+  "config": {
+    "path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/benchmark_results/oracle_single_plan_20261025/experiments/cpu_round1/results/todrawer/phase5joint/runtime.yaml",
+    "sha256": "14e5b27eefbf7e9815a9d06383a6b8a8a06ee1d57515f774757dd0aef30db591"
+  },
+  "created_unix_time": 1792932128.9716094,
+  "dynamic_world": {
+    "active_object_ids": [
+      "obstacle-0",
+      "obstacle-1",
+      "obstacle-2"
+    ],
+    "candidate_specific_time": true,
+    "dense_check_pruning_used": false,
+    "fixed_timing": false,
+    "frame_id": "fr3_link0",
+    "motion_model": "prescribed_piecewise_linear",
+    "orientation_model": "constant",
+    "snapshot_stamp_unix_ns": 1,
+    "timing_schema_version": 1,
+    "trajectory_start_unix_ns": 1,
+    "valid_until_unix_ns": 14000000001,
+    "world_version": 15
+  },
+  "goal": {
+    "end_effector_frame": "fr3_hand",
+    "ik": {
+      "candidates_generated": 0,
+      "candidates_valid": 0,
+      "elapsed_sec": 0.0,
+      "max_iters": 300,
+      "selected_index": null,
+      "selected_orientation_error_deg": null,
+      "selected_position_error_m": null,
+      "skip_reason": "ik_candidates=0; q_pos_goal uses q_pos_start as the legacy planner API placeholder.",
+      "skipped": true
+    },
+    "input_type": "cartesian",
+    "q_pos_goal_condition": [
+      -0.0491066500544548,
+      0.8064447641372681,
+      2.427053689956665,
+      -2.2671725749969482,
+      -0.5639158487319946,
+      1.569667935371399,
+      -1.4726593494415283
+    ],
+    "target_pose_xyzw": [
+      -0.23243474960327148,
+      0.5291821360588074,
+      0.31467172503471375,
+      0.5128343105316162,
+      -0.4816276431083679,
+      -0.5034666061401367,
+      -0.5015547275543213
+    ]
+  },
+  "joint_names": [
+    "fr3_joint1",
+    "fr3_joint2",
+    "fr3_joint3",
+    "fr3_joint4",
+    "fr3_joint5",
+    "fr3_joint6",
+    "fr3_joint7"
+  ],
+  "model": {
+    "args_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/args.yaml",
+    "args_sha256": "a8d6847bd58ff29eb30785882b0fa2a838609f88ed90bec35f439500a21547b2",
+    "checkpoint_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "model_dir": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0"
+  },
+  "mpd_source": {
+    "commit": "14abe51e4d3af20c468b40ff62176eb0c3c502c4",
+    "dirty": true
+  },
+  "request": {
+    "joint_state_stamp": null,
+    "planning_frame": "fr3_link0",
+    "robot_model": "franka_fr3",
+    "schema_version": 1,
+    "seed": 21274986,
+    "sha256": "adf22b29d90a37dd99aa0d24c94adc9bd453929d9b1709fc7f73b58741f9bcac"
+  },
+  "request_id": "todrawer-0014",
+  "resident_runtime": {
+    "instance_id": "e2f901e7-b6ad-4871-8dbd-cd25ce227d2a",
+    "started_unix_time": 1792932033.542752,
+    "warmup_elapsed_sec": 0.9803682680067141
+  },
+  "scene": {
+    "mpd_scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "request_scene_hash": null,
+    "scene_id": "EnvOpenDrawerShelf"
+  },
+  "schema_version": 1,
+  "space_time_guidance": {
+    "corridor_a": {
+      "enabled": false
+    },
+    "full_candidate_specific_dense_check": true,
+    "settings": {
+      "acceleration_weight": 0.005,
+      "collision_power": 2.0,
+      "corridor_a_backend": "serial",
+      "corridor_a_branch_fallback": false,
+      "corridor_a_chunk_size": 8,
+      "corridor_a_clearance_m": 0.0,
+      "corridor_a_dense_branch_budget": 64,
+      "corridor_a_dp_init": false,
+      "corridor_a_early_stop": false,
+      "corridor_a_enabled": false,
+      "corridor_a_k_best": 0,
+      "corridor_a_learning_rate": 0.04,
+      "corridor_a_phase_points": 32,
+      "corridor_a_selective_k": false,
+      "corridor_a_steps": 20,
+      "corridor_a_time_margin_s": 0.05,
+      "corridor_a_time_step_s": 0.2,
+      "corridor_a_weight": 0.1,
+      "duration_max": 14.0,
+      "duration_min": 2.0,
+      "duration_weight": 0.2,
+      "dynamic_collision_alpha": 0.5,
+      "dynamic_collision_cvar_fraction": 0.1,
+      "dynamic_collision_weight": 10.0,
+      "dynamic_guidance_enabled": true,
+      "mode": "phase5_joint",
+      "nominal_duration": 10.0,
+      "num_timing_control_points": 8,
+      "spatial_dynamic_max_grad_norm": 2.0,
+      "spatial_dynamic_scale": 1.0,
+      "timing_beta1": 0.9,
+      "timing_beta2": 0.999,
+      "timing_degree": 3,
+      "timing_epsilon": 1e-08,
+      "timing_learning_rate": 0.08,
+      "timing_max_grad_norm": 1.0,
+      "timing_smoothness_weight": 0.02,
+      "u_min": 0.05,
+      "velocity_weight": 0.02
+    },
+    "status": "full_candidate_specific_dense_validated",
+    "steps": [
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0052498579025269,
+          "dynamic_collision": 0.03552332893013954,
+          "dynamic_collision_cvar": 0.06314626336097717,
+          "dynamic_collision_mean": 0.007900386117398739,
+          "timing_smoothness": 0.010026000440120697,
+          "velocity": 0.0002746263926383108
+        },
+        "duration_max_s": 10.244993209838867,
+        "duration_min_s": 9.755014419555664,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.53125,
+        "spatial_gradient_norm_mean": 2.485403060913086,
+        "static_dynamic_gradient_conflict_ratio": 0.4354838728904724,
+        "static_dynamic_gradient_cosine_max": 0.790108859539032,
+        "static_dynamic_gradient_cosine_mean": 0.03958020731806755,
+        "static_dynamic_gradient_cosine_min": -0.5729733109474182,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.96875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.12866456806659698
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.004075050354004,
+          "dynamic_collision": 0.03541075438261032,
+          "dynamic_collision_cvar": 0.06267771869897842,
+          "dynamic_collision_mean": 0.008143790997564793,
+          "timing_smoothness": 0.00998619943857193,
+          "velocity": 0.00014001355157233775
+        },
+        "duration_max_s": 10.300990104675293,
+        "duration_min_s": 9.699018478393555,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.5625,
+        "spatial_gradient_norm_mean": 3.067910671234131,
+        "static_dynamic_gradient_conflict_ratio": 0.5423728823661804,
+        "static_dynamic_gradient_cosine_max": 0.6017753481864929,
+        "static_dynamic_gradient_cosine_mean": -0.015420503914356232,
+        "static_dynamic_gradient_cosine_min": -0.8765502572059631,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.921875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.15009397268295288
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.003239393234253,
+          "dynamic_collision": 0.038627739995718,
+          "dynamic_collision_cvar": 0.06840088218450546,
+          "dynamic_collision_mean": 0.008854595944285393,
+          "timing_smoothness": 0.010976077988743782,
+          "velocity": 3.1377967388834804e-05
+        },
+        "duration_max_s": 10.357051849365234,
+        "duration_min_s": 9.642959594726562,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.59375,
+        "spatial_gradient_norm_mean": 3.1368963718414307,
+        "static_dynamic_gradient_conflict_ratio": 0.5438596606254578,
+        "static_dynamic_gradient_cosine_max": 0.6278338432312012,
+        "static_dynamic_gradient_cosine_mean": -0.02943166345357895,
+        "static_dynamic_gradient_cosine_min": -0.8091660141944885,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.890625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.17363420128822327
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0028774738311768,
+          "dynamic_collision": 0.03749629110097885,
+          "dynamic_collision_cvar": 0.06653038412332535,
+          "dynamic_collision_mean": 0.008462192490696907,
+          "timing_smoothness": 0.012668373063206673,
+          "velocity": 5.560266799875535e-06
+        },
+        "duration_max_s": 10.413211822509766,
+        "duration_min_s": 9.586771011352539,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.59375,
+        "spatial_gradient_norm_mean": 3.360349178314209,
+        "static_dynamic_gradient_conflict_ratio": 0.5714285969734192,
+        "static_dynamic_gradient_cosine_max": 0.7010046243667603,
+        "static_dynamic_gradient_cosine_mean": -0.02435305342078209,
+        "static_dynamic_gradient_cosine_min": -0.6545225381851196,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.1766224056482315
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0027464628219604,
+          "dynamic_collision": 0.03354859724640846,
+          "dynamic_collision_cvar": 0.05986311286687851,
+          "dynamic_collision_mean": 0.007234075106680393,
+          "timing_smoothness": 0.015034462325274944,
+          "velocity": 2.091820988425752e-06
+        },
+        "duration_max_s": 10.469454765319824,
+        "duration_min_s": 9.530509948730469,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.5625,
+        "spatial_gradient_norm_mean": 3.3218846321105957,
+        "static_dynamic_gradient_conflict_ratio": 0.4909090995788574,
+        "static_dynamic_gradient_cosine_max": 0.7193445563316345,
+        "static_dynamic_gradient_cosine_mean": 0.05499866604804993,
+        "static_dynamic_gradient_cosine_min": -0.6249802708625793,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.859375,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.15368741750717163
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.002859115600586,
+          "dynamic_collision": 0.031164197251200676,
+          "dynamic_collision_cvar": 0.055564627051353455,
+          "dynamic_collision_mean": 0.006763768848031759,
+          "timing_smoothness": 0.017693713307380676,
+          "velocity": 4.88144848986849e-07
+        },
+        "duration_max_s": 10.522384643554688,
+        "duration_min_s": 9.475642204284668,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.5625,
+        "spatial_gradient_norm_mean": 3.185709238052368,
+        "static_dynamic_gradient_conflict_ratio": 0.5090909004211426,
+        "static_dynamic_gradient_cosine_max": 0.7394353747367859,
+        "static_dynamic_gradient_cosine_mean": 0.041691165417432785,
+        "static_dynamic_gradient_cosine_min": -0.5308980941772461,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.859375,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.12136895954608917
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.003255009651184,
+          "dynamic_collision": 0.029473939910531044,
+          "dynamic_collision_cvar": 0.05252239108085632,
+          "dynamic_collision_mean": 0.00642548780888319,
+          "timing_smoothness": 0.020476922392845154,
+          "velocity": 1.299142979860335e-07
+        },
+        "duration_max_s": 10.576436996459961,
+        "duration_min_s": 9.420093536376953,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.46875,
+        "spatial_gradient_norm_mean": 3.140056848526001,
+        "static_dynamic_gradient_conflict_ratio": 0.5789473652839661,
+        "static_dynamic_gradient_cosine_max": 0.8166086077690125,
+        "static_dynamic_gradient_cosine_mean": 0.009475122205913067,
+        "static_dynamic_gradient_cosine_min": -0.6437841057777405,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.890625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.11778226494789124
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0038447380065918,
+          "dynamic_collision": 0.028246523812413216,
+          "dynamic_collision_cvar": 0.050476063042879105,
+          "dynamic_collision_mean": 0.006016980856657028,
+          "timing_smoothness": 0.02334870956838131,
+          "velocity": 7.296301873793709e-08
+        },
+        "duration_max_s": 10.630237579345703,
+        "duration_min_s": 9.364725112915039,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.5,
+        "spatial_gradient_norm_mean": 3.063300371170044,
+        "static_dynamic_gradient_conflict_ratio": 0.4821428656578064,
+        "static_dynamic_gradient_cosine_max": 0.5598311424255371,
+        "static_dynamic_gradient_cosine_mean": 0.02675376646220684,
+        "static_dynamic_gradient_cosine_min": -0.6272982954978943,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.13185684382915497
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0045920610427856,
+          "dynamic_collision": 0.02662312239408493,
+          "dynamic_collision_cvar": 0.047518521547317505,
+          "dynamic_collision_mean": 0.005727721378207207,
+          "timing_smoothness": 0.026227904483675957,
+          "velocity": 8.478833990466228e-08
+        },
+        "duration_max_s": 10.684782028198242,
+        "duration_min_s": 9.309572219848633,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.484375,
+        "spatial_gradient_norm_mean": 2.994983434677124,
+        "static_dynamic_gradient_conflict_ratio": 0.5263158082962036,
+        "static_dynamic_gradient_cosine_max": 0.5480048656463623,
+        "static_dynamic_gradient_cosine_mean": 0.02312704361975193,
+        "static_dynamic_gradient_cosine_min": -0.5877755284309387,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.890625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.12422364950180054
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0053746700286865,
+          "dynamic_collision": 0.024577433243393898,
+          "dynamic_collision_cvar": 0.0439537912607193,
+          "dynamic_collision_mean": 0.0052010733634233475,
+          "timing_smoothness": 0.029251137748360634,
+          "velocity": 1.6349137865745433e-07
+        },
+        "duration_max_s": 10.739439964294434,
+        "duration_min_s": 9.254673957824707,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.453125,
+        "spatial_gradient_norm_mean": 2.8859434127807617,
+        "static_dynamic_gradient_conflict_ratio": 0.5,
+        "static_dynamic_gradient_cosine_max": 0.6063945889472961,
+        "static_dynamic_gradient_cosine_mean": 0.027345195412635803,
+        "static_dynamic_gradient_cosine_min": -0.5507700443267822,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.90625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.1305583268404007
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0061702728271484,
+          "dynamic_collision": 0.02305515855550766,
+          "dynamic_collision_cvar": 0.041141677647829056,
+          "dynamic_collision_mean": 0.004968642257153988,
+          "timing_smoothness": 0.03227842226624489,
+          "velocity": 2.44394840365203e-07
+        },
+        "duration_max_s": 10.795185089111328,
+        "duration_min_s": 9.202037811279297,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.421875,
+        "spatial_gradient_norm_mean": 2.949967384338379,
+        "static_dynamic_gradient_conflict_ratio": 0.5762711763381958,
+        "static_dynamic_gradient_cosine_max": 0.8275810480117798,
+        "static_dynamic_gradient_cosine_mean": -0.019466636702418327,
+        "static_dynamic_gradient_cosine_min": -0.7380356192588806,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.921875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.13320904970169067
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0071343183517456,
+          "dynamic_collision": 0.020392335951328278,
+          "dynamic_collision_cvar": 0.03647146373987198,
+          "dynamic_collision_mean": 0.004313207231462002,
+          "timing_smoothness": 0.035055965185165405,
+          "velocity": 1.4082750112720532e-06
+        },
+        "duration_max_s": 10.851563453674316,
+        "duration_min_s": 9.164682388305664,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.390625,
+        "spatial_gradient_norm_mean": 2.608245372772217,
+        "static_dynamic_gradient_conflict_ratio": 0.6440678238868713,
+        "static_dynamic_gradient_cosine_max": 0.8562015295028687,
+        "static_dynamic_gradient_cosine_mean": 0.015615370124578476,
+        "static_dynamic_gradient_cosine_min": -0.628935694694519,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.921875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.11862951517105103
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0081251859664917,
+          "dynamic_collision": 0.017858583480119705,
+          "dynamic_collision_cvar": 0.0319853276014328,
+          "dynamic_collision_mean": 0.0037318370305001736,
+          "timing_smoothness": 0.03779076412320137,
+          "velocity": 3.992860456492053e-06
+        },
+        "duration_max_s": 10.907875061035156,
+        "duration_min_s": 9.109587669372559,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.375,
+        "spatial_gradient_norm_mean": 2.2715256214141846,
+        "static_dynamic_gradient_conflict_ratio": 0.6101694703102112,
+        "static_dynamic_gradient_cosine_max": 0.8600980639457703,
+        "static_dynamic_gradient_cosine_mean": 0.023560864850878716,
+        "static_dynamic_gradient_cosine_min": -0.6600473523139954,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.921875,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.11029806733131409
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.009103775024414,
+          "dynamic_collision": 0.01618913747370243,
+          "dynamic_collision_cvar": 0.029020952060818672,
+          "dynamic_collision_mean": 0.0033573212567716837,
+          "timing_smoothness": 0.04059258848428726,
+          "velocity": 7.540249043813674e-06
+        },
+        "duration_max_s": 10.963768005371094,
+        "duration_min_s": 9.053247451782227,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.328125,
+        "spatial_gradient_norm_mean": 2.0027637481689453,
+        "static_dynamic_gradient_conflict_ratio": 0.568965494632721,
+        "static_dynamic_gradient_cosine_max": 0.5201855301856995,
+        "static_dynamic_gradient_cosine_mean": 0.022105559706687927,
+        "static_dynamic_gradient_cosine_min": -0.4686565101146698,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.90625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.09710340201854706
+      },
+      {
+        "cost": {
+          "acceleration": 0.0,
+          "duration": 1.0100300312042236,
+          "dynamic_collision": 0.014813810586929321,
+          "dynamic_collision_cvar": 0.026569809764623642,
+          "dynamic_collision_mean": 0.0030578095465898514,
+          "timing_smoothness": 0.043520886451005936,
+          "velocity": 8.56312908581458e-06
+        },
+        "duration_max_s": 11.01966381072998,
+        "duration_min_s": 8.995643615722656,
+        "mode": "phase5_joint",
+        "spatial_clip_ratio": 0.28125,
+        "spatial_gradient_norm_mean": 1.85671067237854,
+        "static_dynamic_gradient_conflict_ratio": 0.5862069129943848,
+        "static_dynamic_gradient_cosine_max": 0.6538249254226685,
+        "static_dynamic_gradient_cosine_mean": -0.0003686290292534977,
+        "static_dynamic_gradient_cosine_min": -0.6776869893074036,
+        "static_dynamic_gradient_cosine_valid_ratio": 0.90625,
+        "timing_clip_ratio": 0.0,
+        "timing_gradient_norm_mean": 0.08388993889093399
+      }
+    ]
+  },
+  "status": "success",
+  "timing": {
+    "dense_validation_sec": 0.13021852500969544,
+    "generator_sec": 0.677564903977327,
+    "guide_sec": 5.253985483024735,
+    "inference_total_sec": 5.941423911979655,
+    "request_total_sec": 6.259827333997237,
+    "trajectory_ranking_sec": 0.0
+  },
+  "top_k_timing": {
+    "candidate_specific_time": true,
+    "durations_s": [
+      10.639846801757812,
+      9.722073554992676
+    ]
+  },
+  "top_k_trajectory_diagnostics": {
+    "scores": [
+      11.459653854370117,
+      45.968135833740234
+    ],
+    "selection_method": "phase5_spatial_space_time_cost",
+    "source_candidate_indices": [
+      35,
+      18
+    ],
+    "start_acceleration_max_abs_error_rad_s2": 9.765624781721272e-06,
+    "start_position_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 3.814697322468419e-07
+  },
+  "trajectory": {
+    "acceleration_limit_utilization": 0.3850988447666168,
+    "acceleration_unit": "rad/s^2",
+    "cartesian_pose_format": "[x, y, z, qx, qy, qz, qw]",
+    "cartesian_position_unit": "m",
+    "cartesian_reference_frame": "fr3_link0",
+    "duration_max_s": 14.0,
+    "duration_min_s": 2.0,
+    "duration_s": 10.639846801757812,
+    "horizon": 128,
+    "minimum_environment_clearance_m": 0.04524384066462517,
+    "minimum_self_clearance_m": 0.1430891901254654,
+    "position_unit": "rad",
+    "start_acceleration_max_abs_error_rad_s2": 9.765624781721272e-06,
+    "start_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 3.814697322468419e-07,
+    "timing_mode": "phase5_joint",
+    "timing_schema_version": 1,
+    "velocity_limit_utilization": 0.5985462069511414,
+    "velocity_unit": "rad/s"
+  },
+  "trajectory_artifact": {
+    "best_trajectory_deduplicated": true,
+    "best_trajectory_topk_index": 0,
+    "candidate_specific_time": true,
+    "collision_sphere_dtype": "float32",
+    "schema_version": 3,
+    "timing_schema_version": 1
+  },
+  "trajectory_file": "trajectory.npz"
+}

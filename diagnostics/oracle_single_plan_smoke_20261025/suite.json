@@ -1,0 +1,1136 @@
+{
+  "case_count": 2,
+  "cases": [
+    {
+      "anchors": [
+        [
+          0.14443369209766388,
+          -0.056922122836112976,
+          0.5674879550933838
+        ],
+        [
+          0.010518149472773075,
+          0.2748441994190216,
+          0.5179457664489746
+        ],
+        [
+          0.1924201250076294,
+          -0.18176525831222534,
+          0.4975564181804657
+        ]
+      ],
+      "arrival_mode": "sequential",
+      "directory": "warehouse/warehouse-0000",
+      "event_times": [
+        5.04352791569652,
+        3.112326479267156,
+        3.788818906262689
+      ],
+      "generation_rejections": {},
+      "id": "warehouse-0000",
+      "inflation": "none",
+      "interpolation": "piecewise_linear",
+      "motion_modes": [
+        "linear",
+        "linear",
+        "stop_go"
+      ],
+      "motion_parameters": [
+        {
+          "direction": [
+            0.46971040715121776,
+            0.8402541723099741,
+            0.27082292984442363
+          ],
+          "lateral": [
+            0.8728741956318282,
+            -0.4879453233714706,
+            0.0
+          ],
+          "reference_sphere": 22,
+          "speed": 0.3782879360571582,
+          "vertical": [
+            0.13214678207934638,
+            0.23639434704660633,
+            -0.9626291812897023
+          ]
+        },
+        {
+          "direction": [
+            -0.1868369606747432,
+            0.9797446611047597,
+            0.07205795696898364
+          ],
+          "lateral": [
+            0.9822981977444258,
+            0.18732391920962194,
+            -0.0
+          ],
+          "reference_sphere": 10,
+          "speed": 0.40880511802755826,
+          "vertical": [
+            -0.013498178909668304,
+            0.07078240126377802,
+            -0.9974004465797357
+          ]
+        },
+        {
+          "direction": [
+            0.4089553898400899,
+            -0.9094109776696564,
+            -0.07567802068407906
+          ],
+          "lateral": [
+            -0.9120263895813849,
+            -0.41013152123086566,
+            0.0
+          ],
+          "reference_sphere": 47,
+          "speed": 0.2439929314967833,
+          "vertical": [
+            -0.031037941746902258,
+            0.069020351975166,
+            -0.997132306760412
+          ]
+        }
+      ],
+      "object_count": 3,
+      "obstacle_obstacle_collision": "allowed",
+      "obstacle_static_collision": "allowed",
+      "phases": [
+        0.504352791569652,
+        0.3112326479267156,
+        0.37888189062626887
+      ],
+      "reference_nominal_duration_s": 10.0,
+      "reference_sha256": "b99bd9bcefa29d3ae730cbbc7527378daafe46adc37271f19d4ffd20de3d67d8",
+      "reference_used_for": "anchors_and_event_times_only",
+      "request_sha256": "353c37b799ea377d6e29fc54c91bb224a3a630b7578feb59919e8e35a289652b",
+      "scene": "warehouse",
+      "seed": 20261025,
+      "start_goal_metadata": {
+        "ee_pose_goal": [
+          [
+            -0.04877998809570169,
+            -0.9740077878919274,
+            -0.22119977822605852,
+            0.7116105959680764
+          ],
+          [
+            -0.995559885081723,
+            0.06526407518789926,
+            -0.06783152442585041,
+            -0.0927890520463202
+          ],
+          [
+            0.08050483201305192,
+            0.21690880483683114,
+            -0.9728666621931332,
+            0.1542016546751386
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "ee_pose_start": [
+          [
+            -0.9275549623321007,
+            -0.32053736809103184,
+            0.19208744756066004,
+            0.3180877397975271
+          ],
+          [
+            -0.30320715684784316,
+            0.9460208754683488,
+            0.11449857297951882,
+            -0.0443767192022705
+          ],
+          [
+            -0.21841980654085008,
+            0.04796143070606997,
+            -0.9746755815527977,
+            0.1846104064453258
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "goal_region_id": "region_00",
+        "rotate_with_environment": true,
+        "rotation_z_axis_deg": 0.0,
+        "sampling_attempt": 4,
+        "source": "regions",
+        "start_region_id": "region_00"
+      },
+      "static_reference_planner": "OMPL RRTConnect",
+      "time_origin": "execution_start",
+      "world_attempts": 1,
+      "world_sha256": "6f0dba6a3015aa6d1f22b55ab0f77ac5ba3ceae024647c2d69f6d2f3949408cb"
+    },
+    {
+      "anchors": [
+        [
+          -0.12946276366710663,
+          0.009921761229634285,
+          0.6386186480522156
+        ],
+        [
+          -0.5844183564186096,
+          0.3016347587108612,
+          0.575429379940033
+        ],
+        [
+          -0.2263718843460083,
+          -0.04263381287455559,
+          0.6830005049705505
+        ]
+      ],
+      "arrival_mode": "sequential",
+      "directory": "todrawer/todrawer-0000",
+      "event_times": [
+        7.4343649514454055,
+        6.2783863954523955,
+        5.445014534644982
+      ],
+      "generation_rejections": {},
+      "id": "todrawer-0000",
+      "inflation": "none",
+      "interpolation": "piecewise_linear",
+      "motion_modes": [
+        "speed_variation",
+        "zigzag",
+        "orbit"
+      ],
+      "motion_parameters": [
+        {
+          "direction": [
+            -0.22433998561081717,
+            -0.8671354125573981,
+            0.4446883708228149
+          ],
+          "lateral": [
+            -0.9681250329295965,
+            0.2504674042965824,
+            0.0
+          ],
+          "reference_sphere": 13,
+          "speed": 0.32494666573395137,
+          "vertical": [
+            -0.11137994196086654,
+            -0.43051394364624634,
+            -0.8956853537124244
+          ]
+        },
+        {
+          "direction": [
+            -0.34679373641525674,
+            -0.8034062770544315,
+            -0.48401700215248994
+          ],
+          "lateral": [
+            -0.9181171218113104,
+            0.39630916042518555,
+            0.0
+          ],
+          "reference_sphere": 41,
+          "speed": 0.3576794538129786,
+          "vertical": [
+            0.1918203717545685,
+            0.4443842969239829,
+            -0.8750585932537984
+          ]
+        },
+        {
+          "direction": [
+            0.7511951717462821,
+            -0.6592207228782284,
+            0.033672725951128565
+          ],
+          "lateral": [
+            -0.6595947705178691,
+            -0.7516214064976328,
+            0.0
+          ],
+          "reference_sphere": 14,
+          "speed": 0.3963210152455723,
+          "vertical": [
+            0.02530914163999659,
+            -0.02221035394644574,
+            -0.9994329129696602
+          ]
+        }
+      ],
+      "object_count": 3,
+      "obstacle_obstacle_collision": "allowed",
+      "obstacle_static_collision": "allowed",
+      "phases": [
+        0.7434364951445406,
+        0.6278386395452396,
+        0.5445014534644982
+      ],
+      "reference_nominal_duration_s": 10.0,
+      "reference_sha256": "6eda3b42035ebb02558030e7fdabfe02cf75a34fabc74e6e803ebf8ebf9c33d9",
+      "reference_used_for": "anchors_and_event_times_only",
+      "request_sha256": "8a44430c191abe2dac079e1b3b474f2cf1e5deab66d2e037800b3252169c80cd",
+      "scene": "todrawer",
+      "seed": 21261028,
+      "start_goal_metadata": {
+        "ee_pose_goal": [
+          [
+            -0.01892053993163914,
+            -0.9996708582254987,
+            -0.017325945382299257,
+            -0.22401450555072525
+          ],
+          [
+            -0.030113131703766616,
+            -0.016751412700761442,
+            0.9994061183880758,
+            0.5355125912284235
+          ],
+          [
+            -0.9993674061463517,
+            0.019431041846075525,
+            -0.029786274441245736,
+            0.28212604577851913
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "ee_pose_start": [
+          [
+            0.052822891703537,
+            -0.9906567312104886,
+            -0.12573377835500946,
+            -0.11718256515537895
+          ],
+          [
+            -0.9889453962647448,
+            -0.03442622434158209,
+            -0.14422842398206603,
+            0.33145815675979207
+          ],
+          [
+            0.13855231978874963,
+            0.13196240367973489,
+            -0.9815239063294502,
+            0.6212139343817333
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "goal_region_id": "bottom_drawer_reachable_corner",
+        "rotate_with_environment": false,
+        "rotation_z_axis_deg": 0.0,
+        "sampling_attempt": 1,
+        "source": "regions",
+        "start_region_id": "free_in_front"
+      },
+      "static_reference_planner": "OMPL RRTConnect",
+      "time_origin": "execution_start",
+      "world_attempts": 1,
+      "world_sha256": "c951ef94c9d680eb241d1ab11a423f5344916ce52e278434e3de09e8fb0295e1"
+    }
+  ],
+  "config": {
+    "arrival_modes": [
+      "simultaneous",
+      "sequential",
+      "grouped"
+    ],
+    "arrival_weights": [
+      0.3,
+      0.4,
+      0.3
+    ],
+    "cases_per_scene": 1,
+    "forecast_dt_s": 0.02,
+    "horizon_s": 14.0,
+    "inference": {
+      "boundary_tolerance": 5e-05,
+      "candidates": 64,
+      "cost_points": 128,
+      "duration_max_s": 14.0,
+      "duration_min_s": 2.0,
+      "ee_orientation_tolerance_deg": 1.5,
+      "ee_position_tolerance_m": 0.015,
+      "guide_fraction": 0.3,
+      "output_points": 128,
+      "refinement_steps": 5,
+      "steps": 32,
+      "terminal_hold_s": 0.0,
+      "top_k": 8,
+      "validation_dt_s": 0.01
+    },
+    "margin_m": 0.005,
+    "max_task_attempts": 20,
+    "max_world_attempts": 1000,
+    "models": {
+      "jointdual_manifest": "diagnostics/jointdual_inference_round1_20261025/checkpoints.json",
+      "legacy": [
+        "phase4",
+        "phase5joint",
+        "phase4_aligned",
+        "f1c",
+        "f1taur",
+        "f2c",
+        "f2taur",
+        "f3c",
+        "f3taur"
+      ],
+      "timing_c_checkpoint": "data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt",
+      "timing_tau_r_checkpoint": "data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt"
+    },
+    "motion_modes": [
+      "linear",
+      "accelerating",
+      "speed_variation",
+      "curved",
+      "zigzag",
+      "shuttle",
+      "orbit",
+      "vertical",
+      "stop_go",
+      "helix"
+    ],
+    "nominal_duration_s": 10.0,
+    "obstacle_count_weights": [
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.2,
+      0.1
+    ],
+    "phase_range": [
+      0.25,
+      0.8
+    ],
+    "radius_range_m": [
+      0.04,
+      0.075
+    ],
+    "reference_points": 256,
+    "rrt_solve_seconds": 10.0,
+    "scenes": {
+      "todrawer": {
+        "runtime_config": "scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-runtime-to-drawer.yaml",
+        "scene_id": "EnvOpenDrawerShelf",
+        "single_plan_config": "scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-regions-to-drawer.yaml"
+      },
+      "warehouse": {
+        "runtime_config": "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml",
+        "scene_id": "EnvWarehouseExtraObjectsV00",
+        "single_plan_config": "scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml"
+      }
+    },
+    "schema": "oracle_single_plan_config_v1",
+    "seed": 20261025,
+    "sequential_phase_gap": 0.06,
+    "shape_weights": [
+      1,
+      1,
+      1
+    ],
+    "speed_range_m_s": [
+      0.22,
+      0.42
+    ]
+  },
+  "config_hash": "5f6c03db22a23f6df8f6577e7c2c21e0feba22869be7da77f910e516101bdd35",
+  "derived_from_suite_hash": "a514df08544d9f5e8f2bc69324b7fbd4a10b261ed2206b695a03277ff7dbff4f",
+  "jointdual_manifest": {
+    "path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/jointdual_inference_round1_20261025/checkpoints.json",
+    "sha256": "f275bf94363f3f129f8f652298f31076c70e3743f86b7e45d3c570e4c32578ea"
+  },
+  "models": [
+    {
+      "id": "phase4",
+      "kind": "legacy",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "weights": "ema"
+    },
+    {
+      "id": "phase5joint",
+      "kind": "legacy",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "weights": "ema"
+    },
+    {
+      "id": "phase4_aligned",
+      "kind": "legacy",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "weights": "ema"
+    },
+    {
+      "id": "f1c",
+      "kind": "factorized",
+      "method": "f1",
+      "representation": "c",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt",
+      "timing_checkpoint_sha256": "3a9f05036eea284ec532882f19efb373c71f84d20cb49a58e0471575ba535980",
+      "weights": "ema"
+    },
+    {
+      "id": "f1taur",
+      "kind": "factorized",
+      "method": "f1",
+      "representation": "tau_r",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt",
+      "timing_checkpoint_sha256": "49a3b2d23c1e4f32bb8d239c21607b58159d69c8112e4225d0476ac43c82676b",
+      "weights": "ema"
+    },
+    {
+      "id": "f2c",
+      "kind": "factorized",
+      "method": "f2",
+      "representation": "c",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt",
+      "timing_checkpoint_sha256": "3a9f05036eea284ec532882f19efb373c71f84d20cb49a58e0471575ba535980",
+      "weights": "ema"
+    },
+    {
+      "id": "f2taur",
+      "kind": "factorized",
+      "method": "f2",
+      "representation": "tau_r",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt",
+      "timing_checkpoint_sha256": "49a3b2d23c1e4f32bb8d239c21607b58159d69c8112e4225d0476ac43c82676b",
+      "weights": "ema"
+    },
+    {
+      "id": "f3c",
+      "kind": "factorized",
+      "method": "f3",
+      "representation": "c",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt",
+      "timing_checkpoint_sha256": "3a9f05036eea284ec532882f19efb373c71f84d20cb49a58e0471575ba535980",
+      "weights": "ema"
+    },
+    {
+      "id": "f3taur",
+      "kind": "factorized",
+      "method": "f3",
+      "representation": "tau_r",
+      "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+      "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+      "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt",
+      "timing_checkpoint_sha256": "49a3b2d23c1e4f32bb8d239c21607b58159d69c8112e4225d0476ac43c82676b",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_c/step-00091000.pt",
+      "checkpoint_sha256": "ec44fd9c7e87136d4455d5884ca32f46249ae02114cec99d8a53fba5c6cc8760",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdkin_c-00091000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_c/step-00091000.pt",
+      "role": "main_best",
+      "run": "jdkin_c",
+      "step": 91000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.0543175916804951,
+      "validation_unweighted_sum": 0.39982653200488094,
+      "validation_z": 0.34550894032438584,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_c_multi/step-00199000.pt",
+      "checkpoint_sha256": "f9c84248846e92a38cb884a9b77f3ccf1a8f5c6cd7363df9550e3457b7af6321",
+      "dataset": "multiworld",
+      "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+      "ema_load_verified": true,
+      "id": "jdkin_c_multi-00199000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_c_multi/step-00199000.pt",
+      "role": "multiworld_best",
+      "run": "jdkin_c_multi",
+      "step": 199000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.045146933447668604,
+      "validation_unweighted_sum": 0.3490463960851921,
+      "validation_z": 0.3038994626375235,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_c/step-00123000.pt",
+      "checkpoint_sha256": "353c7f4f48d6fe8d0527a59882cd0aafb310cfff5f816230f584d54cc966ee15",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdkin_c-00123000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_c/step-00123000.pt",
+      "role": "main_tradeoff",
+      "run": "jdkin_c",
+      "step": 123000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.0537628051975268,
+      "validation_unweighted_sum": 0.4008472771645272,
+      "validation_z": 0.34708447196700043,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+      "checkpoint_sha256": "36f9a2c3cdd482052199bf71ca30bec508a9e6310432f0a3737bd6256f3acf89",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdkin_tau_r-00089000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+      "role": "main_best",
+      "run": "jdkin_tau_r",
+      "step": 89000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.05457348613579967,
+      "validation_unweighted_sum": 0.439629197481627,
+      "validation_z": 0.38505571134582733,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r_multi/step-00196000.pt",
+      "checkpoint_sha256": "7d066d3632391b21041698c6f049228beff27c98d3efd745205d25c5d5f8e128",
+      "dataset": "multiworld",
+      "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+      "ema_load_verified": true,
+      "id": "jdkin_tau_r_multi-00196000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r_multi/step-00196000.pt",
+      "role": "multiworld_best",
+      "run": "jdkin_tau_r_multi",
+      "step": 196000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.04556160113005228,
+      "validation_unweighted_sum": 0.396438758911672,
+      "validation_z": 0.3508771577816197,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00114000.pt",
+      "checkpoint_sha256": "87aaa5a37e1dbae8259a1bea6f8776344d1443a42bc3f5c6d9fb055906e4c599",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdkin_tau_r-00114000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00114000.pt",
+      "role": "main_tradeoff",
+      "run": "jdkin_tau_r",
+      "step": 114000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.05409493998536655,
+      "validation_unweighted_sum": 0.4413716977895653,
+      "validation_z": 0.3872767578041988,
+      "variant": "jd_kin",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_c/step-00065000.pt",
+      "checkpoint_sha256": "b45da0af8b42ae8857b57e00d570ce592f9b924178d896fe4a0ce30272f04900",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdworld_c-00065000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_c/step-00065000.pt",
+      "role": "main_best",
+      "run": "jdworld_c",
+      "step": 65000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.05409298440920163,
+      "validation_unweighted_sum": 0.3831525097423291,
+      "validation_z": 0.3290595253331275,
+      "variant": "jd_world",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_c_multi/step-00153000.pt",
+      "checkpoint_sha256": "e1c34a000e6b961a2a50bdf82e975309c563774e75411085324d73e5663c82e4",
+      "dataset": "multiworld",
+      "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+      "ema_load_verified": true,
+      "id": "jdworld_c_multi-00153000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_c_multi/step-00153000.pt",
+      "role": "multiworld_best",
+      "run": "jdworld_c_multi",
+      "step": 153000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.04467319616511571,
+      "validation_unweighted_sum": 0.3183359413727017,
+      "validation_z": 0.273662745207586,
+      "variant": "jd_world",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_c_multi_from135k_z010/step-00215000.pt",
+      "checkpoint_sha256": "12b97b212b8fd0d4ea627b7f5b9eeab9427eaca7e3a011ca125655ed13521941",
+      "dataset": "multiworld",
+      "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+      "ema_load_verified": true,
+      "id": "jdworld_c_multi_from135k_z010-00215000",
+      "kind": "jointdual",
+      "representation": "c",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_c_multi_from135k_z010/step-00215000.pt",
+      "role": "weighted_z010_best",
+      "run": "jdworld_c_multi_from135k_z010",
+      "step": 215000,
+      "training_learning_rate": 3e-05,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 0.1,
+      "validation_p": 0.043109429549217815,
+      "validation_unweighted_sum": 0.3161217909230385,
+      "validation_z": 0.2730123613738207,
+      "variant": "jd_world",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00061000.pt",
+      "checkpoint_sha256": "3f63b797f35bbf78a05b16c89841ff8768397a65507d6f6d12ceaa92297d213f",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdworld_tau_r_1-00061000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00061000.pt",
+      "role": "main_best",
+      "run": "jdworld_tau_r_1",
+      "step": 61000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.05438784455859375,
+      "validation_unweighted_sum": 0.4250070357121528,
+      "validation_z": 0.37061919115355907,
+      "variant": "jd_world",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_tau_r_multi/step-00132000.pt",
+      "checkpoint_sha256": "8a4d8174c4e8d66049eb56c892a3f7a7086cd2f26caf77f5f86a942e75bc7441",
+      "dataset": "multiworld",
+      "dataset_snapshot_hash": "350f2086175591e319d93987bde6fd31057d5079f9fbc514abdc8386c9052f34",
+      "ema_load_verified": true,
+      "id": "jdworld_tau_r_multi-00132000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_tau_r_multi/step-00132000.pt",
+      "role": "multiworld_best",
+      "run": "jdworld_tau_r_multi",
+      "step": 132000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.04519195739262377,
+      "validation_unweighted_sum": 0.3679861752907867,
+      "validation_z": 0.3227942178981629,
+      "variant": "jd_world",
+      "weights": "ema"
+    },
+    {
+      "architecture_version": "v2",
+      "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00082000.pt",
+      "checkpoint_sha256": "cfcb62c556d215549f416f96390301d24ed41042dbbba8bd01a903fdb7adb1c1",
+      "dataset": "main",
+      "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+      "ema_load_verified": true,
+      "id": "jdworld_tau_r_1-00082000",
+      "kind": "jointdual",
+      "representation": "tau_r",
+      "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdworld_tau_r_1/step-00082000.pt",
+      "role": "main_tradeoff",
+      "run": "jdworld_tau_r_1",
+      "step": 82000,
+      "training_learning_rate": 0.0001,
+      "training_loss_weight_p": 1.0,
+      "training_loss_weight_z": 1.0,
+      "validation_p": 0.0537404346404031,
+      "validation_unweighted_sum": 0.4272197669025197,
+      "validation_z": 0.3734793322621166,
+      "variant": "jd_world",
+      "weights": "ema"
+    }
+  ],
+  "protocol": {
+    "budgets": "matched_candidates_and_diffusion_steps; actual branch and guidance costs reported",
+    "checkpoint_selection": "frozen_before_inference",
+    "clock": "execution_start_zero",
+    "compute_time_advances_world": false,
+    "goal": "common_cartesian_pose",
+    "handoff": false,
+    "inflation": false,
+    "replanning": false,
+    "world": "prescribed_piecewise_linear"
+  },
+  "purpose": "full-budget two-scene smoke; not the main benchmark",
+  "scenes": {
+    "todrawer": {
+      "base_aabb_high": [
+        0.07356699150800705,
+        0.09667043727636337,
+        0.14198912436516664
+      ],
+      "base_aabb_low": [
+        -0.15607869219779968,
+        -0.09661374580860138,
+        -0.002018785323555927
+      ],
+      "min_distance_q_pos_start_goal": 0.5,
+      "region_config": {
+        "env_id": "EnvOpenDrawerShelf",
+        "goal_regions": {
+          "bottom_drawer_reachable_corner": {
+            "rotation": {
+              "base": [
+                [
+                  0,
+                  -1,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  1
+                ],
+                [
+                  -1,
+                  0,
+                  0
+                ]
+              ],
+              "x": [
+                [
+                  -2.0,
+                  2.0
+                ]
+              ],
+              "y": [
+                [
+                  -2.0,
+                  2.0
+                ]
+              ],
+              "z": [
+                [
+                  -2.0,
+                  2.0
+                ]
+              ]
+            },
+            "translation": {
+              "x": [
+                [
+                  -0.26,
+                  -0.18
+                ]
+              ],
+              "y": [
+                [
+                  0.5,
+                  0.54
+                ]
+              ],
+              "z": [
+                [
+                  0.28,
+                  0.32
+                ]
+              ]
+            }
+          }
+        },
+        "max_sampling_attempts": 200,
+        "robot_id": "RobotPanda",
+        "rotate_with_environment": false,
+        "start_regions": {
+          "free_in_front": {
+            "rotation": {
+              "base": [
+                [
+                  0,
+                  -1,
+                  0
+                ],
+                [
+                  -1,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  -1
+                ]
+              ],
+              "x": [
+                [
+                  -8.0,
+                  8.0
+                ]
+              ],
+              "y": [
+                [
+                  -8.0,
+                  8.0
+                ]
+              ],
+              "z": [
+                [
+                  -20.0,
+                  20.0
+                ]
+              ]
+            },
+            "translation": {
+              "x": [
+                [
+                  -0.22,
+                  -0.05
+                ]
+              ],
+              "y": [
+                [
+                  0.28,
+                  0.36
+                ]
+              ],
+              "z": [
+                [
+                  0.54,
+                  0.66
+                ]
+              ]
+            }
+          }
+        }
+      },
+      "region_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/start_goal_regions/EnvOpenDrawerShelf-RobotPanda-regions-to-drawer.yaml",
+      "region_sha256": "3be1490b4d087664a425d4caa3471f6ff136be555da10d3dc8c71db79fe5f4af",
+      "scene_id": "EnvOpenDrawerShelf",
+      "single_plan_config": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-regions-to-drawer.yaml",
+      "single_plan_config_sha256": "0ab0ac4f55a3e313976b89d9739242f505381776e5e56732c212267ca70b4aba",
+      "static_scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584"
+    },
+    "warehouse": {
+      "base_aabb_high": [
+        0.07356699150800705,
+        0.09667043727636337,
+        0.14198912436516664
+      ],
+      "base_aabb_low": [
+        -0.15607869219779968,
+        -0.09661374580860138,
+        -0.002018785323555927
+      ],
+      "min_distance_q_pos_start_goal": 3.5,
+      "region_config": {
+        "env_id": "EnvWarehouse",
+        "goal_regions": {
+          "region_00": {
+            "rotation": {
+              "base": [
+                [
+                  -1,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  -1
+                ]
+              ],
+              "x": [
+                [
+                  -15.0,
+                  15.0
+                ]
+              ],
+              "y": [
+                [
+                  -15.0,
+                  15.0
+                ]
+              ],
+              "z": [
+                [
+                  -90.0,
+                  90.0
+                ]
+              ]
+            },
+            "translation": {
+              "x": [
+                [
+                  0.65,
+                  0.9
+                ]
+              ],
+              "y": [
+                [
+                  -0.1,
+                  0.25
+                ]
+              ],
+              "z": [
+                [
+                  0.15,
+                  0.25
+                ]
+              ]
+            }
+          }
+        },
+        "max_sampling_attempts": 100,
+        "robot_id": "RobotPanda",
+        "rotate_with_environment": true,
+        "start_regions": {
+          "region_00": {
+            "rotation": {
+              "base": [
+                [
+                  -1,
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  0,
+                  -1
+                ]
+              ],
+              "x": [
+                [
+                  -15.0,
+                  15.0
+                ]
+              ],
+              "y": [
+                [
+                  -15.0,
+                  15.0
+                ]
+              ],
+              "z": [
+                [
+                  -90.0,
+                  90.0
+                ]
+              ]
+            },
+            "translation": {
+              "x": [
+                [
+                  0.25,
+                  0.4
+                ]
+              ],
+              "y": [
+                [
+                  -0.1,
+                  0.25
+                ]
+              ],
+              "z": [
+                [
+                  0.15,
+                  0.25
+                ]
+              ]
+            }
+          }
+        }
+      },
+      "region_path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/start_goal_regions/EnvWarehouse-RobotPanda-regions.yaml",
+      "region_sha256": "ab67939596a929cc8964568f14d44c10534fd6fd0b7d4bb491781b3092cdcd94",
+      "scene_id": "EnvWarehouseExtraObjectsV00",
+      "single_plan_config": "/home/eric/Projects/MotionPlanningDiffusion/mpd/scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
+      "single_plan_config_sha256": "17af9c8bca3af5067f7745c80a80a2004a6bf70f3be8e550cdec1df4e7dfcd34",
+      "static_scene_sha256": "056fb191aff56a457308e0b43b2d8cd87095ba338b1c5ccf7c68a4b9e2381442"
+    }
+  },
+  "schema": "oracle_single_plan_suite_v1",
+  "status": "ready",
+  "suite_hash": "d7602b4f0a9d403c801ad6e832b3f211e4454258b3a78a1b501f9e312390d43e"
+}

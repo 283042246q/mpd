@@ -1,0 +1,86 @@
+{
+  "anchors": [],
+  "arrival_mode": "empty",
+  "directory": "warehouse/warehouse-0054",
+  "event_times": [],
+  "generation_rejections": {},
+  "id": "warehouse-0054",
+  "inflation": "none",
+  "interpolation": "piecewise_linear",
+  "motion_modes": [],
+  "motion_parameters": [],
+  "object_count": 0,
+  "obstacle_obstacle_collision": "allowed",
+  "obstacle_static_collision": "allowed",
+  "phases": [],
+  "reference_nominal_duration_s": 10.0,
+  "reference_sha256": "5ff512b67f61ec375f9b426cc61c88a238c11e9b15aed428e3e14b24d9b7b71c",
+  "reference_used_for": "anchors_and_event_times_only",
+  "request_sha256": "000a8b2a290cf3642da5e8fb89cbde86cc037873a6a40b9f3ac766649cab7a6f",
+  "scene": "warehouse",
+  "seed": 20314863,
+  "start_goal_metadata": {
+    "ee_pose_goal": [
+      [
+        -0.9771085690146445,
+        -0.04292233416554921,
+        -0.20836630626839572,
+        0.7826435418266894
+      ],
+      [
+        -0.05188096917773873,
+        0.9979406958156486,
+        0.037719128730100686,
+        0.10485636002821117
+      ],
+      [
+        0.2063182236142326,
+        0.04766592981113774,
+        -0.9773232575457865,
+        0.17895028348486783
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "ee_pose_start": [
+      [
+        -0.04895571227014123,
+        -0.9906633083793701,
+        -0.12723815334625443,
+        0.31754995193767177
+      ],
+      [
+        -0.9982404892220602,
+        0.05279663324782563,
+        -0.02698964978277931,
+        -0.02473498190970308
+      ],
+      [
+        0.03345540186316148,
+        0.1256929789150389,
+        -0.9915049223970794,
+        0.1625360759196749
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "goal_region_id": "region_00",
+    "rotate_with_environment": true,
+    "rotation_z_axis_deg": 0.0,
+    "sampling_attempt": 6,
+    "source": "regions",
+    "start_region_id": "region_00"
+  },
+  "static_reference_planner": "OMPL RRTConnect",
+  "time_origin": "execution_start",
+  "world_attempts": 1,
+  "world_sha256": "0e6955fb553ee6bedb3a58ac58c06735f06afcb002c6285d94876ace7676cb86"
+}

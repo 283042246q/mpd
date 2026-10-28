@@ -1,0 +1,77 @@
+{
+  "cpu_affinity": [
+    4,
+    5
+  ],
+  "device": "cpu",
+  "execution_contract_sha256": "91a9b13384cadb0adee403ebce74c6aa0218f55ca67524682b3c6f1c45cdec64",
+  "gpu_name": null,
+  "health": {
+    "checkpoint_sha256": "353c7f4f48d6fe8d0527a59882cd0aafb310cfff5f816230f584d54cc966ee15",
+    "dense_validation": {
+      "enabled": true,
+      "fully_warmed": false
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "world_version": 0
+    },
+    "instance_id": "f3bf36d9-8236-4f21-b18f-67934280330d",
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "codec_contract": {
+        "codec_grid_size": 2049,
+        "density_floor": 0.001,
+        "duration_max": 14.0,
+        "duration_min": 2.0,
+        "integration": "trapezoid_linear_cumulative",
+        "spatial_degree": 5,
+        "spatial_points": 21,
+        "timing_degree": 3,
+        "timing_points": 8,
+        "u_min": 0.05,
+        "version": "joint_timing_v1"
+      },
+      "enabled": true,
+      "mode": "jd_kin",
+      "representation": "c",
+      "rest_to_rest_only": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "static_scene_transfer": true,
+    "training_scene_id": "EnvWarehouse",
+    "warmup_elapsed_sec": 0.33492110000042885
+  },
+  "inflation": false,
+  "load_and_warmup_s": 0.9172191540001222,
+  "model": {
+    "architecture_version": "v2",
+    "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_c/step-00123000.pt",
+    "checkpoint_sha256": "353c7f4f48d6fe8d0527a59882cd0aafb310cfff5f816230f584d54cc966ee15",
+    "dataset": "main",
+    "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+    "ema_load_verified": true,
+    "id": "jdkin_c-00123000",
+    "kind": "jointdual",
+    "representation": "c",
+    "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_c/step-00123000.pt",
+    "role": "main_tradeoff",
+    "run": "jdkin_c",
+    "step": 123000,
+    "training_learning_rate": 0.0001,
+    "training_loss_weight_p": 1.0,
+    "training_loss_weight_z": 1.0,
+    "validation_p": 0.0537628051975268,
+    "validation_unweighted_sum": 0.4008472771645272,
+    "validation_z": 0.34708447196700043,
+    "variant": "jd_kin",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "57f5aec38883f6df6b96fb6cd75cc238a62b731b9ccdae48ce14af3190b396d4",
+  "torch_threads": 4,
+  "torch_version": "2.0.0+cu118"
+}

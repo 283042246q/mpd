@@ -1,0 +1,200 @@
+{
+  "best_trajectory_diagnostics": {
+    "ee_orientation_error_deg": 0.43585342168807983,
+    "ee_position_error_m": 0.019932398572564125,
+    "path_length": 5.917901039123535,
+    "selection": {
+      "components": {
+        "dynamic_collision_cvar": 0.0,
+        "dynamic_collision_mean": 0.0,
+        "normalized_dynamic_risk": {
+          "value": 0.0,
+          "weight": 0.2
+        },
+        "spatial_weighted_metrics": {
+          "value": 1.0104551315307617,
+          "weight": 1.0
+        }
+      },
+      "method": "phase4_aligned_spatial_dynamic_risk",
+      "score": 1.0104551315307617,
+      "selected_candidate_index": 36,
+      "selected_valid_index": 12
+    },
+    "smoothness": 45.147640228271484,
+    "terminal_cartesian_pose_xyzw": [
+      -0.17776381969451904,
+      0.5373028516769409,
+      0.3017392158508301,
+      -0.4988834857940674,
+      0.5147126913070679,
+      0.4908888339996338,
+      0.4951912760734558
+    ]
+  },
+  "candidates": {
+    "colliding": 34,
+    "dense_batches_evaluated": 1,
+    "dense_bucket_capacities": [
+      64
+    ],
+    "dense_checked": 64,
+    "dense_complete": true,
+    "dense_padding_slots": 0,
+    "dense_unchecked": 0,
+    "generated": 64,
+    "joint_acceleration_violations": 0,
+    "joint_position_violations": 12,
+    "joint_velocity_violations": 0,
+    "requested_top_k": 8,
+    "returned_top_k": 8,
+    "valid": 24
+  },
+  "config": {
+    "path": "/home/eric/Projects/MotionPlanningDiffusion/mpd/diagnostics/oracle_single_plan_cpu_tiny_20261027/results/todrawer/phase4_aligned/runtime.yaml",
+    "sha256": "14e5b27eefbf7e9815a9d06383a6b8a8a06ee1d57515f774757dd0aef30db591"
+  },
+  "created_unix_time": 1793090398.0643563,
+  "dynamic_world": {
+    "active_object_ids": [],
+    "dense_check_pruning_used": false,
+    "fixed_timing": true,
+    "frame_id": "fr3_link0",
+    "motion_model": "prescribed_piecewise_linear",
+    "orientation_model": "constant",
+    "snapshot_stamp_unix_ns": 1,
+    "trajectory_start_unix_ns": 1,
+    "valid_until_unix_ns": 14000000001,
+    "world_version": 1
+  },
+  "goal": {
+    "end_effector_frame": "fr3_hand",
+    "ik": {
+      "candidates_generated": 0,
+      "candidates_valid": 0,
+      "elapsed_sec": 0.0,
+      "max_iters": 300,
+      "selected_index": null,
+      "selected_orientation_error_deg": null,
+      "selected_position_error_m": null,
+      "skip_reason": "ik_candidates=0; q_pos_goal uses q_pos_start as the legacy planner API placeholder.",
+      "skipped": true
+    },
+    "input_type": "cartesian",
+    "q_pos_goal_condition": [
+      1.2101167440414429,
+      -0.822871744632721,
+      0.4460107982158661,
+      -2.149339437484741,
+      0.25380319356918335,
+      1.307106852531433,
+      -2.331369638442993
+    ],
+    "target_pose_xyzw": [
+      -0.18963837623596191,
+      0.5396519899368286,
+      0.3181658983230591,
+      -0.4979979991912842,
+      0.5157835483551025,
+      0.493282675743103,
+      0.4925825297832489
+    ]
+  },
+  "joint_names": [
+    "fr3_joint1",
+    "fr3_joint2",
+    "fr3_joint3",
+    "fr3_joint4",
+    "fr3_joint5",
+    "fr3_joint6",
+    "fr3_joint7"
+  ],
+  "model": {
+    "args_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/args.yaml",
+    "args_sha256": "a8d6847bd58ff29eb30785882b0fa2a838609f88ed90bec35f439500a21547b2",
+    "checkpoint_path": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "model_dir": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0"
+  },
+  "mpd_source": {
+    "commit": "14abe51e4d3af20c468b40ff62176eb0c3c502c4",
+    "dirty": true
+  },
+  "request": {
+    "joint_state_stamp": null,
+    "planning_frame": "fr3_link0",
+    "robot_model": "franka_fr3",
+    "schema_version": 1,
+    "seed": 21264019,
+    "sha256": "9c49a88cdc3cabec246b2b26546172324f20e6db3ebb16f196fd6c9a2271252d"
+  },
+  "request_id": "todrawer-0003",
+  "resident_runtime": {
+    "instance_id": "c202a420-deb7-4f7f-81d7-b6bd947b4d00",
+    "started_unix_time": 1793090385.3937826,
+    "warmup_elapsed_sec": 1.4160246209994511
+  },
+  "scene": {
+    "mpd_scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "request_scene_hash": null,
+    "scene_id": "EnvOpenDrawerShelf"
+  },
+  "schema_version": 1,
+  "status": "success",
+  "timing": {
+    "dense_validation_sec": 0.17206056199938757,
+    "generator_sec": 0.7467870419941391,
+    "guide_sec": 4.0087153150007,
+    "inference_total_sec": 4.761555762000171,
+    "request_total_sec": 4.982784169999832,
+    "trajectory_ranking_sec": 0.0
+  },
+  "top_k_trajectory_diagnostics": {
+    "scores": [
+      1.0104551315307617,
+      1.369001865386963,
+      2.1730151176452637,
+      3.8589046001434326,
+      4.2796149253845215,
+      4.302095890045166,
+      4.410916328430176,
+      5.053546905517578
+    ],
+    "selection_method": "phase4_aligned_spatial_dynamic_risk",
+    "source_candidate_indices": [
+      36,
+      4,
+      62,
+      18,
+      2,
+      61,
+      41,
+      55
+    ],
+    "start_acceleration_max_abs_error_rad_s2": 9.613632755645085e-06,
+    "start_position_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 3.784894886393886e-07
+  },
+  "trajectory": {
+    "acceleration_limit_utilization": 0.056724678725004196,
+    "acceleration_unit": "rad/s^2",
+    "cartesian_pose_format": "[x, y, z, qx, qy, qz, qw]",
+    "cartesian_position_unit": "m",
+    "cartesian_reference_frame": "fr3_link0",
+    "duration_s": 10.0,
+    "horizon": 128,
+    "position_unit": "rad",
+    "start_acceleration_max_abs_error_rad_s2": 9.613632755645085e-06,
+    "start_max_abs_error_rad": 0.0,
+    "start_velocity_max_abs_error_rad_s": 3.784894886393886e-07,
+    "velocity_limit_utilization": 0.27230900526046753,
+    "velocity_unit": "rad/s"
+  },
+  "trajectory_artifact": {
+    "best_trajectory_deduplicated": true,
+    "best_trajectory_topk_index": 0,
+    "collision_sphere_dtype": "float32",
+    "schema_version": 2
+  },
+  "trajectory_file": "trajectory.npz"
+}

@@ -78,6 +78,8 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
         static_spatial_pruning_enabled: bool = True,
         dynamic_space_time_pruning_enabled: bool = False,
         dynamic_selection_enabled: bool = True,
+        dynamic_world_factory=None,
+        allow_benchmark_budgets: bool = False,
     ) -> None:
         if dynamic_space_time_pruning_enabled:
             raise ValueError(
@@ -91,6 +93,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             runtime_output_root=runtime_output_root,
             device_text=device_text,
             state_callback=state_callback,
+            allow_benchmark_budgets=allow_benchmark_budgets,
             max_dynamic_objects=max_dynamic_objects,
             covariance_sigma=covariance_sigma,
             process_acceleration_std_m_s2=process_acceleration_std_m_s2,
@@ -104,6 +107,7 @@ class SpaceTimeMpdRuntimeEngine(DynamicMpdRuntimeEngine):
             trajectory_schema_version=2,
             collision_spheres_float32=True,
             deduplicate_best_trajectory=True,
+            **({"dynamic_world_factory": dynamic_world_factory} if dynamic_world_factory is not None else {}),
         )
         if self.planner.cost_guide is None:
             raise ValueError("Phase-5 runtime requires the configured MPD cost guide")

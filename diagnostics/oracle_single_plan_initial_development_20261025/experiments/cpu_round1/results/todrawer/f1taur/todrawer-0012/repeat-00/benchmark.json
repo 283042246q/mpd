@@ -1,0 +1,26 @@
+{
+  "arrival_mode": "sequential",
+  "case_id": "todrawer-0012",
+  "device": "cpu",
+  "error_message": "MPD produced no valid trajectory for this request.",
+  "error_type": "NoValidTrajectoryError",
+  "execution_contract_sha256": "c38d24b42afaf58698696218fa6b36e988e3e85cb4be2b2815458a516a21cf35",
+  "model_id": "f1taur",
+  "motion_modes": [
+    "shuttle",
+    "zigzag",
+    "vertical"
+  ],
+  "object_count": 3,
+  "plan_wall_s": 9.699187991995132,
+  "repeat": 0,
+  "request_sha256": "f762e048746e21895cbdeb5d8874be9531537c47945b0d8a21ee736393468dc1",
+  "scene": "todrawer",
+  "schema": "oracle_single_plan_result_v1",
+  "seed": 21272992,
+  "status": "no_valid_trajectory",
+  "success": false,
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae",
+  "total_wall_s": 9.69920261198422,
+  "world_sha256": "47761b988b8bac9c702072058ec169c4cf70c8b5699fb06bff5a057467ae8505"
+}

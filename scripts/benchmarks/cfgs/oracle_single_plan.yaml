@@ -1,0 +1,51 @@
+schema: oracle_single_plan_config_v1
+seed: 20261025
+cases_per_scene: 60
+obstacle_count_weights: [0.10, 0.15, 0.20, 0.25, 0.20, 0.10]
+arrival_modes: [simultaneous, sequential, grouped]
+arrival_weights: [0.30, 0.40, 0.30]
+phase_range: [0.25, 0.80]
+sequential_phase_gap: 0.06
+nominal_duration_s: 10.0
+horizon_s: 14.0
+forecast_dt_s: 0.02
+speed_range_m_s: [0.22, 0.42]
+radius_range_m: [0.04, 0.075]
+motion_modes: [linear, accelerating, speed_variation, curved, zigzag, shuttle, orbit, vertical, stop_go, helix]
+shape_weights: [1, 1, 1]
+margin_m: 0.005
+max_world_attempts: 1000
+max_task_attempts: 20
+rrt_solve_seconds: 10.0
+reference_points: 256
+scenes:
+  warehouse:
+    scene_id: EnvWarehouseExtraObjectsV00
+    single_plan_config: scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml
+    runtime_config: scripts/inference/cfgs/config_EnvWarehouse-RobotPanda-runtime.yaml
+  todrawer:
+    scene_id: EnvOpenDrawerShelf
+    single_plan_config: scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-regions-to-drawer.yaml
+    runtime_config: scripts/inference/cfgs/config_EnvOpenDrawerShelf-RobotPanda-runtime-to-drawer.yaml
+models:
+  legacy: [phase4, phase5joint, phase4_aligned, f1c, f1taur, f2c, f2taur, f3c, f3taur]
+  timing_c_checkpoint: data_trained_models/timing_diffusion/EnvWarehouse/c/warehouse-c-v2/checkpoints/step-00500000.pt
+  timing_tau_r_checkpoint: data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt
+  jointdual_manifest: diagnostics/jointdual_inference_round1_20261025/checkpoints.json
+inference:
+  candidates: 64
+  steps: 32
+  guide_fraction: 0.30
+  refinement_steps: 5
+  top_k: 8
+  cost_points: 128
+  output_points: 128
+  # Common numerical evaluation: physical-time quintic Hermite interpolation,
+  # plus every native knot and every obstacle knot. This is not a proof of CCD.
+  validation_dt_s: 0.01
+  ee_position_tolerance_m: 0.015
+  ee_orientation_tolerance_deg: 1.5
+  boundary_tolerance: 0.00005
+  duration_min_s: 2.0
+  duration_max_s: 14.0
+  terminal_hold_s: 0.0

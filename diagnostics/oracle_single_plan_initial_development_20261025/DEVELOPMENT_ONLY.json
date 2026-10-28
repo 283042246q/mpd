@@ -1,0 +1,4 @@
+{
+  "reason": "Initial sampling task used default 0.01m PyBullet clearance and no fixed gripper instead of inheriting the original single-plan dataset args (0.02m, gripper=True). Superseded; not the requested final benchmark.",
+  "status": "superseded_development"
+}

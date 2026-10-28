@@ -1,0 +1,145 @@
+{
+  "anchors": [
+    [
+      0.4632183909416199,
+      -0.14465013146400452,
+      0.32880884408950806
+    ],
+    [
+      0.3600110411643982,
+      -0.14010009169578552,
+      0.2566356062889099
+    ]
+  ],
+  "arrival_mode": "sequential",
+  "directory": "warehouse/warehouse-0013",
+  "event_times": [
+    5.332181519781707,
+    4.335263501032251
+  ],
+  "generation_rejections": {},
+  "id": "warehouse-0013",
+  "inflation": "none",
+  "interpolation": "piecewise_linear",
+  "motion_modes": [
+    "orbit",
+    "vertical"
+  ],
+  "motion_parameters": [
+    {
+      "direction": [
+        0.8867155757047895,
+        0.34328064640993483,
+        -0.30966737897767177
+      ],
+      "lateral": [
+        0.3610269447952358,
+        -0.9325553844849204,
+        0.0
+      ],
+      "reference_sphere": 48,
+      "speed": 0.3444852719281591,
+      "vertical": [
+        -0.2887819816649602,
+        -0.11179826773505726,
+        -0.95084494761086
+      ]
+    },
+    {
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "lateral": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "reference_sphere": 54,
+      "speed": 0.23693678665804263,
+      "vertical": [
+        -0.134969803745188,
+        -0.043274919791314356,
+        -0.9899042546600357
+      ]
+    }
+  ],
+  "object_count": 2,
+  "obstacle_obstacle_collision": "allowed",
+  "obstacle_static_collision": "allowed",
+  "phases": [
+    0.5332181519781707,
+    0.43352635010322504
+  ],
+  "reference_nominal_duration_s": 10.0,
+  "reference_sha256": "ad2bb2f7c8970526e58abe84817aa5b5665a6c273c882301953fcd4858f5e4d2",
+  "reference_used_for": "anchors_and_event_times_only",
+  "request_sha256": "a3c96b186f1a170f7c3b5068459a80d19022e60ac9c0f5204416a38ba7feb76d",
+  "scene": "warehouse",
+  "seed": 20273986,
+  "start_goal_metadata": {
+    "ee_pose_goal": [
+      [
+        -0.5909107372861027,
+        -0.7955852454372196,
+        -0.13367354937531192,
+        0.6744221223199508
+      ],
+      [
+        -0.7793468363187281,
+        0.6057669746385346,
+        -0.1602026253132794,
+        0.15647262723132568
+      ],
+      [
+        0.20842986657382975,
+        0.009512606366105458,
+        -0.977991053660584,
+        0.22119063481551599
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "ee_pose_start": [
+      [
+        -0.9351221023038306,
+        0.3529852133914768,
+        0.030791117385344992,
+        0.370778110336099
+      ],
+      [
+        0.35430575522267616,
+        0.9324527276246416,
+        0.07070602917329795,
+        0.054430858519379205
+      ],
+      [
+        -0.0037530785967749003,
+        0.07702824074545507,
+        -0.9970218475684006,
+        0.20111963084099965
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "goal_region_id": "region_00",
+    "rotate_with_environment": true,
+    "rotation_z_axis_deg": 0.0,
+    "sampling_attempt": 1,
+    "source": "regions",
+    "start_region_id": "region_00"
+  },
+  "static_reference_planner": "OMPL RRTConnect",
+  "time_origin": "execution_start",
+  "world_attempts": 1,
+  "world_sha256": "8f21b2e887b3aa130150da833294580fd5c7ce3a27f265fbd98454f9644859aa"
+}

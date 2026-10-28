@@ -1,0 +1,5052 @@
+{
+  "complete_for_one_repeat": false,
+  "devices": [],
+  "execution_contracts": [],
+  "expected_cases": 120,
+  "expected_models": 21,
+  "groups": {
+    "todrawer/f1c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f1c",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/f1taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f1taur",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/f2c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f2c",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/f2taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f2taur",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/f3c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f3c",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/f3taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "f3taur",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_c-00091000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_c-00091000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_c-00123000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_c-00123000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_c_multi-00199000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_c_multi-00199000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r-00089000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_tau_r-00089000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r-00114000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_tau_r-00114000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdkin_tau_r_multi-00196000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdkin_tau_r_multi-00196000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_c-00065000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_c-00065000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_c_multi-00153000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_c_multi-00153000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_c_multi_from135k_z010-00215000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_c_multi_from135k_z010-00215000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_1-00061000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_tau_r_1-00061000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_1-00082000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_tau_r_1-00082000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/jdworld_tau_r_multi-00132000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "jdworld_tau_r_multi-00132000",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/phase4": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "phase4",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/phase4_aligned": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "phase4_aligned",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "todrawer/phase5joint": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "todrawer-0000",
+        "todrawer-0001",
+        "todrawer-0002",
+        "todrawer-0003",
+        "todrawer-0004",
+        "todrawer-0005",
+        "todrawer-0006",
+        "todrawer-0007",
+        "todrawer-0008",
+        "todrawer-0009",
+        "todrawer-0010",
+        "todrawer-0011",
+        "todrawer-0012",
+        "todrawer-0013",
+        "todrawer-0014",
+        "todrawer-0015",
+        "todrawer-0016",
+        "todrawer-0017",
+        "todrawer-0018",
+        "todrawer-0019",
+        "todrawer-0020",
+        "todrawer-0021",
+        "todrawer-0022",
+        "todrawer-0023",
+        "todrawer-0024",
+        "todrawer-0025",
+        "todrawer-0026",
+        "todrawer-0027",
+        "todrawer-0028",
+        "todrawer-0029",
+        "todrawer-0030",
+        "todrawer-0031",
+        "todrawer-0032",
+        "todrawer-0033",
+        "todrawer-0034",
+        "todrawer-0035",
+        "todrawer-0036",
+        "todrawer-0037",
+        "todrawer-0038",
+        "todrawer-0039",
+        "todrawer-0040",
+        "todrawer-0041",
+        "todrawer-0042",
+        "todrawer-0043",
+        "todrawer-0044",
+        "todrawer-0045",
+        "todrawer-0046",
+        "todrawer-0047",
+        "todrawer-0048",
+        "todrawer-0049",
+        "todrawer-0050",
+        "todrawer-0051",
+        "todrawer-0052",
+        "todrawer-0053",
+        "todrawer-0054",
+        "todrawer-0055",
+        "todrawer-0056",
+        "todrawer-0057",
+        "todrawer-0058",
+        "todrawer-0059"
+      ],
+      "model_id": "phase5joint",
+      "scene": "todrawer",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f1c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f1c",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f1taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f1taur",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f2c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f2c",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f2taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f2taur",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f3c": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f3c",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/f3taur": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "f3taur",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_c-00091000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_c-00091000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_c-00123000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_c-00123000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_c_multi-00199000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_c_multi-00199000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r-00089000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_tau_r-00089000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r-00114000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_tau_r-00114000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdkin_tau_r_multi-00196000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdkin_tau_r_multi-00196000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_c-00065000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_c-00065000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_c_multi-00153000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_c_multi-00153000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_c_multi_from135k_z010-00215000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_c_multi_from135k_z010-00215000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_1-00061000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_tau_r_1-00061000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_1-00082000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_tau_r_1-00082000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/jdworld_tau_r_multi-00132000": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "jdworld_tau_r_multi-00132000",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/phase4": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "phase4",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/phase4_aligned": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "phase4_aligned",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    },
+    "warehouse/phase5joint": {
+      "by_arrival_mode": {
+        "empty": {
+          "success": 0,
+          "total": 0
+        },
+        "grouped": {
+          "success": 0,
+          "total": 0
+        },
+        "sequential": {
+          "success": 0,
+          "total": 0
+        },
+        "simultaneous": {
+          "success": 0,
+          "total": 0
+        },
+        "single": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "by_obstacle_count": {
+        "0": {
+          "success": 0,
+          "total": 0
+        },
+        "1": {
+          "success": 0,
+          "total": 0
+        },
+        "2": {
+          "success": 0,
+          "total": 0
+        },
+        "3": {
+          "success": 0,
+          "total": 0
+        },
+        "4": {
+          "success": 0,
+          "total": 0
+        },
+        "5": {
+          "success": 0,
+          "total": 0
+        }
+      },
+      "completed": 0,
+      "mean_plan_wall_s": null,
+      "mean_success_duration_s": null,
+      "missing_case_ids": [
+        "warehouse-0000",
+        "warehouse-0001",
+        "warehouse-0002",
+        "warehouse-0003",
+        "warehouse-0004",
+        "warehouse-0005",
+        "warehouse-0006",
+        "warehouse-0007",
+        "warehouse-0008",
+        "warehouse-0009",
+        "warehouse-0010",
+        "warehouse-0011",
+        "warehouse-0012",
+        "warehouse-0013",
+        "warehouse-0014",
+        "warehouse-0015",
+        "warehouse-0016",
+        "warehouse-0017",
+        "warehouse-0018",
+        "warehouse-0019",
+        "warehouse-0020",
+        "warehouse-0021",
+        "warehouse-0022",
+        "warehouse-0023",
+        "warehouse-0024",
+        "warehouse-0025",
+        "warehouse-0026",
+        "warehouse-0027",
+        "warehouse-0028",
+        "warehouse-0029",
+        "warehouse-0030",
+        "warehouse-0031",
+        "warehouse-0032",
+        "warehouse-0033",
+        "warehouse-0034",
+        "warehouse-0035",
+        "warehouse-0036",
+        "warehouse-0037",
+        "warehouse-0038",
+        "warehouse-0039",
+        "warehouse-0040",
+        "warehouse-0041",
+        "warehouse-0042",
+        "warehouse-0043",
+        "warehouse-0044",
+        "warehouse-0045",
+        "warehouse-0046",
+        "warehouse-0047",
+        "warehouse-0048",
+        "warehouse-0049",
+        "warehouse-0050",
+        "warehouse-0051",
+        "warehouse-0052",
+        "warehouse-0053",
+        "warehouse-0054",
+        "warehouse-0055",
+        "warehouse-0056",
+        "warehouse-0057",
+        "warehouse-0058",
+        "warehouse-0059"
+      ],
+      "model_id": "phase5joint",
+      "scene": "warehouse",
+      "status_counts": {},
+      "success_rate": null,
+      "successes": 0
+    }
+  },
+  "result_count": 0,
+  "schema": "oracle_single_plan_report_v1",
+  "suite_hash": "2edb29b6212c648092d942353d76fc2dfdbcc10978667a02ecd011a5367b97ae"
+}

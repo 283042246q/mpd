@@ -47,6 +47,8 @@ class MpdRuntimeEngine:
         runtime_output_root: Path,
         device_text: str = "cuda:0",
         state_callback: Callable[[str], None] | None = None,
+        *,
+        allow_benchmark_budgets: bool = False,
     ) -> None:
         import torch
         from dotmap import DotMap
@@ -70,7 +72,7 @@ class MpdRuntimeEngine:
             self.args_inference = DotMap(load_params_from_yaml(self.config_path))
         except (OSError, TypeError, ValueError) as error:
             raise ConfigurationError(f"Cannot load runtime config {self.config_path}: {error}") from error
-        _validate_runtime_config(self.args_inference)
+        _validate_runtime_config(self.args_inference, allow_benchmark_budgets=allow_benchmark_budgets)
 
         self.expected_scene_id = _runtime_config_value(
             self.args_inference,

@@ -1,0 +1,69 @@
+{
+  "device": "cpu",
+  "health": {
+    "checkpoint_sha256": "36f9a2c3cdd482052199bf71ca30bec508a9e6310432f0a3737bd6256f3acf89",
+    "dense_validation": {
+      "enabled": true,
+      "fully_warmed": false
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "world_version": 0
+    },
+    "instance_id": "0c9d4334-883c-40a5-8cf1-9f9c2e4e29a4",
+    "scene_id": "EnvWarehouseExtraObjectsV00",
+    "scene_sha256": "056fb191aff56a457308e0b43b2d8cd87095ba338b1c5ccf7c68a4b9e2381442",
+    "space_time": {
+      "candidate_specific_time": true,
+      "codec_contract": {
+        "codec_grid_size": 2049,
+        "density_floor": 0.001,
+        "duration_max": 14.0,
+        "duration_min": 2.0,
+        "integration": "trapezoid_linear_cumulative",
+        "spatial_degree": 5,
+        "spatial_points": 21,
+        "timing_degree": 3,
+        "timing_points": 8,
+        "u_min": 0.05,
+        "version": "joint_timing_v1"
+      },
+      "enabled": true,
+      "mode": "jd_kin",
+      "representation": "tau_r",
+      "rest_to_rest_only": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "static_scene_transfer": true,
+    "training_scene_id": "EnvWarehouse",
+    "warmup_elapsed_sec": 0.287977428000886
+  },
+  "inflation": false,
+  "load_and_warmup_s": 0.799233396013733,
+  "model": {
+    "architecture_version": "v2",
+    "checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+    "checkpoint_sha256": "36f9a2c3cdd482052199bf71ca30bec508a9e6310432f0a3737bd6256f3acf89",
+    "dataset": "main",
+    "dataset_snapshot_hash": "b7b381a9084233745e3abe39533777416500133d938b33db7f2f1247d8bb9244",
+    "ema_load_verified": true,
+    "id": "jdkin_tau_r-00089000",
+    "kind": "jointdual",
+    "representation": "tau_r",
+    "resolved_checkpoint": "/home/eric/data/mpd/data_trained_models/jointdual/jdkin_tau_r/step-00089000.pt",
+    "role": "main_best",
+    "run": "jdkin_tau_r",
+    "step": 89000,
+    "training_learning_rate": 0.0001,
+    "training_loss_weight_p": 1.0,
+    "training_loss_weight_z": 1.0,
+    "validation_p": 0.05457348613579967,
+    "validation_unweighted_sum": 0.439629197481627,
+    "validation_z": 0.38505571134582733,
+    "variant": "jd_kin",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "a514df08544d9f5e8f2bc69324b7fbd4a10b261ed2206b695a03277ff7dbff4f"
+}

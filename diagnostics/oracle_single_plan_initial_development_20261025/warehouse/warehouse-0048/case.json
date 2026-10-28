@@ -1,0 +1,118 @@
+{
+  "anchors": [
+    [
+      0.4644317626953125,
+      -0.14184284210205078,
+      0.6101785898208618
+    ]
+  ],
+  "arrival_mode": "single",
+  "directory": "warehouse/warehouse-0048",
+  "event_times": [
+    3.5812130173301444
+  ],
+  "generation_rejections": {},
+  "id": "warehouse-0048",
+  "inflation": "none",
+  "interpolation": "piecewise_linear",
+  "motion_modes": [
+    "speed_variation"
+  ],
+  "motion_parameters": [
+    {
+      "direction": [
+        0.8949603635720063,
+        -0.4160723794531163,
+        -0.16102708682480824
+      ],
+      "lateral": [
+        -0.42157392454868264,
+        -0.9067940373318638,
+        0.0
+      ],
+      "reference_sphere": 46,
+      "speed": 0.34804019089654015,
+      "vertical": [
+        -0.14601840218165643,
+        0.06788482095137588,
+        -0.9869499872378112
+      ]
+    }
+  ],
+  "object_count": 1,
+  "obstacle_obstacle_collision": "allowed",
+  "obstacle_static_collision": "allowed",
+  "phases": [
+    0.35812130173301443
+  ],
+  "reference_nominal_duration_s": 10.0,
+  "reference_sha256": "bbc502a6d980ac0fa4ba46d3a32d723b7246997c85ad8ba4e91637404c7268dd",
+  "reference_used_for": "anchors_and_event_times_only",
+  "request_sha256": "c18dd12c5976c783cce5b36f02bd9fdb22ab9a5133fac036dfc1062b4b29c401",
+  "scene": "warehouse",
+  "seed": 20308881,
+  "start_goal_metadata": {
+    "ee_pose_goal": [
+      [
+        -0.9663098237779767,
+        0.2407257417228683,
+        0.0910848052210164,
+        0.7508466422044003
+      ],
+      [
+        0.24966500166263206,
+        0.9626867042289892,
+        0.10441118927358625,
+        -0.043742520729266696
+      ],
+      [
+        -0.06255166996150886,
+        0.12363424595435368,
+        -0.990354412224394,
+        0.17071806703678657
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "ee_pose_start": [
+      [
+        -0.8778825427871367,
+        0.47563367746332147,
+        -0.05563133947972443,
+        0.37171553083588277
+      ],
+      [
+        0.4719264242679863,
+        0.8790044022145954,
+        0.06809339883567564,
+        -0.08808352148961582
+      ],
+      [
+        0.08128770600296145,
+        0.03352410699897677,
+        -0.996126720403934,
+        0.24451394299518187
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "goal_region_id": "region_00",
+    "rotate_with_environment": true,
+    "rotation_z_axis_deg": 0.0,
+    "sampling_attempt": 2,
+    "source": "regions",
+    "start_region_id": "region_00"
+  },
+  "static_reference_planner": "OMPL RRTConnect",
+  "time_origin": "execution_start",
+  "world_attempts": 1,
+  "world_sha256": "929ace3d5a47ab0e017d13fd4ef4ee4f69f0ef6ab0291643ca8a7252eabf2171"
+}

@@ -1,0 +1,13 @@
+{
+  "case_limit": null,
+  "repeats": 1,
+  "requested_models": [
+    "phase4",
+    "phase5joint",
+    "f1c"
+  ],
+  "requested_scenes": [
+    "todrawer"
+  ],
+  "worker_failures": []
+}

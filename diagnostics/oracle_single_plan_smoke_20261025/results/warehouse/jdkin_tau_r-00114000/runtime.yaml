@@ -1,0 +1,18 @@
+scene_id: EnvWarehouseExtraObjectsV00
+candidates: 64
+top_k: 8
+cost_points: 128
+output_points: 128
+collision_margin: 0.005
+ee_position_tolerance: 0.015
+ee_orientation_tolerance_deg: 1.5
+max_dynamic_objects: 16
+guidance: true
+sampler:
+  steps: 32
+  guide_fraction: 0.3
+  refinement_steps: 5
+  space_lr: 0.01
+  timing_lr: 0.02
+  cfg_scale: 1.0
+  eta: 0.0

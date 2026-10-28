@@ -1,0 +1,124 @@
+{
+  "cpu_affinity": [
+    2,
+    3
+  ],
+  "device": "cpu",
+  "execution_contract_sha256": "91a9b13384cadb0adee403ebce74c6aa0218f55ca67524682b3c6f1c45cdec64",
+  "gpu_name": null,
+  "health": {
+    "checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "config_sha256": "664929660d9dfff621b81232026f97fdb8f41d2153ff2adb527729469ad81088",
+    "dense_validation": {
+      "enabled": true,
+      "full_batch": true,
+      "fully_warmed": true,
+      "pruning_used": false,
+      "ranked_batch_buckets": [
+        8,
+        16,
+        32,
+        64
+      ],
+      "runtime_points": 128
+    },
+    "device": "cpu",
+    "dynamic_world": {
+      "active_capacity": 0,
+      "active_objects": 0,
+      "frame_id": "fr3_link0",
+      "max_objects": 16,
+      "motion_model": "prescribed_piecewise_linear",
+      "optimizations": {
+        "capacity_buckets": true,
+        "collision_spheres_float32": true,
+        "deduplicate_best_trajectory": true,
+        "dynamic_guide_pruning": false,
+        "fused_local_sdf_reduction": true,
+        "shape_and_inflation_grouping": true,
+        "time_table_cache": false
+      },
+      "orientation_model": "constant",
+      "stamp_unix_ns": 1,
+      "trajectory_schema_version": 3,
+      "valid_until_unix_ns": 9223372036854775807,
+      "world_version": 0
+    },
+    "factorized": {
+      "f3_rollout_finetuning_verified": false,
+      "representation": "tau_r",
+      "rest_to_rest_only": true,
+      "runtime_spatial_control_points": 21,
+      "settings": {
+        "alternating_rounds": 1,
+        "eta": 0.0,
+        "fixed_path_cache": true,
+        "method": "f1",
+        "path_encoding_cache": true,
+        "refinement_steps": 5,
+        "space_guide_fraction": 0.3,
+        "space_lr": 0.01,
+        "space_steps": 32,
+        "timing_grad_only": true,
+        "timing_guide_fraction": 0.3,
+        "timing_lr": 0.02,
+        "timing_steps": 32,
+        "timing_steps_per_space_step": 1,
+        "weak_dynamic_scale": 0.2
+      },
+      "spatial_basis_adapted": true,
+      "timing_checkpoint": "/home/eric/data/mpd/data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt",
+      "timing_checkpoint_sha256": "49a3b2d23c1e4f32bb8d239c21607b58159d69c8112e4225d0476ac43c82676b",
+      "timing_checkpoint_step": 60000,
+      "timing_environment": "EnvWarehouse",
+      "training_spatial_control_points": 29
+    },
+    "instance_id": "e1a089bc-b658-491e-b6fa-821796f60243",
+    "phase4_aligned": {
+      "dynamic_collision_alpha": null,
+      "dynamic_collision_cvar_fraction": null,
+      "enabled": false,
+      "guidance_enabled": false,
+      "selection": "legacy",
+      "selection_enabled": false
+    },
+    "scene_id": "EnvOpenDrawerShelf",
+    "scene_sha256": "781aaa11628069067dd835d44aeaa7f6098e8cff3f59b247b8eba1daa2536584",
+    "space_time": {
+      "candidate_specific_time": true,
+      "corridor_a_enabled": false,
+      "duration_max_s": 14.0,
+      "duration_min_s": 2.0,
+      "enabled": true,
+      "learned_timing": true,
+      "mode": "f1",
+      "phase4_entry_unchanged": true,
+      "pruning": {
+        "dynamic_space_time": false,
+        "static_spatial": true
+      },
+      "reuse_spatial_kinematics": true,
+      "timing_schema_version": 1,
+      "trajectory_schema_version": 3
+    },
+    "started_unix_time": 1793090394.683434,
+    "warmup_elapsed_sec": 1.2974389519995384
+  },
+  "inflation": false,
+  "load_and_warmup_s": 6.070196957000007,
+  "model": {
+    "id": "f1taur",
+    "kind": "factorized",
+    "method": "f1",
+    "representation": "tau_r",
+    "spatial_checkpoint": "/home/eric/data/mpd/data_trained_models/launch_train_diffusion_models-v04_2024-09-18_08-12-54/generative_model_class___GaussianDiffusionModel/dataset_subdir___EnvWarehouse-RobotPanda-config_file_v01-joint_joint-one-RRTConnect/dataset_file_merged___dataset_merged_doubled.hdf5/context_ee_goal_pose___True/unet_input_dim___32/unet_dim_mults_option___1/context_q_out_dim___128/context_ee_goal_pose_out_dim___128/context_combined_out_dim___128/bspline_num_control_points_desired___18/parametric_trajectory_class___ParametricTrajectoryBspline/0/checkpoints/ema_model_current.pth",
+    "spatial_checkpoint_sha256": "8b08b7bd2b507a8b68d82e48a76bbb1c678c870943e169a3a75ec58bf77afca4",
+    "timing_checkpoint": "/home/eric/Projects/MotionPlanningDiffusion/mpd/data_trained_models/timing_diffusion/EnvWarehouse/tau_r/warehouse-tau-r-v2/checkpoints/step-00060000.pt",
+    "timing_checkpoint_sha256": "49a3b2d23c1e4f32bb8d239c21607b58159d69c8112e4225d0476ac43c82676b",
+    "weights": "ema"
+  },
+  "oracle_world": true,
+  "suite_hash": "57f5aec38883f6df6b96fb6cd75cc238a62b731b9ccdae48ce14af3190b396d4",
+  "torch_threads": 1,
+  "torch_version": "2.0.0+cu118"
+}
